@@ -712,10 +712,12 @@ _dispatch_with_timeout() {
 _dispatch_cycle_budget_defers_candidate() {
 	local issue_number="$1" repo_slug="$2" remaining=""
 	local floor_seconds=""
-	floor_seconds=$(_dispatch_ceremony_reserve_seconds)
 	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 1
 	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 1
 	[[ "$remaining" =~ ^-?[0-9]+$ ]] || return 1
+	# t19365: the observed reserve scans the stages log; read it only when a
+	# fixed cycle clock applies (an elastic lease returns no remainder).
+	floor_seconds=$(_dispatch_ceremony_reserve_seconds)
 	((remaining < floor_seconds)) || return 1
 	echo "[pulse-wrapper] Dispatch_max: deferring #${issue_number} (${repo_slug}) — cycle budget ${remaining}s below per-candidate floor ${floor_seconds}s; stage not started, retry next cycle (GH#34428)" >>"$LOGFILE"
 	_dispatch_stats_increment "dispatch_candidate_deferred_cycle_budget"
@@ -821,12 +823,16 @@ _dispatch_prestage_margin_seconds() {
 
 # Admission uses recent completed ceremony p90 (milliseconds on disk), never
 # the per-candidate watchdog floor. Bound memory to the last 200 samples.
+# t19365: scan only the log tail. The whole 31 MB log cost ~1 s per call;
+# its last 40,000 lines held 290 samples (2026-11-25), so the result matched.
 _dispatch_ceremony_reserve_seconds() {
 	local timing_file="${AIDEVOPS_DISPATCH_STAGES_LOG:-${HOME}/.aidevops/logs/dispatch-stages.tsv}" reserve=""
+	local tail_lines="${DISPATCH_CEREMONY_RESERVE_TAIL_LINES:-40000}"
+	[[ "$tail_lines" =~ ^[1-9][0-9]{0,7}$ ]] || tail_lines=40000
 	if [[ -f "$timing_file" && ! -L "$timing_file" ]]; then
-		reserve=$(awk '{count=split($0, fields, "\t"); elapsed=fields[5]
+		reserve=$(tail -n "$tail_lines" "$timing_file" | awk '{count=split($0, fields, "\t"); elapsed=fields[5]
 			if (fields[4] == "dedup.ceremony_total" && elapsed ~ /^[0-9]+$/ && elapsed > 0 && (fields[6] == "complete" || count == 5)) samples[n++ % 200]=elapsed}
-			END {for (i in samples) print samples[i]}' "$timing_file" | sort -n | awk '{a[NR]=$0} END {if (NR) {p=int((NR*9+9)/10); print int((a[p]+999)/1000)}}') || reserve=""
+			END {for (i in samples) print samples[i]}' | sort -n | awk '{a[NR]=$0} END {if (NR) {p=int((NR*9+9)/10); print int((a[p]+999)/1000)}}') || reserve=""
 	fi
 	# No completed samples yet: conservative cold start, independent of the
 	# configurable execution timeout. Any observed distribution replaces it.
@@ -894,7 +900,6 @@ _dispatch_bounded_enumeration_budget_seconds() {
 # stage only: the full census does not fit but a bounded census does) or skip.
 _dispatch_round_budget_plan() {
 	local stage="${1:-before}" remaining="" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" enumeration=0 margin=0 budget=0 mode=skip is_before=0
-	floor=$(_dispatch_ceremony_reserve_seconds)
 	if declare -F _pulse_dispatch_lease_active >/dev/null 2>&1 && _pulse_dispatch_lease_active; then
 		printf 'full 0\n'
 		return 0
@@ -908,6 +913,7 @@ _dispatch_round_budget_plan() {
 		printf 'full 0\n'
 		return 0
 	fi
+	floor=$(_dispatch_ceremony_reserve_seconds) # t19365: only when compared
 	[[ "$floor" =~ ^[1-9][0-9]*$ ]] || floor=600
 	margin=$(_dispatch_prestage_margin_seconds)
 	[[ "$stage" != "before" ]] || is_before=1
@@ -1072,9 +1078,10 @@ _dispatch_graphql_budget_allows_next() {
 	# Admission uses observed ceremony plus pre-stage slack; execution keeps
 	# its independent 600s watchdog.
 	local cycle_remaining="" floor_seconds="" margin=0
-	floor_seconds=$(_dispatch_ceremony_reserve_seconds)
-	margin=$(_dispatch_prestage_margin_seconds)
 	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && cycle_remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
+		# t19365: read the observed reserve only when a fixed clock applies.
+		floor_seconds=$(_dispatch_ceremony_reserve_seconds)
+		margin=$(_dispatch_prestage_margin_seconds)
 		if [[ "$cycle_remaining" -lt $((floor_seconds + margin)) ]]; then
 			echo "[pulse-wrapper] Dispatch_max stopping early: cycle wall-clock budget below candidate admission reserve (remaining=${cycle_remaining}s floor=${floor_seconds}s prestage_margin=${margin}s)" >>"$LOGFILE"
 			return 1
