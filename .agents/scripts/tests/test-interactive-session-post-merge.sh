@@ -57,6 +57,7 @@ setup_test_env() {
 	# Point HOME to TEST_ROOT so no real gh auth is attempted
 	export HOME="${TEST_ROOT}"
 	mkdir -p "${TEST_ROOT}/.config/aidevops"
+	printf '{"initialized_repos":[]}\n' >"${TEST_ROOT}/.config/aidevops/repos.json"
 
 	# Stub git for slug resolution fallback
 	cat >"${TEST_ROOT}/bin/git" <<'GITEOF'
@@ -163,6 +164,12 @@ if [[ "\${1:-}" == "api" && "\${2:-}" == "user" ]]; then
 	exit 0
 fi
 
+# The comment privacy guard requires affirmative target visibility.
+if [[ "\${1:-}" == "api" && "\${2:-}" == "repos/testorg/testrepo" ]]; then
+	printf 'false\n'
+	exit 0
+fi
+
 # pr view — return PR metadata
 if [[ "\${1:-}" == "pr" && "\${2:-}" == "view" ]]; then
 	printf '%s\n' '{"state":"${pr_state}","mergedAt":"${merged_at}","body":"${escaped_body}","author":{"login":"${pr_author}"}}'
@@ -215,11 +222,11 @@ test_t2219_for_ref_open_statusdone_healed() {
 
 # ─── Test 2: Temporal hold restores status:blocked ───────────────────────────
 test_t2219_temporal_hold_restores_blocked() {
-	local pr_body="For #42"
+	local pr_body="For #42" output=""
 	create_gh_stub "$pr_body" "MERGED" "testauthor" "42" "OPEN" \
 		"status:done,auto-dispatch" "" "Do not dispatch until 2026-09-01."
 
-	bash "$HELPER_SCRIPT" post-merge 100 testorg/testrepo >/dev/null 2>&1 || true
+	output=$(bash "$HELPER_SCRIPT" post-merge 100 testorg/testrepo 2>&1) || true
 
 	if grep -q "\-\-remove-label status:done" "$GH_EDIT_LOG" &&
 		grep -q "\-\-add-label status:blocked" "$GH_EDIT_LOG" &&
@@ -227,7 +234,7 @@ test_t2219_temporal_hold_restores_blocked() {
 		print_result "t2219: explicit temporal hold → status:blocked" 0
 	else
 		print_result "t2219: explicit temporal hold → status:blocked" 1 \
-			"Expected blocked restoration and audit comment; edit=$(cat "$GH_EDIT_LOG") comment=$(cat "$GH_COMMENT_LOG")"
+			"Expected blocked restoration and audit comment; edit=$(cat "$GH_EDIT_LOG") comment=$(cat "$GH_COMMENT_LOG") output=$output"
 	fi
 	return 0
 }

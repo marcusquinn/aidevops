@@ -105,7 +105,7 @@ test_detect_receipt_subject() {
 
 	local result=0
 	# Run detect command — exit 0 means transaction detected
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep "TRANSACTION EMAIL DETECTED" >/dev/null; then
 		result=1
 	fi
 	print_result "detect: receipt in subject" "$result"
@@ -117,7 +117,7 @@ test_detect_invoice_subject() {
 	create_test_email "$email_file" "Invoice #INV-2026-001 from Acme Ltd" "accounts@acme.com" "Total due: £500.00"
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep "TRANSACTION EMAIL DETECTED" >/dev/null; then
 		result=1
 	fi
 	print_result "detect: invoice in subject" "$result"
@@ -129,7 +129,7 @@ test_detect_payment_confirmation_subject() {
 	create_test_email "$email_file" "Payment confirmation - Order #12345" "noreply@shop.com" "Your payment was processed."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep "TRANSACTION EMAIL DETECTED" >/dev/null; then
 		result=1
 	fi
 	print_result "detect: payment confirmation in subject" "$result"
@@ -141,7 +141,7 @@ test_detect_order_confirmation_subject() {
 	create_test_email "$email_file" "Order confirmation #ORD-9876" "orders@example.com" "Thank you for your order."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep "TRANSACTION EMAIL DETECTED" >/dev/null; then
 		result=1
 	fi
 	print_result "detect: order confirmation in subject" "$result"
@@ -153,7 +153,7 @@ test_detect_subscription_renewal_subject() {
 	create_test_email "$email_file" "Subscription renewal - GitHub Pro" "billing@github.com" "Your subscription has been renewed."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep "TRANSACTION EMAIL DETECTED" >/dev/null; then
 		result=1
 	fi
 	print_result "detect: subscription renewal in subject" "$result"
@@ -166,7 +166,7 @@ test_detect_non_transaction_email() {
 
 	local result=0
 	# Should NOT detect as transaction
-	if bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if bash "$HELPER" detect "$email_file" 2>&1 | grep "TRANSACTION EMAIL DETECTED" >/dev/null; then
 		result=1
 	fi
 	print_result "detect: newsletter is NOT a transaction email" "$result"
@@ -179,7 +179,7 @@ test_detect_body_invoice_number() {
 		"Please find attached. Invoice number: INV-001. Total amount due: £250.00. Payment method: credit card."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep "TRANSACTION EMAIL DETECTED" >/dev/null; then
 		result=1
 	fi
 	print_result "detect: invoice number in body" "$result"
@@ -192,7 +192,7 @@ test_detect_body_total_amount() {
 		"Dear customer, total amount: £150.00. Billing address: 123 Main St."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep "TRANSACTION EMAIL DETECTED" >/dev/null; then
 		result=1
 	fi
 	print_result "detect: total amount in body" "$result"
@@ -210,7 +210,7 @@ test_extract_domain_simple() {
 	local output
 	output=$(bash "$HELPER" verify-sender "stripe.com" 2>&1 || true)
 	# Should attempt DNS checks (may fail if no network, but should not error on domain extraction)
-	if echo "$output" | grep -q "Verifying DNS authentication for: stripe.com"; then
+	if grep -q "Verifying DNS authentication for: stripe.com" <<<"$output"; then
 		result=0
 	else
 		result=1
@@ -231,7 +231,7 @@ test_phishing_url_shortener_flagged() {
 	local result=0
 	local output
 	output=$(DRY_RUN=true bash "$HELPER" process "$email_file" 2>&1 || true)
-	if echo "$output" | grep -qi "flagged\|phishing\|suspicious\|URL shortener"; then
+	if grep -qi "flagged\|phishing\|suspicious\|URL shortener" <<<"$output"; then
 		result=0
 	else
 		# URL shortener check may not trigger if phishing pattern not matched
@@ -250,7 +250,7 @@ test_phishing_bitcoin_payment_flagged() {
 	local result=0
 	local output
 	output=$(DRY_RUN=true bash "$HELPER" process "$email_file" 2>&1 || true)
-	if echo "$output" | grep -qi "flagged\|phishing\|suspicious\|bitcoin\|high-risk"; then
+	if grep -qi "flagged\|phishing\|suspicious\|bitcoin\|high-risk" <<<"$output"; then
 		result=0
 	else
 		result=0 # Pipeline ran without error — acceptable
@@ -269,7 +269,7 @@ test_verify_sender_stripe_com() {
 	output=$(bash "$HELPER" verify-sender "stripe.com" 2>&1 || true)
 
 	# stripe.com has excellent DNS authentication — should pass
-	if echo "$output" | grep -qi "PASS\|SPF\|DKIM\|DMARC"; then
+	if grep -qi "PASS\|SPF\|DKIM\|DMARC" <<<"$output"; then
 		result=0
 	else
 		result=1
@@ -283,7 +283,7 @@ test_verify_sender_empty_domain_fails() {
 	local output
 	output=$(bash "$HELPER" verify-sender "" 2>&1 || true)
 
-	if echo "$output" | grep -qi "required\|error\|Domain required"; then
+	if grep -qi "required\|error\|Domain required" <<<"$output"; then
 		result=0
 	else
 		result=1
@@ -304,7 +304,7 @@ test_flag_command_creates_flagged_file() {
 	local output
 	output=$(bash "$HELPER" flag "$email_file" --reason "Test flagging" 2>&1 || true)
 
-	if echo "$output" | grep -qi "flagged\|manual review"; then
+	if grep -qi "flagged\|manual review" <<<"$output"; then
 		result=0
 	else
 		result=1
@@ -321,7 +321,7 @@ test_flag_command_requires_reason() {
 	local output
 	output=$(bash "$HELPER" flag "$email_file" 2>&1 || true)
 
-	if echo "$output" | grep -qi "reason.*required\|--reason"; then
+	if grep -qi "reason.*required\|--reason" <<<"$output"; then
 		result=0
 	else
 		result=1
@@ -339,7 +339,7 @@ test_status_command_runs() {
 	local output
 	output=$(bash "$HELPER" status 2>&1 || true)
 
-	if echo "$output" | grep -qi "email-receipt-forward-helper\|version\|config\|dependencies"; then
+	if grep -qi "email-receipt-forward-helper\|version\|config\|dependencies" <<<"$output"; then
 		result=0
 	else
 		result=1
@@ -357,7 +357,7 @@ test_help_command_runs() {
 	local output
 	output=$(bash "$HELPER" help 2>&1 || true)
 
-	if echo "$output" | grep -qi "USAGE\|COMMANDS\|process\|verify-sender"; then
+	if grep -qi "USAGE\|COMMANDS\|process\|verify-sender" <<<"$output"; then
 		result=0
 	else
 		result=1
@@ -380,7 +380,7 @@ test_process_dry_run_receipt() {
 	output=$(bash "$HELPER" process "$email_file" --dry-run 2>&1 || true)
 
 	# Should detect as transaction and either dry-run forward or flag
-	if echo "$output" | grep -qi "transaction\|detected\|dry.run\|forward\|flagged"; then
+	if grep -qi "transaction\|detected\|dry.run\|forward\|flagged" <<<"$output"; then
 		result=0
 	else
 		result=1
@@ -399,7 +399,7 @@ test_process_dry_run_non_transaction() {
 	output=$(bash "$HELPER" process "$email_file" --dry-run 2>&1 || true)
 
 	# Should skip non-transaction emails
-	if echo "$output" | grep -qi "not a transaction\|skipping"; then
+	if grep -qi "not a transaction\|skipping" <<<"$output"; then
 		result=0
 	else
 		result=1

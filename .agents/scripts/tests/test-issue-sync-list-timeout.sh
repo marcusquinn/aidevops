@@ -58,7 +58,7 @@ elapsed=$(($(date +%s) - started_at))
 [[ "$list_rc" -eq 124 ]] || fail "timed-out issue list returned rc=${list_rc}, expected 124"
 [[ -z "$list_output" ]] || fail "timed-out issue list emitted false-success output: ${list_output}"
 [[ "$elapsed" -le 3 ]] || fail "issue list exceeded read timeout allowance (${elapsed}s)"
-grep -q '^issue list --repo example/repo --state open --limit 200 --json number,title,assignees,state,labels$' \
+grep -q '^issue list --repo example/repo --state open --limit 200 --json number,title,assignees,state,labels,createdAt$' \
 	"$GH_CALL_LOG" || fail "issue list did not preserve the requested arguments"
 pass "issue sync list reads are bounded and propagate timeout failure"
 

@@ -219,7 +219,7 @@ TARGET="$("$SCRIPT_DIR/tests/pira-combined-source.sh")"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if grep -qF '_extract_children_from_prose' "$TARGET" 2>/dev/null &&
-	grep -qF '_p_nums=$(_extract_children_from_prose' "$TARGET" 2>/dev/null; then
+	grep -qF 'prose_nums=$(_extract_children_from_prose' "$TARGET" 2>/dev/null; then
 	echo "${TEST_GREEN}PASS${TEST_NC}: 12: _extract_children_from_prose wired in reconcile_completed_parent_tasks"
 else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
