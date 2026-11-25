@@ -128,6 +128,19 @@ silent turn was cancelled, failed at the provider, ended without visible text,
 or is waiting on a permission or tool. They never abort, prompt, or retry.
 Absent metadata stays `unknown`; it is not proof that a security filter acted.
 
+Provider overload is the one automatic exception (t19362). OpenCode retries an
+overloaded provider within the turn for about a minute, then stops with an error
+such as Anthropic HTTP 529 `Overloaded`. For a root interactive session,
+`provider-overload-retry.mjs` then waits 60 s and sends one synthetic
+continuation with the same agent, model and variant. That continuation tells the
+model not to repeat completed side effects. A new message from the user, a
+completed reply or a busy session cancels the pending retry. Child sessions,
+headless runs and other errors (auth, request, context length, cancellation) are
+never retried. After 5 retries without a completed reply it stops and shows a
+toast. Settings: `AIDEVOPS_OVERLOAD_RETRY=0` disables it,
+`AIDEVOPS_OVERLOAD_RETRY_DELAY_SECONDS` (default 60, max 3600) and
+`AIDEVOPS_OVERLOAD_RETRY_MAX_ATTEMPTS` (default 5, max 50).
+
 ## Mission and Worker Semantics
 
 - A worker time budget stops that worker invocation, not the task. Before exit,

@@ -84,6 +84,7 @@ import { createRoutingFeedbackHandler } from "./routing-feedback-handler.mjs";
 import { createSessionBoundaryAdvisory } from "./session-boundary-advisory.mjs";
 import { createVersionDriftNotice } from "./deployed-version.mjs";
 import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
+import { createProviderOverloadRetry } from "./provider-overload-retry.mjs";
 import { createObjectiveReceiptTool } from "./objective-receipt-tool.mjs";
 import {
   appendConversationSystemContext,
@@ -716,6 +717,13 @@ export async function AidevopsPlugin({ directory, client }) {
     schedule: !isHeadless(),
     log: qualityLog,
   });
+  // t19362: resume a root interactive session after a terminal provider overload.
+  const providerOverloadRetry = createProviderOverloadRetry({
+    client,
+    directory,
+    isHeadless,
+    log: qualityLog,
+  });
   // GH#35517: busy/idle heartbeat consumed by the OpenCode DB archive idle gate.
   const dbActivityHeartbeat = installDbActivityHeartbeat();
 
@@ -864,6 +872,7 @@ export async function AidevopsPlugin({ directory, client }) {
         sessionRecoveryMarkerHandler(input).catch((err) => debugEventError("session recovery marker", err)),
         Promise.resolve(sessionStallRecovery.handleEvent(input)),
         sessionTurnDiagnostics.handleEvent(input).catch((err) => debugEventError("turn diagnostics", err)),
+        providerOverloadRetry.handleEvent(input).catch((err) => debugEventError("provider overload retry", err)),
         Promise.resolve().then(() => dbActivityHeartbeat.handleEvent(input)).catch((err) => debugEventError("db activity heartbeat", err)),
         sessionBus.handleEvent(input),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
