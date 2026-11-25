@@ -144,8 +144,12 @@ gh() {
 	fi
 	if [[ "$1 $2" == "api graphql" ]]; then
 		[[ "${GRAPHQL_FAILURE:-false}" == false && "$*" == *"number=40"* ]] || return 1
-		jq -cn '{data:{repository:{issueOrPullRequest:{__typename:"Issue",
-			closedByPullRequestsReferences:{nodes:[{number:9}]}}}}}'
+		# PR 77 belongs to another repository; its local read would fail, so
+		# accepting the record proves cross-repository closers are skipped.
+		jq -cn --argjson more "${CLOSERS_TRUNCATED:-false}" '{data:{repository:{issueOrPullRequest:{__typename:"Issue",
+			closedByPullRequestsReferences:{pageInfo:{hasNextPage:$more},
+				nodes:[{number:77,repository:{nameWithOwner:"other/repo"}},
+					{number:9,repository:{nameWithOwner:"Test/Repo"}}]}}}}}'
 		return $?
 	fi
 	printf '[[]]\n'
@@ -153,6 +157,10 @@ gh() {
 }
 issue_hinted=$(release_snapshot_sources test/repo main "$BASE" "$ISSUE_HINTED")
 [[ "$issue_hinted" == "$(jq -cn --arg sha "$ISSUE_HINTED" '[{pr:9,merge:$sha}]')" ]]
+if CLOSERS_TRUNCATED=true release_snapshot_sources test/repo main "$BASE" "$ISSUE_HINTED" 2>/dev/null; then
+	printf 'FAIL: truncated closing-PR list accepted\n' >&2
+	exit 1
+fi
 if release_snapshot_sources test/repo main "$ISSUE_HINTED" "$ISSUE_FORGED" 2>/dev/null; then
 	printf 'FAIL: forged GH# task prefix on a direct push accepted\n' >&2
 	exit 1
@@ -162,7 +170,7 @@ if GRAPHQL_FAILURE=true release_snapshot_sources test/repo main "$BASE" "$ISSUE_
 	exit 1
 fi
 eval "$_gh_base"
-printf 'PASS: missing association resolves through a verified GH# task reference closing PR\n'
+printf 'PASS: missing association resolves through a verified same-repo GH# closing PR; truncated lists fail closed\n'
 
 # Transient reads retry (bounded); auth failures do not. Count gh calls via file.
 export RELEASE_SNAPSHOT_RETRY_UNIT=0

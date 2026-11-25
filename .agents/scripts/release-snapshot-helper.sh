@@ -182,7 +182,7 @@ _release_snapshot_subject_hints() {
 	local reference=""
 	local node_json=""
 	# shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub.
-	local query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){__typename ... on PullRequest{number} ... on Issue{closedByPullRequestsReferences(first:20,includeClosedPrs:true){nodes{number}}}}}}'
+	local query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){__typename ... on PullRequest{number} ... on Issue{closedByPullRequestsReferences(first:100,includeClosedPrs:true){pageInfo{hasNextPage} nodes{number repository{nameWithOwner}}}}}}}'
 	candidates=$(printf '%s\n' "$subject" | grep -oE '\(#[0-9]+\)|Merge pull request #[0-9]+' | grep -oE '[0-9]+' || true)
 	# A direct PR hint is sufficient; resolve GH# references only without one so
 	# an unrelated GraphQL failure cannot block an otherwise verifiable record.
@@ -195,9 +195,16 @@ _release_snapshot_subject_hints() {
 		node_json=$(_release_snapshot_gh_read "task reference GH#${reference} in ${repo}" \
 			'.data.repository.issueOrPullRequest.__typename | IN("Issue", "PullRequest")' -- \
 			api graphql -f query="$query" -f owner="${repo%%/*}" -f name="${repo#*/}" -F number="$reference") || return 1
-		candidates+=$'\n'$(jq -r '.data.repository.issueOrPullRequest
+		# An incomplete closing-PR list could omit the merged PR; fail closed.
+		jq -e '.data.repository.issueOrPullRequest.closedByPullRequestsReferences.pageInfo.hasNextPage != true' \
+			<<<"$node_json" >/dev/null || return 1
+		# A PR from another repository cannot own a merge commit here; skip it
+		# rather than letting its unrelated number fail the local PR read.
+		candidates+=$'\n'$(jq -r --arg repo "$repo" '.data.repository.issueOrPullRequest
 			| if .__typename == "PullRequest" then .number
-			else (.closedByPullRequestsReferences.nodes // [])[].number end' <<<"$node_json") || return 1
+			else (.closedByPullRequestsReferences.nodes // [])[]
+				| select(((.repository.nameWithOwner // "") | ascii_downcase) == ($repo | ascii_downcase))
+				| .number end' <<<"$node_json") || return 1
 	done < <(printf '%s\n' "$subject" | grep -oE 'GH#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
 	printf '%s\n' "$candidates" | grep -E '^[1-9][0-9]{0,9}$' | sort -u || true
 	return 0
