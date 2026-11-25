@@ -461,7 +461,7 @@ _cost_spend_from_comments() {
 			# posted from whichever session ran recovery. Their signature footer
 			# carries the whole posting session usage (observed: 18.3M tokens on
 			# #40029), which is not worker spend on this issue.
-			| select((.body // "") | contains($rearm) | not)
+			| select((.body // "") | test("(^|\\n)" + $rearm) | not)
 			| epoch as $t
 			# GH#39969: signed reports can be the only evidence of a merged
 			# checkpoint (URL rather than PR #N). A report posted near its

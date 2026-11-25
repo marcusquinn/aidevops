@@ -77,6 +77,7 @@ write_comments() {
 		IFS='|' read -r kind tokens ts <<<"$item"
 		case "$kind" in
 		worker) body="Worker run." ;;
+		quote) body="Fixed re-arm: quoted marker \`<!-- aidevops:terminal-blocker-rearmed key=abc \` inline." ;;
 		rearm) body="<!-- aidevops:terminal-blocker-rearmed key=318f89c8b453b47155f8234f -->\\n<!-- aidevops:terminal-blocker-rearm-reason reason=revision_changed -->" ;;
 		*) return 1 ;;
 		esac
@@ -125,6 +126,15 @@ if [[ "$out" == "70000|2" ]]; then
 	print_result "worker footers still counted (→ 70000|2)" 0
 else
 	print_result "worker footers still counted (→ 70000|2)" 1 "(got: '$out')"
+fi
+
+# 4. Worker report quoting the marker inline stays counted.
+write_comments "quote|30000|2026-11-25T01:00:00Z"
+out=$(run_sum 40032)
+if [[ "$out" == "30000|1" ]]; then
+	print_result "inline marker quotation still counted (→ 30000|1)" 0
+else
+	print_result "inline marker quotation still counted (→ 30000|1)" 1 "(got: '$out')"
 fi
 
 export PATH="$OLD_PATH"
