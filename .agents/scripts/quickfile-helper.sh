@@ -504,6 +504,11 @@ cmd_status() {
 	echo "MCP Server:"
 	if [[ -f "${QF_MCP_DIR}/dist/index.js" ]]; then
 		echo "  quickfile-mcp:  installed (${QF_MCP_DIR})"
+		local launcher="${BASH_SOURCE[0]%/*}/quickfile-mcp-launcher.sh"
+		local launcher_err=""
+		if [[ -f "$launcher" ]] && ! launcher_err=$(QUICKFILE_MCP_LAUNCHER_DRY_RUN=1 bash "$launcher" 2>&1 >/dev/null); then
+			echo "  launcher:       refused - ${launcher_err}"
+		fi
 	else
 		echo "  quickfile-mcp:  not found"
 		echo "  Install: mkdir -p ~/Git/mcp && git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/mcp/quickfile-mcp"
