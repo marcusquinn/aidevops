@@ -4,7 +4,7 @@
 import { lstatSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-function hasBoundedReadTarget(raw, target, forbidden) {
+export function hasBoundedReadTarget(raw, target, forbidden) {
   if (typeof target !== "string" || !isAbsolute(target)) return false;
   if (/[*?\[\]{}\u0000]/.test(target) || forbidden.test(target)) return false;
   if (target.split(/[\\/]+/).includes("..")) return false;
@@ -52,7 +52,7 @@ function hasSymlinkAncestor(ancestor) {
   return false;
 }
 
-function isWithin(root, target) {
+export function isWithin(root, target) {
   const within = relative(resolve(root), target);
   if (within === ".." || within.startsWith(`..${sep}`)) return false;
   return !isAbsolute(within);

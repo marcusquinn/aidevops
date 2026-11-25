@@ -43,7 +43,7 @@ function addApprovedCapabilityRule(target, capability) {
   return count;
 }
 
-function addApprovedCapabilityRules(target, capabilities) {
+export function addApprovedCapabilityRules(target, capabilities) {
   ensurePermissionMap(target);
   let count = 0;
   for (const capability of capabilities) {

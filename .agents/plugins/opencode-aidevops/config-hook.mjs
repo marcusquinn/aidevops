@@ -16,6 +16,7 @@ import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
 import { registerApprovedWorkerPermissions } from "./config-worker-permissions.mjs";
+import { registerWorkerRuntimePermissions } from "./config-worker-runtime-permissions.mjs";
 import { applyCompactionRouting } from "./compaction-routing.mjs";
 import { registerPendingAnthropicModels } from "./anthropic-catalog-bridge.mjs";
 import {
@@ -405,7 +406,7 @@ export function createConfigHook(deps) {
     const mcps = registerMcpServers(config, { runtime: mcpRuntime });
     captureLocalOnlyMcpConfig(config.mcp, repositoryDir);
     const agentTools = applyAgentMcpTools(config);
-    const directories = registerManagedDirectoryPermissions(config);
+    const directories = registerManagedDirectoryPermissions(config) + registerWorkerRuntimePermissions(config);
     const permissionGrants = registerApprovedWorkerPermissions(config, { repositoryDir });
     agents += registerResearchOnlyAgent(config, agentsDir);
     registerAgentRoutingIntent(
