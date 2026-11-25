@@ -120,12 +120,17 @@ _pulse_stats_recover_locked() {
 	shopt -s nullglob
 	quarantines=("${PULSE_STATS_FILE}".corrupt.*)
 	((nullglob_was_set)) || shopt -u nullglob
-	for existing in ${quarantines[@]+"${quarantines[@]}"}; do
-		count=$((count + 1))
-		if cmp -s "$PULSE_STATS_FILE" "$existing"; then
-			duplicate=1
-		fi
-	done
+	count=${#quarantines[@]}
+	# Salvaged from GH#40201: duplicates cannot affect the decision at the cap.
+	# Avoid one cmp subprocess per historical quarantine while holding the lock.
+	if ((count < 5)); then
+		for existing in ${quarantines[@]+"${quarantines[@]}"}; do
+			if cmp -s "$PULSE_STATS_FILE" "$existing"; then
+				duplicate=1
+				break
+			fi
+		done
+	fi
 	if [[ -s "$PULSE_STATS_FILE" ]] && ((count < 5 && duplicate == 0)); then
 		old_umask=$(umask)
 		umask 077
@@ -163,6 +168,52 @@ _pulse_stats_recover_locked() {
 		return 1
 	}
 	return 0
+}
+
+# Owning cleaner for storage-cleanup-helper.sh. Serialize with recovery so a
+# newly preserved copy cannot race the retention snapshot. Python's nanosecond
+# mtimes preserve same-second ordering; lexical names break exact timestamp ties.
+pulse_stats_prune_quarantine() {
+	local mode="${1:-}" lock_dir="" rc=0
+	[[ -z "$mode" || "$mode" == "--apply" ]] || return 1
+	if [[ ! -d "${PULSE_STATS_FILE%/*}" ]]; then
+		printf 'pulse-stats quarantine: 0 copies, nothing to prune\n'
+		return 0
+	fi
+	_pulse_stats_acquire_lock lock_dir || return 1
+	python3 - "$PULSE_STATS_FILE" "$mode" <<'PY' || rc=$?
+import os
+import stat
+import sys
+
+path, mode = sys.argv[1:]
+directory, basename = os.path.split(path)
+copies = []
+with os.scandir(directory or ".") as entries:
+    for entry in entries:
+        if not entry.name.startswith(basename + ".corrupt."):
+            continue
+        info = entry.stat(follow_symlinks=False)
+        if stat.S_ISREG(info.st_mode):
+            copies.append((info.st_mtime_ns, entry.name, entry.path))
+copies.sort(reverse=True)
+excess = copies[5:]
+if mode != "--apply":
+    print(f"pulse-stats quarantine: {len(copies)} copies, would delete {len(excess)} oldest (retain newest 5)")
+    sys.exit(0)
+removed = failed = 0
+for _, _, candidate in excess:
+    try:
+        os.unlink(candidate)
+        removed += 1
+    except OSError as error:
+        failed += 1
+        print(f"pulse-stats quarantine: cannot remove {candidate}: {error}", file=sys.stderr)
+print(f"pulse-stats quarantine: deleted {removed}, failed {failed}, retained {len(copies) - removed} copies (cap 5)")
+sys.exit(1 if failed else 0)
+PY
+	_pulse_stats_release_lock "$lock_dir"
+	return "$rc"
 }
 
 _pulse_stats_mutate_locked() {
@@ -546,6 +597,10 @@ _main() {
 		pulse_stats_reset "$reset_counter"
 		return 0
 		;;
+	prune-quarantine)
+		pulse_stats_prune_quarantine "${1:-}"
+		return $?
+		;;
 	help | --help | -h)
 		echo "pulse-stats-helper.sh — Pulse operational counter (t2424)"
 		echo ""
@@ -555,6 +610,7 @@ _main() {
 		echo "  pulse-stats-helper.sh get-gauge <gauge>     Read current gauge value"
 		echo "  pulse-stats-helper.sh status                Human-readable summary"
 		echo "  pulse-stats-helper.sh reset <counter>       Clear a counter"
+		echo "  pulse-stats-helper.sh prune-quarantine [--apply]  Retain newest 5 corrupt copies"
 		echo ""
 		echo "Stats file: ${PULSE_STATS_FILE}"
 		return 0
