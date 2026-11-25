@@ -2510,7 +2510,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19351 fix(pulse): capacity halving counts only host/provider pressure failures, not task outcomes #bug #priority:high ref:GH#40226 logged:2026-11-24 pr:#40227 completed:2026-11-25
 
-- [ ] t19356 Headless workers: prompt-cache keep-warm during long tool calls + require repeated Sonnet failure before Opus escalation #feat ref:GH#40251
+- [x] t19356 Headless workers: prompt-cache keep-warm during long tool calls + require repeated Sonnet failure before Opus escalation #feat ref:GH#40251 pr:#40256 completed:2026-11-25
 
 - [ ] t19357 feat(worktree): clone pnpm workspace node_modules (root + members) into fresh worktrees instead of full install #auto-dispatch #feat ref:GH#40257
 
@@ -6147,6 +6147,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t19202 fix(headless): worker DB init fails exit 86 when shared OpenCode DB is briefly locked #bug ref:GH#39417 pr:#39462 completed:2026-11-20
 
-- [ ] t19347 fix(pulse): report the configured interval and live worker cap in pulse start #bug ref:GH#40198
+- [x] t19347 fix(pulse): report the configured interval and live worker cap in pulse start #bug ref:GH#40198 pr:#40258 completed:2026-11-25
 
 - [ ] t19346 fix(pulse): break early in stats quarantine scan and prune the backlog #bug ref:GH#40197
