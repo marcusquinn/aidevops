@@ -282,6 +282,12 @@ _dispatch_dedup_capacity_gates() {
 		_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
 		return 1
 	fi
+	# GH#40266: a measured important-usage probe on success means purgeable
+	# APFS capacity satisfied the percentage floor; name it once per process.
+	if [[ -z "${_DISPATCH_DISK_PURGEABLE_LOGGED:-}" && "${AIDEVOPS_DISK_IMPORTANT_STATE:-}" == measured ]]; then
+		_DISPATCH_DISK_PURGEABLE_LOGGED=1
+		echo "[dispatch_with_dedup] Disk admission used macOS purgeable capacity: df available=${AIDEVOPS_DISK_FILESYSTEM_AVAILABLE_KB}KB < floor ${AIDEVOPS_DISK_PERCENT_FLOOR_KB}KB, important-usage available=${AIDEVOPS_DISK_IMPORTANT_AVAILABLE_KB}KB; macOS reclaims purgeable space on demand, aidevops never thins snapshots (AIDEVOPS_DISK_COUNT_PURGEABLE=0 disables)" >>"$LOGFILE"
+	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
 
 	# GH#18987: runaway backstop on registered worktrees (default 1000; the disk

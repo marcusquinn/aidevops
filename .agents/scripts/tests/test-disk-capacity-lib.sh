@@ -40,6 +40,19 @@ shift
 exec "$@"
 EOF
 chmod +x "$TEST_ROOT/bin/quota" "$TEST_ROOT/bin/timeout"
+# GH#40266: uname/osascript stubs keep macOS hosts from probing real APFS
+# important-usage capacity; every case defaults to a non-Darwin host.
+cat >"$TEST_ROOT/bin/uname" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${UNAME_S:-Linux}"
+EOF
+cat >"$TEST_ROOT/bin/osascript" <<'EOF'
+#!/usr/bin/env bash
+[[ -z "${OSASCRIPT_ARGS_LOG:-}" ]] || printf '%s\n' "${@: -1}" >"$OSASCRIPT_ARGS_LOG"
+printf '%s\n' "${IMPORTANT_BYTES:-}"
+exit "${OSASCRIPT_RC:-0}"
+EOF
+chmod +x "$TEST_ROOT/bin/uname" "$TEST_ROOT/bin/osascript"
 QUOTA_HEADER='Disk quotas for user test (uid 1000):\n     Filesystem  blocks   quota   limit   grace   files   quota   limit   grace\n'
 
 pass() {
@@ -154,6 +167,54 @@ if [[ "$(cat "$TEST_ROOT/quota-args" 2>/dev/null)" == "-w -p -u -g -f /test" ]];
 	pass "quota probe targets the df mount point"
 else
 	fail "quota probe targets the df mount point" "args=$(cat "$TEST_ROOT/quota-args" 2>/dev/null)"
+fi
+
+# GH#40266: 2000 GiB volume, 50 GiB capped floor. Args: description, uname,
+# important bytes, osascript rc, purgeable opt-in, df available KB, expected
+# rc, reason and important-usage state.
+run_important_check() {
+	local description="$1"
+	local uname_s="$2"
+	local important_bytes="$3"
+	local osascript_rc="$4"
+	local count_purgeable="$5"
+	local available_kb="$6"
+	local expected_rc="$7"
+	local expected_reason="$8"
+	local expected_state="$9"
+	local rc=0
+	UNAME_S="$uname_s" IMPORTANT_BYTES="$important_bytes" OSASCRIPT_RC="$osascript_rc" \
+		AIDEVOPS_DISK_COUNT_PURGEABLE="$count_purgeable" DF_TOTAL_KB=2097152000 DF_AVAILABLE_KB="$available_kb" \
+		OSASCRIPT_ARGS_LOG="$TEST_ROOT/osascript-args" PATH="$TEST_ROOT/bin:$(dirname "$REAL_AWK"):/usr/bin:/bin" \
+		aidevops_worktree_capacity_check "$TEST_ROOT/existing" || rc=$?
+	if [[ "$rc" -eq "$expected_rc" && "$AIDEVOPS_DISK_CAPACITY_REASON" == "$expected_reason" &&
+		"$AIDEVOPS_DISK_IMPORTANT_STATE" == "$expected_state" ]]; then
+		pass "$description"
+		return 0
+	fi
+	fail "$description" "rc=$rc reason=$AIDEVOPS_DISK_CAPACITY_REASON state=$AIDEVOPS_DISK_IMPORTANT_STATE"
+	return 0
+}
+
+# 40 GiB df headroom is below the 50 GiB floor; 600 GiB important-usage covers it.
+run_important_check "purgeable capacity satisfies the percentage floor" Darwin 644245094400 0 1 41943040 0 available measured
+if [[ "$AIDEVOPS_DISK_IMPORTANT_AVAILABLE_KB" -eq 629145600 && "$(cat "$TEST_ROOT/osascript-args" 2>/dev/null)" == "$TEST_ROOT/existing" ]]; then
+	pass "important-usage probe receives the probe path as argv"
+else
+	fail "important-usage probe receives the probe path as argv" "kb=$AIDEVOPS_DISK_IMPORTANT_AVAILABLE_KB args=$(cat "$TEST_ROOT/osascript-args" 2>/dev/null)"
+fi
+run_important_check "insufficient purgeable capacity still blocks" Darwin 48318382080 0 1 41943040 1 below-minimum-percent measured
+run_important_check "purgeable opt-out keeps the raw floor" Darwin 644245094400 0 0 41943040 1 below-minimum-percent disabled
+run_important_check "absolute minimum stays on raw df" Darwin 644245094400 0 1 4194304 1 below-minimum-kb unavailable
+run_important_check "failed important-usage probe fails closed" Darwin 644245094400 1 1 41943040 1 below-minimum-percent unavailable
+run_important_check "non-numeric important-usage reply fails closed" Darwin "error" 0 1 41943040 1 below-minimum-percent unavailable
+run_important_check "non-Darwin host has no purgeable credit" Linux 644245094400 0 1 41943040 1 below-minimum-percent unsupported
+rm -f "$TEST_ROOT/osascript-args"
+run_important_check "headroom above the floor never probes" Darwin 644245094400 0 1 83886080 0 available unavailable
+if [[ ! -e "$TEST_ROOT/osascript-args" ]]; then
+	pass "important-usage probe skipped when df meets the floor"
+else
+	fail "important-usage probe skipped when df meets the floor"
 fi
 
 printf 'Results: %s passed, %s failed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_FAILED"
