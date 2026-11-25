@@ -347,6 +347,32 @@ fi
         with self.assertRaisesRegex(provision.Rejected, "incomplete-package-inventory"):
             provision.snapshot(modules, 67108864, 20000, inventory=inventory)
 
+    def test_hoisted_node_linker_is_refused_before_member_walk(self):
+        # t19381: hoisted layouts can never satisfy member checks; name the reason.
+        self.make_workspace()
+        for parent in (self.repo, self.wt):
+            config = parent / "pnpm-workspace.yaml"
+            config.write_text(config.read_text() + "nodeLinker: hoisted  # flat tree\n")
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        result = subprocess.run(  # nosec B603 -- current interpreter, fixed helper and fixture-owned arguments.
+            [sys.executable, str(SCRIPTS / "worktree-dependency-provision.py"),
+             str(self.repo), str(self.wt), ".", "--workspace-list"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "dependency-provision-rejected reason=unsupported-node-linker-hoisted\n")
+        self.run_restore(interactive=True)
+        log = (self.root / "restore.log").read_text()
+        self.assertNotIn("outcome=provisioned", log)
+        self.assertNotIn("incomplete-package-inventory", log)
+        self.assertFalse((self.wt / "node_modules").exists())
+
+    def test_hoisted_npmrc_is_refused_for_single_package_pnpm(self):
+        self.make_pnpm()
+        (self.repo / ".npmrc").write_text("auto-install-peers=true\nnode-linker = hoisted\n")
+        with self.assertRaisesRegex(provision.Rejected, "unsupported-node-linker-hoisted"):
+            self.validate()
+        (self.repo / ".npmrc").write_text("node-linker=isolated\n")
+        self.validate()
+
     def test_workspace_interactive_hidden_members_and_exclusions(self):
         self.make_workspace()
         for parent in (self.repo, self.wt):

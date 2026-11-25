@@ -5,6 +5,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess  # nosec B404 -- fixed read-only Git plumbing, never a shell.
@@ -14,6 +15,12 @@ from contextlib import contextmanager
 from _worktree_dependency_manifest import (
     Rejected, pnpm_inventory, required_dependencies, workspace_members, workspace_patterns,
 )
+
+# t19381: pnpm's hoisted linker keeps a flat root tree of real directories and
+# leaves member node_modules nearly empty, so isolated-layout checks can never
+# pass; a hoisted root also exceeds the copy budget. Refuse before lock reads.
+HOISTED_WORKSPACE_SETTING = re.compile(rb"^nodeLinker:[ \t]*['\"]?hoisted['\"]?[ \t]*(?:#.*)?\r?$", re.MULTILINE)
+HOISTED_NPMRC_SETTING = re.compile(rb"^[ \t]*node-linker[ \t]*=[ \t]*['\"]?hoisted['\"]?[ \t]*\r?$", re.MULTILINE)
 
 
 @contextmanager
@@ -55,6 +62,18 @@ def regular_bytes(path, limit=8 * 1024 * 1024):
         if len(data) > limit:
             raise Rejected("byte-budget-exceeded")
         return data
+
+
+def reject_hoisted_linker(*roots, workspace_config=b""):
+    """Fail fast with a named reason when pnpm is configured for node-linker=hoisted."""
+    if HOISTED_WORKSPACE_SETTING.search(workspace_config):
+        raise Rejected("unsupported-node-linker-hoisted")
+    for root in dict.fromkeys(roots):
+        npmrc = Path(root) / ".npmrc"
+        # A symlinked .npmrc is not read here; the existing checks still decide.
+        if (npmrc.is_file() and not npmrc.is_symlink()
+                and HOISTED_NPMRC_SETTING.search(regular_bytes(npmrc))):
+            raise Rejected("unsupported-node-linker-hoisted")
 
 
 def contained_path(path):
@@ -143,6 +162,7 @@ def identity(repo, worktree, relative):
     name, lock = matching_lock(source, dest)
     modules = contained_path(source / "node_modules")
     if name == "pnpm-lock.yaml":
+        reject_hoisted_linker(repo, source)
         installed = contained_path(modules / ".pnpm" / "lock.yaml")
         if regular_bytes(installed) != lock:
             raise Rejected("stale-installed-lock")
@@ -157,6 +177,7 @@ def workspace_identity(repo, worktree):
     config = regular_bytes(repo / "pnpm-workspace.yaml")
     if config != regular_bytes(worktree / "pnpm-workspace.yaml"):
         raise Rejected("stale-workspace-identity")
+    reject_hoisted_linker(repo, workspace_config=config)
     name, lock = matching_lock(repo, worktree)
     if name != "pnpm-lock.yaml" or regular_bytes(repo / "node_modules/.pnpm/lock.yaml") != lock:
         raise Rejected("stale-installed-lock")
