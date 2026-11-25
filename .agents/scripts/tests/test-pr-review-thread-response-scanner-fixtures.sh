@@ -703,9 +703,9 @@ process_start_for_pid() {
 		stat_content=$(<"/proc/${pid}/stat") || stat_content=""
 		stat_content="${stat_content##*) }"
 		local -a stat_fields=()
-		read -r -a stat_fields <<<"$stat_content" || true
+		read -r -a stat_fields <<<"${stat_content}" || true
 		process_start="${stat_fields[19]:-}"
-		printf '%s\n' "$process_start"
+		printf '%s\n' "${process_start}"
 		return 0
 	fi
 	if [[ -x /bin/ps ]]; then
@@ -715,7 +715,7 @@ process_start_for_pid() {
 	fi
 	process_start="${process_start#"${process_start%%[![:space:]]*}"}"
 	process_start="${process_start%"${process_start##*[![:space:]]}"}"
-	printf '%s\n' "$process_start"
+	printf '%s\n' "${process_start}"
 	return 0
 }
 

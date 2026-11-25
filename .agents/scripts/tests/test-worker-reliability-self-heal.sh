@@ -136,8 +136,8 @@ define_drift_helper() {
 			printf 'Darwin\n'
 			return 0
 		fi
-		command uname "$@"
-		return $?
+		command uname "$@" || return $?
+		return 0
 	}
 	return 0
 }

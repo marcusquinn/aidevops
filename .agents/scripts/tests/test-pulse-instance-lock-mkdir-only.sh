@@ -226,12 +226,12 @@ wait "$child"
 FAKEOF
 	chmod +x "$fake_script"
 	local ready_file="${TEST_ROOT}/pulse-wrapper.ready"
-	rm -f "$ready_file"
-	"$fake_script" "$ready_file" &
+	rm -f "${ready_file}"
+	"$fake_script" "${ready_file}" &
 	local fake_pid=$!
 	# Wait (bounded) for the fixture to install its trap and signal readiness.
 	local waited=0
-	while [[ ! -e "$ready_file" && "$waited" -lt 50 ]]; do
+	while [[ ! -e "${ready_file}" && "${waited}" -lt 50 ]]; do
 		sleep 0.1
 		waited=$((waited + 1))
 	done
