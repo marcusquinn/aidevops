@@ -87,6 +87,7 @@ class SessionReport:
     cost_provenance: str = "unavailable"
     lineage_provenance: str = "unavailable"
     compaction_provenance: str = "unavailable"
+    session_kind_provenance: str = "unavailable"
 
 
 @dataclass
@@ -361,7 +362,11 @@ def _normalized_session_location(row: SessionRow) -> str:
     return re.sub(r"/+", "/", location)
 
 
-def _session_kind_for_group(group: list[SessionRow]) -> str:
+AUTO_WORKTREE_RE = re.compile(r"(?:^|/)[^/]*-feature-auto-\d{8}-\d{6}-gh\d+(?:/|$)")
+
+
+def _session_kind_for_group(group: list[SessionRow]) -> tuple[str, str]:
+    """Return (session_kind, provenance) for a session group."""
     for row in group:
         location = _normalized_session_location(row)
         if (
@@ -369,8 +374,11 @@ def _session_kind_for_group(group: list[SessionRow]) -> str:
             or "/tmp/opencode" in location
             or "/temp/opencode" in location
         ):
-            return "headless_worker"
-    return "interactive"
+            return "headless_worker", "directory: temp opencode dir"
+    for row in group:
+        if AUTO_WORKTREE_RE.search(_normalized_session_location(row)):
+            return "headless_worker", "directory: pulse feature-auto worktree"
+    return "interactive", "default: no headless signal"
 
 
 def _models_for_group(
@@ -414,11 +422,13 @@ def _opencode_report_from_group(
     compaction_provenance = "opencode_session.parent_id,time_compacting"
     if obs["has_compaction_evidence"]:
         compaction_provenance = "combined: opencode_session + llm_requests.agent"
+    session_kind, session_kind_provenance = _session_kind_for_group(group)
     return _make_session_report(
         session_id=root_id,
         session_name=_safe_title(root.title),
         runtime="opencode",
-        session_kind=_session_kind_for_group(group),
+        session_kind=session_kind,
+        session_kind_provenance=session_kind_provenance,
         models_used=_models_for_group(context.conn, group, session_ids, obs),
         tokens_input=tokens["input"],
         tokens_output=tokens["output"],

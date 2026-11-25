@@ -55,6 +55,7 @@ def as_dict(report: Any) -> dict[str, Any]:
         "cost_provenance": report.cost_provenance,
         "lineage_provenance": report.lineage_provenance,
         "compaction_provenance": report.compaction_provenance,
+        "session_kind_provenance": report.session_kind_provenance,
     }
 
 
