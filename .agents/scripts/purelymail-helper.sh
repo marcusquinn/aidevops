@@ -983,9 +983,12 @@ cmd_copy_to_remove() {
 	local confirm="${3:-}"
 	_pm_valid_address "$address" || return 1
 	_pm_valid_secret_name "$secret" || return 1
-	local scripts current target
+	local scripts current target name _state found=0
 	scripts=$(_pm_sieve_list_or_fail "$address" "$secret") || return 1
-	if ! cut -f1 <<<"$scripts" | grep -qxF -- "$PM_SIEVE_SCRIPT"; then
+	while IFS=$'\t' read -r name _state; do
+		[[ "$name" == "$PM_SIEVE_SCRIPT" ]] && found=1
+	done <<<"$scripts"
+	if [[ "$found" -ne 1 ]]; then
 		print_info "No '$PM_SIEVE_SCRIPT' Sieve script on $address; nothing to remove"
 		return 0
 	fi
