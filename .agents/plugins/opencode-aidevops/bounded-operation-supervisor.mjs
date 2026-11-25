@@ -147,11 +147,12 @@ function survivorSnapshot(snapshot, exitedCommand) {
 // marked descendant is never missed between periodic scans (GH#34324).
 // GH#40309: the command's identity is read after each scan records it, so an
 // inventory that missed the spawn (a loaded host) still excludes a stale
-// listing of the exited command instead of counting it as a survivor.
-function ownedTreeDrained(tracker, terminator, terminateSurvivors, commandPid) {
-  let snapshot = survivorSnapshot(tracker.track(), tracker.identity(commandPid));
+// listing of the exited command instead of counting it as a survivor. The first
+// recorded identity is pinned, so a later process reusing the PID stays a survivor.
+function ownedTreeDrained(tracker, terminator, terminateSurvivors, commandIdentity) {
+  let snapshot = survivorSnapshot(tracker.track(), commandIdentity());
   if (snapshot && tracker.ownGroupMembers(snapshot) === 1 && tracker.nestedTargets(snapshot).length === 0) {
-    snapshot = survivorSnapshot(tracker.track(MARKER_SCAN), tracker.identity(commandPid));
+    snapshot = survivorSnapshot(tracker.track(MARKER_SCAN), commandIdentity());
   }
   if (!snapshot) return false;
   const nested = tracker.nestedTargets(snapshot);
@@ -254,10 +255,13 @@ export async function runSupervisor() {
     stdio: ["ignore", "inherit", "inherit"],
   });
 
+  let pinnedIdentity = null;
+  const commandIdentity = () => (pinnedIdentity ||= tracker.identity(child.pid));
   const trackTimer = setInterval(tracker.track, TRACK_INTERVAL_MS);
   child.once("spawn", () => {
     result.started = reportCommandStarted(operationID);
     tracker.track();
+    commandIdentity();
   });
   child.once("error", () => {
     result.finished = true;
@@ -269,7 +273,7 @@ export async function runSupervisor() {
     result.exit = Number.isInteger(code) ? code : 1;
     // Command completion also owns cleanup of servers with detached stdio.
     // Preserve its exit status while draining any surviving owned descendants.
-    const snapshot = survivorSnapshot(tracker.track(MARKER_SCAN), tracker.identity(child.pid));
+    const snapshot = survivorSnapshot(tracker.track(MARKER_SCAN), commandIdentity());
     if (snapshot && (tracker.nestedTargets(snapshot).length || tracker.ownGroupMembers(snapshot) > 1)) {
       terminateSurvivors();
     }
@@ -277,7 +281,7 @@ export async function runSupervisor() {
 
   return new Promise((resolve) => {
     const drainTimer = setInterval(() => {
-      if (!result.finished || !ownedTreeDrained(tracker, terminator, terminateSurvivors, child.pid)) return;
+      if (!result.finished || !ownedTreeDrained(tracker, terminator, terminateSurvivors, commandIdentity)) return;
       // A grace timer due in the same turn must not kill the reporting supervisor.
       terminator.settle();
       clearInterval(drainTimer);
