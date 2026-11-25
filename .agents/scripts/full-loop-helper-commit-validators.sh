@@ -233,6 +233,9 @@ _validator_state_unchanged() {
 # that merge gate decides instead of a saturated local host. Set per run by
 # _run_project_validators; read by commit-and-pr PR metadata.
 FULL_LOOP_VALIDATOR_DEFERRALS=""
+# GH#40322: plugin tests that failed in the full suite and then passed on a
+# serialized rerun. Set and read the same way as the deferrals above.
+FULL_LOOP_VALIDATOR_FLAKY=""
 
 # Print the PR base branch's required status-check contexts, one per line.
 # One lookup per validator run, shared by scope subshells via snapshot_dir.
@@ -347,7 +350,7 @@ _run_scoped_node_checks() {
 			return 1
 		fi
 	fi
-	local phase="" script_name="" check_count=0 command_rc=0 check_index=0 deferring=0 phase_timeout=""
+	local phase="" script_name="" check_count=0 command_rc=0 check_index=0 deferring=0 phase_timeout="" plugin_tests=0
 	for phase in format lint typecheck test; do
 		script_name=$(_validator_select_script "$package_json" "$phase") || continue
 		check_count=$((check_count + 1))
@@ -360,9 +363,11 @@ _run_scoped_node_checks() {
 			continue
 		fi
 		phase_timeout="$t"
+		plugin_tests=0
 		# Callers run this function in a per-scope subshell and test is its
 		# last phase, so the selected concurrency reaches no other scope.
 		if [[ "$phase" == "test" ]] && jq -e '.name == "opencode-aidevops"' "$package_json" >/dev/null 2>&1; then
+			plugin_tests=1
 			_validator_plugin_test_concurrency
 			phase_timeout=$(_validator_plugin_test_timeout "$t")
 			if [[ "$phase_timeout" != "$t" ]]; then
@@ -389,6 +394,10 @@ _run_scoped_node_checks() {
 			_validator_timeout_remedy
 			return 1
 		elif [[ "$command_rc" -ne 0 ]]; then
+			if [[ "$plugin_tests" -eq 1 ]] && _validator_rerun_flaky_plugin_tests "$scope" "$phase_timeout" \
+				"$snapshot_dir" "$check_index" "$pm run $script_name ($scope_label)"; then
+				continue
+			fi
 			print_error "[validators] CHECK FAILED (exit ${command_rc}): $pm run $script_name ($scope_label)"
 			_validator_print_failure_log "${snapshot_dir}/command-${check_index}.log"
 			return 1
@@ -430,6 +439,128 @@ _validator_print_failure_log() {
 		print_error "[validators] log tail:"
 	fi
 	tail -20 "$log_file" >&2
+	return 0
+}
+
+# GH#40322: on a host loaded far beyond its CPUs, plugin timing tests can fail
+# at random in the full suite (GH#40309). As for affected script suites
+# (workflows/full-loop.md "flaky"), rerun only the failed tests, serialized, up
+# to twice. Tests that pass are reported as flaky and do not block; a repeat
+# failure, an unattributable failure, or more than 10 failed tests still blocks.
+# Args: $1=scope $2=phase timeout $3=snapshot dir $4=check index $5=label.
+_validator_rerun_flaky_plugin_tests() {
+	local scope="$1" t="$2" snapshot_dir="$3" check_index="$4" command_label="$5"
+	local names_file="${snapshot_dir}/flaky-names-${check_index}" files_file="${snapshot_dir}/flaky-files-${check_index}"
+	local name="" file="" attempt=0 rerun_rc=0 rerun_log="" rerun_timeout="$t" count=0
+	if ! _validator_failed_plugin_tests "$scope" "${snapshot_dir}/command-${check_index}.log" "$names_file" "$files_file"; then
+		print_info "[validators] failure is not attributable to at most 10 named plugin tests; not rerunning"
+		return 1
+	fi
+	local -a patterns=() files=()
+	while IFS= read -r name; do
+		patterns+=("--test-name-pattern=$(_validator_regex_escape "$name")")
+	done <"$names_file"
+	while IFS= read -r file; do files+=("$file"); done <"$files_file"
+	count="${#patterns[@]}"
+	[[ "$rerun_timeout" -gt 600 ]] && rerun_timeout=600
+	for attempt in 1 2; do
+		rerun_log="${snapshot_dir}/flaky-rerun-${check_index}-${attempt}.log"
+		print_info "[validators] rerunning ${count} failed plugin test(s) serialized (attempt ${attempt}/2)"
+		rerun_rc=0
+		(
+			cd "$scope" || exit 1
+			timeout_sec "$rerun_timeout" node --test --test-concurrency=1 --test-reporter=spec "${patterns[@]}" "${files[@]}"
+		) >"$rerun_log" 2>&1 || rerun_rc=$?
+		_validator_snapshot "${snapshot_dir}/after-rerun-${check_index}" || return 1
+		_validator_state_unchanged "${snapshot_dir}/before-${check_index}" "${snapshot_dir}/after-rerun-${check_index}" \
+			"serialized rerun of ${command_label}" || return 1
+		if [[ "$rerun_rc" -eq 0 ]] && _validator_rerun_passed_all "$names_file" "$rerun_log"; then
+			name=$(awk 'NR > 1 { printf " | " } { printf "%s", $0 }' "$names_file") || name="(names unavailable)"
+			print_warning "[validators] FLAKY (not blocking): ${count} plugin test(s) failed in the full suite and passed on serialized rerun ${attempt}: ${name}"
+			printf '%s: %s\n' "$command_label" "$name" >>"${snapshot_dir}/flaky" || return 1
+			return 0
+		fi
+		[[ "$rerun_rc" -eq 124 ]] && break
+	done
+	print_error "[validators] ${count} failed plugin test(s) failed again on serialized rerun (exit ${rerun_rc}); blocking"
+	tail -20 "$rerun_log" >&2
+	return 1
+}
+
+# Write the failed test names and their test files from a Node spec-reporter
+# log. A location may be a helper module that only registers tests when another
+# file calls it, so the files that import a location are rerun too. Returns 1
+# when the failure cannot be attributed to 1-10 named tests under tests/.
+# Args: $1=scope $2=log $3=names output $4=files output.
+_validator_failed_plugin_tests() {
+	local scope="$1" log_file="$2" names_file="$3" files_file="$4"
+	local records="" kind="" value="" names=0 locations=0 abs_scope="" real_scope="" candidate=""
+	records=$(awk '
+		/✖ failing tests:/ { section = 1; next }
+		!section { next }
+		/^test at / { loc = $0; sub(/^test at /, "", loc); sub(/:[0-9]+:[0-9]+$/, "", loc); print "F\t" loc; next }
+		/^✖ / { name = $0; sub(/^✖ /, "", name); sub(/ \([0-9.]+ms\)$/, "", name); print "N\t" name }
+	' "$log_file") || return 1
+	abs_scope=$(cd "$scope" && pwd) || return 1
+	real_scope=$(cd "$scope" && pwd -P) || return 1
+	: >"$names_file" || return 1
+	: >"${files_file}.locations" || return 1
+	while IFS=$'\t' read -r kind value; do
+		case "$kind" in
+		N)
+			# A file-level failure is named by its path; a name filter cannot
+			# rerun it, and the file record would pass with no tests run.
+			[[ "$value" != *.mjs ]] || return 1
+			names=$((names + 1))
+			printf '%s\n' "$value" >>"$names_file"
+			;;
+		F)
+			locations=$((locations + 1))
+			value="${value#file://}"
+			value="${value#"${real_scope}"/}"
+			value="${value#"${abs_scope}"/}"
+			[[ "$value" == tests/*.mjs && "$value" != *..* && -f "${scope}/${value}" ]] || return 1
+			printf '%s\n' "$value" >>"${files_file}.locations"
+			;;
+		esac
+	done <<<"$records"
+	[[ "$names" -ge 1 && "$names" -le 10 && "$names" -eq "$locations" ]] || return 1
+	awk '!seen[$0]++' "$names_file" >"${names_file}.unique" || return 1
+	mv "${names_file}.unique" "$names_file" || return 1
+	while IFS= read -r value; do
+		printf '%s\n' "$value"
+		for candidate in "${scope}"/tests/*.mjs; do
+			if [[ -f "$candidate" ]] && grep -q -F -- "${value##*/}" "$candidate"; then
+				printf '%s\n' "${candidate#"${scope}"/}"
+			fi
+		done
+	done <"${files_file}.locations" | awk '!seen[$0]++' >"$files_file" || return 1
+	[[ -s "$files_file" ]] || return 1
+	return 0
+}
+
+# Escape a test name for Node's --test-name-pattern, which builds a RegExp.
+_validator_regex_escape() {
+	local text="$1"
+	printf '%s' "$text" | sed -e 's/[][\\.^$|?*+(){}/]/\\&/g'
+	return 0
+}
+
+# A name filter that matches nothing also exits 0, so require a passing record
+# for every failed name before counting a rerun as passed.
+_validator_rerun_passed_all() {
+	local names_file="$1" rerun_log="$2" name="" line="" found=0
+	while IFS= read -r name; do
+		found=0
+		while IFS= read -r line; do
+			line="${line#"${line%%[![:space:]]*}"}"
+			if [[ "$line" == "✔ ${name} ("* ]]; then
+				found=1
+				break
+			fi
+		done <"$rerun_log"
+		[[ "$found" -eq 1 ]] || return 1
+	done <"$names_file"
 	return 0
 }
 
@@ -481,10 +612,23 @@ _validator_timeout_remedy() {
 	return 0
 }
 
+# Print one line per record file entry joined by "; " (empty when absent).
+_validator_join_records() {
+	local record_file="$1" record="" joined=""
+	if [[ -s "$record_file" ]]; then
+		while IFS= read -r record; do
+			joined="${joined}${joined:+; }${record}"
+		done <"$record_file"
+	fi
+	printf '%s' "$joined"
+	return 0
+}
+
 # Orchestrator. Args: $1=skip_hooks (0|1). Returns 0 on pass/skip, 1 on fail.
 _run_project_validators() {
 	local skip_hooks="${1:-0}"
 	FULL_LOOP_VALIDATOR_DEFERRALS=""
+	FULL_LOOP_VALIDATOR_FLAKY=""
 	# _validators_should_run returns 0 when validators should run, 1 otherwise.
 	if ! _validators_should_run "$skip_hooks"; then
 		return 0
@@ -546,13 +690,12 @@ _run_project_validators() {
 			return 1
 		}
 	done <<<"$scopes"
-	local deferral=""
-	if [[ -s "${snapshot_dir}/deferred" ]]; then
-		while IFS= read -r deferral; do
-			FULL_LOOP_VALIDATOR_DEFERRALS="${FULL_LOOP_VALIDATOR_DEFERRALS}${FULL_LOOP_VALIDATOR_DEFERRALS:+; }${deferral}"
-		done <"${snapshot_dir}/deferred"
-	fi
+	FULL_LOOP_VALIDATOR_DEFERRALS=$(_validator_join_records "${snapshot_dir}/deferred")
+	FULL_LOOP_VALIDATOR_FLAKY=$(_validator_join_records "${snapshot_dir}/flaky")
 	rm -rf "$snapshot_dir"
+	if [[ -n "$FULL_LOOP_VALIDATOR_FLAKY" ]]; then
+		print_warning "[validators] flaky plugin tests passed on serialized rerun (not blocking): ${FULL_LOOP_VALIDATOR_FLAKY}"
+	fi
 	if [[ -n "$FULL_LOOP_VALIDATOR_DEFERRALS" ]]; then
 		print_info "[validators] passed with deferrals to required CI (check-only scope: ${scopes//$'\n'/, }): ${FULL_LOOP_VALIDATOR_DEFERRALS}"
 		return 0

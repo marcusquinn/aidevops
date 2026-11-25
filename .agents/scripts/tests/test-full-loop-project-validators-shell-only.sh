@@ -93,6 +93,9 @@ fi
 if [[ "${NPM_FAKE_ACTION:-}" == "mutate-other" ]]; then
 	printf '%s\n' 'validator mutation' >>"${NPM_FIX_TARGET:?}"
 fi
+if [[ "$1" == run && -n "${NPM_FAKE_OUTPUT:-}" ]]; then
+	cat "$NPM_FAKE_OUTPUT"
+fi
 exit "${NPM_FAKE_RC:-0}"
 EOF
 chmod +x "${FAKE_BIN}/npm"
@@ -400,6 +403,85 @@ if [[ "$plugin_timeout_rc" -ne 0 ]] && grep -q 'TIMEOUT after 2400s: npm run tes
 	print_result "serialized plugin timeout reports the effective budget" 0
 else
 	print_result "serialized plugin timeout reports the effective budget" 1 "rc=${plugin_timeout_rc}"
+fi
+
+# GH#40322: a failed plugin test is rerun serialized by name over its file and
+# the files that import it. A pass is reported as flaky and does not block; a
+# repeat failure, an empty name filter, or an unattributable failure blocks.
+NODE_FAKE_BIN="${TEST_ROOT}/node-bin"
+mkdir -p "$NODE_FAKE_BIN"
+REAL_NODE=$(command -v node) || REAL_NODE=""
+export REAL_NODE
+cat >"${NODE_FAKE_BIN}/node" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == --test && -n "${NODE_FAKE_OUTPUT:-}" ]]; then
+	printf '%s\n' "$*" >>"${NODE_CALL_LOG:?}"
+	cat "$NODE_FAKE_OUTPUT"
+	exit "${NODE_FAKE_RC:-0}"
+fi
+[[ -n "${REAL_NODE:-}" ]] || exit 127
+exec "$REAL_NODE" "$@"
+EOF
+chmod +x "${NODE_FAKE_BIN}/node"
+(
+	cd "$PLUGIN_REPO" || exit 1
+	mkdir -p tests
+	printf '%s\n' 'export function caseTests() {}' >tests/case.mjs
+	printf '%s\n' 'import { caseTests } from "./case.mjs";' 'caseTests();' >tests/test-importer.mjs
+	printf '%s\n' 'export const unrelated = true;' >tests/unrelated.mjs
+	git add tests
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'plugin tests'
+) || exit 1
+FLAKY_NAME='drains a (slow) child [GH#1]'
+SUITE_FAILURE="${TEST_ROOT}/suite-failure.txt"
+printf '%s\n' '✔ passing test (1ms)' 'ℹ fail 1' '' '✖ failing tests:' '' 'test at tests/case.mjs:12:3' \
+	"✖ ${FLAKY_NAME} (31643.4ms)" '  Error: operation did not reach a terminal state' >"$SUITE_FAILURE"
+UNATTRIBUTED_FAILURE="${TEST_ROOT}/suite-crash.txt"
+printf '%s\n' 'Error: Cannot find module' 'ℹ fail 1' >"$UNATTRIBUTED_FAILURE"
+RERUN_PASS="${TEST_ROOT}/rerun-pass.txt"
+printf '%s\n' '▶ suite' "  ✔ ${FLAKY_NAME} (12.5ms)" '✔ suite (13ms)' 'ℹ fail 0' >"$RERUN_PASS"
+RERUN_EMPTY="${TEST_ROOT}/rerun-empty.txt"
+printf '%s\n' '✔ tests/case.mjs (100ms)' 'ℹ tests 1' 'ℹ fail 0' >"$RERUN_EMPTY"
+run_flaky_case() {
+	local log_name="$1" suite_output="$2" rerun_output="$3" rerun_rc="$4"
+	NODE_CALL_LOG="${TEST_ROOT}/node-${log_name}.log"
+	: >"$NODE_CALL_LOG"
+	(
+		cd "$PLUGIN_REPO" || exit 1
+		export NODE_CALL_LOG NPM_FAKE_RC=1 NPM_FAKE_OUTPUT="$suite_output" NODE_FAKE_OUTPUT="$rerun_output" NODE_FAKE_RC="$rerun_rc"
+		PATH="${NODE_FAKE_BIN}:${FAKE_BIN}:$PATH" AIDEVOPS_PLUGIN_TEST_CONCURRENCY=1 _run_project_validators 0 || exit $?
+		printf 'FLAKY=%s\n' "$FULL_LOOP_VALIDATOR_FLAKY"
+	) >"${TEST_ROOT}/${log_name}.out" 2>"${TEST_ROOT}/${log_name}.err"
+	return $?
+}
+run_flaky_case flaky-pass "$SUITE_FAILURE" "$RERUN_PASS" 0
+flaky_pass_rc=$?
+if [[ "$flaky_pass_rc" -eq 0 ]] &&
+	grep -q -F "FLAKY=npm run test (repository root): ${FLAKY_NAME}" "${TEST_ROOT}/flaky-pass.out" &&
+	grep -q -F 'FLAKY (not blocking): 1 plugin test(s) failed in the full suite and passed on serialized rerun 1' "${TEST_ROOT}/flaky-pass.err" &&
+	grep -q -F -- '--test --test-concurrency=1 --test-reporter=spec --test-name-pattern=drains a \(slow\) child \[GH#1\] tests/case.mjs tests/test-importer.mjs' "${TEST_ROOT}/node-flaky-pass.log" &&
+	! grep -q 'unrelated.mjs' "${TEST_ROOT}/node-flaky-pass.log"; then
+	print_result "failed plugin test that passes on serialized rerun is reported as flaky" 0
+else
+	print_result "failed plugin test that passes on serialized rerun is reported as flaky" 1 "rc=${flaky_pass_rc}"
+fi
+run_flaky_case flaky-repeat "$SUITE_FAILURE" "$SUITE_FAILURE" 1
+flaky_repeat_rc=$?
+run_flaky_case flaky-empty "$SUITE_FAILURE" "$RERUN_EMPTY" 0
+flaky_empty_rc=$?
+run_flaky_case flaky-unattributed "$UNATTRIBUTED_FAILURE" "$RERUN_PASS" 0
+flaky_unattributed_rc=$?
+if [[ "$flaky_repeat_rc" -ne 0 && "$flaky_empty_rc" -ne 0 && "$flaky_unattributed_rc" -ne 0 ]] &&
+	grep -q 'failed again on serialized rerun' "${TEST_ROOT}/flaky-repeat.err" &&
+	grep -q 'CHECK FAILED (exit 1): npm run test' "${TEST_ROOT}/flaky-repeat.err" &&
+	[[ "$(wc -l <"${TEST_ROOT}/node-flaky-repeat.log" | tr -d ' ')" == 2 ]] &&
+	grep -q 'failed again on serialized rerun' "${TEST_ROOT}/flaky-empty.err" &&
+	grep -q 'not attributable' "${TEST_ROOT}/flaky-unattributed.out" &&
+	[[ ! -s "${TEST_ROOT}/node-flaky-unattributed.log" ]]; then
+	print_result "repeat, empty-filter and unattributable plugin failures still block" 0
+else
+	print_result "repeat, empty-filter and unattributable plugin failures still block" 1 \
+		"repeat=${flaky_repeat_rc} empty=${flaky_empty_rc} unattributed=${flaky_unattributed_rc}"
 fi
 
 # GH#34502: ignored canonical configuration survives linked-worktree creation.
