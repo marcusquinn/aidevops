@@ -104,8 +104,9 @@ privacy_redact() {
 privacy_redact_path() {
 	local value="$1"
 	local redacted=""
-	case "$value" in
-	/Users/* | /home/* | /private/var/* | /var/folders/* | /var/tmp/* | /tmp/* | /run/* | \~/*) redacted="[local-path]" ;;
+	# Match roots after dropping the leading slash; any "~/" value is also local.
+	case "${value#/}" in
+	Users/* | home/* | private/var/* | var/folders/* | var/tmp/* | tmp/* | run/* | \~/*) redacted="[local-path]" ;;
 	*) redacted="$value" ;;
 	esac
 	privacy_redact "$redacted"
