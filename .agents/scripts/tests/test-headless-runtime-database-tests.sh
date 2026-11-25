@@ -525,6 +525,106 @@ SQL
 	return 0
 }
 
+# Hold an EXCLUSIVE lock on a rollback-journal DB until the holder is killed.
+# Args: $1 = DB path. Prints the holder PID once the lock is observable.
+_hold_exclusive_sqlite_lock() {
+	local db_path="$1"
+	local holder_pid="" probe=0
+	printf 'BEGIN EXCLUSIVE;\n.shell sleep 60\nCOMMIT;\n' | sqlite3 "$db_path" >/dev/null 2>&1 &
+	holder_pid=$!
+	while [[ "$probe" -lt 50 ]]; do
+		if ! sqlite3 "$db_path" "SELECT COUNT(*) FROM sqlite_master;" >/dev/null 2>&1; then
+			printf '%s\n' "$holder_pid"
+			return 0
+		fi
+		sleep 0.1
+		probe=$((probe + 1))
+	done
+	kill "$holder_pid" 2>/dev/null || true
+	return 1
+}
+
+_release_exclusive_sqlite_lock() {
+	local holder_pid="$1"
+	[[ -n "$holder_pid" ]] || return 0
+	pkill -P "$holder_pid" 2>/dev/null || true
+	kill "$holder_pid" 2>/dev/null || true
+	wait "$holder_pid" 2>/dev/null || true
+	return 0
+}
+
+test_worker_db_schema_template_seeds_locked_fresh_init() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local fixture_dir="${TEST_ROOT}/worker-db-schema-template"
+	local shared_db="${shared_dir}/opencode.db"
+	local template="${fixture_dir}/template.db"
+	local log_file="${fixture_dir}/init.log"
+	local live_db="${fixture_dir}/live/opencode.db"
+	local seeded_db="${fixture_dir}/seeded/opencode.db"
+	local unseeded_db="${fixture_dir}/unseeded/opencode.db"
+	local live_status=0 seeded_status=0 unseeded_status=0 holder_pid="" started=0 seeded_seconds=0
+	local template_state="" seeded_state="" seeded_logged=no unseeded_exists=no ledgerless_stored=no
+	local saved_timeout_fn=""
+	mkdir -p "$shared_dir" "${fixture_dir}/live" "${fixture_dir}/seeded" "${fixture_dir}/unseeded"
+	rm -f "$shared_db" "$template"
+
+	create_complete_opencode_test_schema "$shared_db"
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
+INSERT INTO __drizzle_migrations VALUES (1, 'shared-schema-ready', 12345);
+INSERT INTO project VALUES ('project-shared', 'Shared Project');
+PRAGMA user_version = 7;
+SQL
+
+	export AIDEVOPS_WORKER_DB_TEMPLATE="$template"
+	export AIDEVOPS_WORKER_DB_INIT_ATTEMPTS=2
+	export AIDEVOPS_WORKER_DB_INIT_RETRY_DELAY=3
+	# A short busy timeout keeps the locked attempts fast; restore it afterwards.
+	saved_timeout_fn=$(declare -f sqlite3_with_timeout)
+	sqlite3_with_timeout() {
+		sqlite3 -cmd ".timeout 200" "$@"
+		return $?
+	}
+
+	_initialize_worker_db_from_shared_schema "$live_db" "$shared_db" >/dev/null 2>&1 || live_status=$?
+	# A snapshot whose ledgers are empty must not replace the usable template.
+	sqlite3 "${fixture_dir}/ledgerless.db" "CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);"
+	_store_worker_db_schema_template "${fixture_dir}/ledgerless.db" && ledgerless_stored=yes
+	if [[ -f "$template" ]]; then
+		template_state=$(sqlite3 "$template" "PRAGMA user_version; SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'shared-schema-ready'; SELECT COUNT(*) FROM project;")
+	fi
+
+	if holder_pid=$(_hold_exclusive_sqlite_lock "$shared_db"); then
+		started=$SECONDS
+		_initialize_worker_db_from_shared_schema "$seeded_db" "$shared_db" >"$log_file" 2>&1 || seeded_status=$?
+		seeded_seconds=$((SECONDS - started))
+		if [[ -f "$seeded_db" ]]; then
+			seeded_state=$(sqlite3 "$seeded_db" "PRAGMA user_version; SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'shared-schema-ready'; SELECT COUNT(*) FROM project;")
+		fi
+		grep -q 'db_schema_init_from_template' "$log_file" && seeded_logged=yes
+		rm -f "$template"
+		_initialize_worker_db_from_shared_schema "$unseeded_db" "$shared_db" >/dev/null 2>&1 || unseeded_status=$?
+		[[ -e "$unseeded_db" ]] && unseeded_exists=yes
+		_release_exclusive_sqlite_lock "$holder_pid"
+	else
+		seeded_status=lock-unavailable
+	fi
+
+	eval "$saved_timeout_fn"
+	unset AIDEVOPS_WORKER_DB_TEMPLATE AIDEVOPS_WORKER_DB_INIT_ATTEMPTS AIDEVOPS_WORKER_DB_INIT_RETRY_DELAY
+
+	if [[ "$live_status" -eq 0 && "$template_state" == $'7\n1\n0' && "$ledgerless_stored" == "no" &&
+		"$seeded_status" == "0" && "$seeded_state" == $'7\n1\n0' && "$seeded_logged" == "yes" &&
+		"$seeded_seconds" -lt 3 && "$unseeded_status" -eq 1 && "$unseeded_exists" == "no" ]]; then
+		print_result "locked worker DB init seeds from the cached schema template" 0
+		return 0
+	fi
+
+	print_result "locked worker DB init seeds from the cached schema template" 1 \
+		"live=$live_status template=${template_state//$'\n'/,} ledgerless_stored=$ledgerless_stored seeded=$seeded_status seeded_state=${seeded_state//$'\n'/,} logged=$seeded_logged seconds=$seeded_seconds unseeded=$unseeded_status unseeded_exists=$unseeded_exists"
+	return 0
+}
+
 test_merge_worker_db_maps_columns_by_name() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/merge-opencode-column-order"
