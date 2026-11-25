@@ -303,7 +303,8 @@ export function defineAidevopsV2Adapter(setup) {
   return { id: "aidevops", setup };
 }
 
-async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus }) {
+async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus, providerAuth }) {
+  providerAuth?.cacheKeepalive.dispose();
   await stopEvents?.().catch(() => {});
   // GH#35898: a disposed instance must not leave a stale idle heartbeat.
   dbActivityHeartbeat?.remove();
@@ -364,6 +365,7 @@ export async function setupAidevopsV2(ctx) {
   let stopEvents;
   let dbActivityHeartbeat;
   let sessionBus;
+  let providerAuth;
   try {
     await mcpRuntime.initialize();
     const client = createCompatibilityClient(ctx, mcpRuntime.client);
@@ -449,7 +451,7 @@ export async function setupAidevopsV2(ctx) {
       greetingEnabled,
     });
     const permissionBroker = createPermissionBroker({ isHeadless });
-    const providerAuth = createV2ProviderAuthRuntime();
+    providerAuth = createV2ProviderAuthRuntime();
     // Terminal title status is owned by the V2 TUI entrypoint (v2-plugin/tui.mjs):
     // this service process has no reliable terminal and must not write titles.
 
@@ -491,8 +493,10 @@ export async function setupAidevopsV2(ctx) {
       event.input = output.args;
       // t18905: after the gates, so only tools that will run are published.
       sessionBus.toolBefore(event);
+      providerAuth.cacheKeepalive.toolStarted(event.sessionID, event.id);
     }));
     await register(registrations, ctx.tool.hook("execute.after", async (event) => {
+      providerAuth.cacheKeepalive.toolFinished(event.sessionID, event.id);
       const output = legacyToolOutput(event.result || {});
       // t18888: before quality hooks, so output scrubbing also covers peer messages.
       sessionBus.toolAfter(event, output);
@@ -597,10 +601,10 @@ export async function setupAidevopsV2(ctx) {
     });
 
     return async () => {
-      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus });
+      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus, providerAuth });
     };
   } catch (error) {
-    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus });
+    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus, providerAuth });
     throw error;
   }
 }

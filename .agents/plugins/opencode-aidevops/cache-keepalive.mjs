@@ -156,6 +156,11 @@ class CacheKeepalive {
     this.sessions.delete(sessionID);
   }
 
+  /** Release this host instance's timers without changing other instances. */
+  dispose() {
+    for (const sessionID of this.sessions.keys()) this.stop(sessionID);
+  }
+
   arm(sessionID, entry) {
     entry.timer = this.settings.setTimer(() => {
       entry.timer = null;
