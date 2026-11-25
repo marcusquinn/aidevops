@@ -724,6 +724,170 @@ test_release_creation_hold_failure_logging() {
 	return 0
 }
 
+test_scan_tree_cleanup() {
+	local mode rc before after tree
+	for mode in success failure exit term int inplace prepare-term prepare-int prepare-failure; do
+		tree="${TEST_ROOT}/cleanup-${mode}"
+		mkdir -p "$tree"
+		rc=0
+		(
+			# shellcheck source=/dev/null
+			source "$ORCHESTRATION_SCRIPT"
+			REPOS_JSON="unused"
+			get_repo_role_by_slug() { printf 'maintainer\n'; return 0; }
+			_complexity_scan_check_interval() { return 0; }
+			_complexity_scan_permission_gate() { return 0; }
+			_complexity_release_creation_holds() { return 0; }
+			_complexity_scan_find_repo() { printf '%s\n' "$TEST_ROOT"; return 0; }
+			_complexity_scan_pull_latest() {
+				case "$mode" in
+				prepare-term) return 143 ;;
+				prepare-int) return 130 ;;
+				prepare-failure) return 1 ;;
+				esac
+				if [[ "$mode" == inplace ]]; then printf '%s\n' "$TEST_ROOT"; else printf '%s\n' "$tree"; fi
+				return 0
+			}
+			_run_weekly_complexity_scan_in() {
+				local pid
+				[[ "$mode" == inplace || "$PWD" == "$tree" ]] || return 98
+				case "$mode" in
+				failure) return 7 ;;
+				exit) exit 8 ;;
+				term|int)
+					pid=$(sh -c 'printf "%s" "$PPID"')
+					if [[ "$mode" == term ]]; then kill -TERM "$pid"; else kill -INT "$pid"; fi
+					;;
+				esac
+				return 0
+			}
+			trap ':' EXIT INT TERM RETURN
+			before=$(trap -p)
+			run_weekly_complexity_scan || rc=$?
+			after=$(trap -p)
+			[[ "$before" == "$after" ]] || exit 99
+			exit "$rc"
+		) || rc=$?
+		case "$mode:$rc" in
+			success:0|failure:7|exit:8|term:143|int:130)
+				if [[ ! -e "$tree" ]]; then print_result "scan cleanup: $mode preserves status and caller traps" 0; else print_result "scan cleanup: $mode" 1 "tree leaked"; fi ;;
+			inplace:0)
+				if [[ -d "$TEST_ROOT" ]]; then print_result 'scan cleanup: canonical in-place path survives' 0; else print_result 'scan cleanup: canonical path' 1; fi ;;
+			prepare-term:143|prepare-int:130|prepare-failure:0)
+				print_result "scan cleanup: $mode preserves interruption versus ordinary skip" 0 ;;
+			*) print_result "scan cleanup: $mode" 1 "unexpected status $rc" ;;
+		esac
+	done
+	return 0
+}
+
+test_scan_tree_preparation() {
+	local source_repo="${TEST_ROOT}/prepare-source" base="${TEST_ROOT}/prepare-tmp"
+	local mode rc result leftovers
+	make_test_repo "$source_repo"
+	_fixture_git -C "$source_repo" branch main
+	_fixture_git -C "$source_repo" remote add origin "$source_repo"
+	mkdir -p "$base"
+	for mode in success failure term; do
+		rc=0
+		result=$(
+			AIDEVOPS_TEMP_DIR="$base"
+			lsof() { return 1; }
+			timeout_sec() { shift; "$@"; return $?; }
+			git() {
+				local pid
+				if [[ "$*" == *'fetch --quiet origin'* && "$mode" != success ]]; then
+					if [[ "$mode" == term ]]; then
+						pid=$(sh -c 'printf "%s" "$PPID"')
+						kill -TERM "$pid"
+					fi
+					return 1
+				fi
+				_fixture_git "$@"
+				return $?
+			}
+			_complexity_scan_pull_latest "$source_repo"
+		) || rc=$?
+		if [[ "$mode:$rc" == success:0 && -d "$result/.git" ]]; then
+			print_result 'preparation: exports a private origin/main clone' 0
+			rm -rf "$result"
+		elif [[ "$mode:$rc" == failure:1 || "$mode:$rc" == term:143 ]]; then
+			leftovers=("$base"/complexity-scan-tree.??????)
+			if [[ ! -e "${leftovers[0]}" ]]; then print_result "preparation: $mode cleans partial clone" 0; else print_result "preparation: $mode" 1 'partial clone leaked'; fi
+		else
+			print_result "preparation: $mode" 1 "unexpected status $rc"
+		fi
+	done
+	return 0
+}
+
+test_reap_scan_trees() {
+	local base="${TEST_ROOT}/reap" canonical origin tree name
+	mkdir -p "$base"
+	canonical="$base/complexity-scan-tree.CANON1"
+	make_test_repo "$canonical"
+	origin="$TEST_ROOT/origin"
+	_fixture_git -C "$canonical" remote add origin "$origin"
+	for name in STALE1 YOUNG1 LIVE01 OTHER1 FAIL01; do
+		tree="$base/complexity-scan-tree.$name"
+		_fixture_git clone -q --local "$canonical" "$tree"
+		_fixture_git -C "$tree" remote set-url origin "$origin"
+	done
+	_fixture_git -C "$base/complexity-scan-tree.OTHER1" remote set-url origin other
+	ln -s "$canonical" "$base/complexity-scan-tree.LINK01"
+	mkdir -p "$base/complexity-scan-tree.LIVE01/subdir" "$base/complexity-scan-tree.NOTGIT" "$base/complexity-scan-tree.wronglength"
+	for name in CANON1 STALE1 LIVE01 OTHER1 FAIL01 NOTGIT wronglength; do
+		touch -t 200001010000 "$base/complexity-scan-tree.$name"
+	done
+	(
+		# shellcheck source=/dev/null
+		source "${SCRIPT_DIR}/../portable-stat.sh"
+		lsof() { printf 'p123\nn%s/subdir\n' "$base/complexity-scan-tree.LIVE01"; return 0; }
+		AIDEVOPS_COMPLEXITY_SCAN_TREE_MAX_AGE_HOURS=999999
+		_complexity_scan_reap_trees "$base" "$canonical" "$origin"
+		[[ -d "$base/complexity-scan-tree.STALE1" ]]
+	)
+	print_result 'reaper: respects configured maximum age' "$?"
+	(
+		# shellcheck source=/dev/null
+		source "${SCRIPT_DIR}/../portable-stat.sh"
+		lsof() { printf 'p123\nn%s/subdir\n' "$base/complexity-scan-tree.LIVE01"; return 0; }
+		AIDEVOPS_COMPLEXITY_SCAN_TREE_MAX_AGE_HOURS=24
+		_complexity_scan_reap_trees "$base" "$canonical" "$origin"
+	)
+	if [[ ! -e "$base/complexity-scan-tree.STALE1" && ! -e "$base/complexity-scan-tree.FAIL01" ]]; then
+		print_result 'reaper: removes old idle matching-origin clones' 0
+	else print_result 'reaper: removes stale clones' 1; fi
+	for name in CANON1 YOUNG1 LIVE01 OTHER1 LINK01 NOTGIT wronglength; do
+		if [[ -d "$base/complexity-scan-tree.$name" ]]; then print_result "reaper: preserves $name" 0; else print_result "reaper: preserves $name" 1; fi
+	done
+	if command grep -q 'Complexity scan: reaped 2 stale scan tree(s)' "$LOGFILE"; then print_result 'reaper: logs count' 0; else print_result 'reaper: logs count' 1; fi
+	(
+		# shellcheck source=/dev/null
+		source "${SCRIPT_DIR}/../portable-stat.sh"
+		lsof() { return 1; }
+		AIDEVOPS_COMPLEXITY_SCAN_TREE_MAX_AGE_HOURS=0
+		_complexity_scan_reap_trees "$base" "$canonical" "$origin"
+	)
+	if [[ -d "$base/complexity-scan-tree.LIVE01" ]]; then print_result 'reaper: lsof failure skips deletion' 0; else print_result 'reaper: lsof failure' 1; fi
+	(
+		command() { if [[ "$*" == '-v lsof' ]]; then return 1; fi; builtin command "$@"; return $?; }
+		AIDEVOPS_COMPLEXITY_SCAN_TREE_MAX_AGE_HOURS=0
+		_complexity_scan_reap_trees "$base" "$canonical" "$origin"
+	)
+	if [[ -d "$base/complexity-scan-tree.LIVE01" ]]; then print_result 'reaper: missing lsof skips deletion' 0; else print_result 'reaper: missing lsof' 1; fi
+	if command -v lsof >/dev/null 2>&1; then
+		(
+			# shellcheck source=/dev/null
+			source "${SCRIPT_DIR}/../portable-stat.sh"
+			cd "$base/complexity-scan-tree.LIVE01/subdir" || exit 1
+			_complexity_scan_reap_trees "$base" "$canonical" "$origin"
+		)
+		if [[ -d "$base/complexity-scan-tree.LIVE01" ]]; then print_result 'reaper: real process cwd keeps old tree' 0; else print_result 'reaper: real cwd protection' 1; fi
+	fi
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -756,6 +920,9 @@ main() {
 	test_permission_gate_fails_closed
 	test_release_creation_holds
 	test_release_creation_hold_failure_logging
+	test_scan_tree_cleanup
+	test_scan_tree_preparation
+	test_reap_scan_trees
 
 	echo ""
 	echo "Results: ${TESTS_RUN} run, $((TESTS_RUN - TESTS_FAILED)) passed, ${TESTS_FAILED} failed"

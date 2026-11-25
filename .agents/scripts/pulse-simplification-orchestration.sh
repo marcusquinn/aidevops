@@ -694,7 +694,13 @@ _complexity_scan_ratchet_check() {
 #   _complexity_scan_state_refresh, _complexity_scan_lang_shell,
 #   _complexity_scan_lang_md, _complexity_scan_sweep_check,
 #   _complexity_scan_ratchet_check
-run_weekly_complexity_scan() {
+run_weekly_complexity_scan() (
+	# A subshell scopes traps to this invocation, preserving the caller's traps.
+	# EXIT also covers normal returns; signals must exit rather than resume scanning.
+	local scan_tree="" aidevops_path=""
+	trap 'if [[ -n "$scan_tree" && "$scan_tree" != "$aidevops_path" ]]; then rm -rf -- "$scan_tree"; fi' EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
 	local repos_json="$REPOS_JSON"
 	local aidevops_slug="marcusquinn/aidevops"
 
@@ -715,19 +721,24 @@ run_weekly_complexity_scan() {
 	# GH#37554: lift legacy co-admin creation holds so held debt can dispatch.
 	_complexity_release_creation_holds "$aidevops_slug"
 
-	local aidevops_path
 	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
 
 	# GH#34426: scan a private origin/main tree; never mutate the canonical checkout.
-	local scan_tree scan_rc=0
-	scan_tree=$(_complexity_scan_pull_latest "$aidevops_path") || return 0
-	_run_weekly_complexity_scan_in "$scan_tree" "$repos_json" "$aidevops_slug" "$now_epoch" || scan_rc=$?
-	# Remove the temporary tree on success and failure (never the canonical path).
-	if [[ -n "$scan_tree" && "$scan_tree" != "$aidevops_path" ]]; then
-		rm -rf "$scan_tree"
+	local scan_rc=0
+	scan_tree=$(_complexity_scan_pull_latest "$aidevops_path") || scan_rc=$?
+	case "$scan_rc" in
+	130|143) return "$scan_rc" ;;
+	0) ;;
+	*) return 0 ;;
+	esac
+	# Keep the owning process visible to the stale-tree cwd exclusion, even for
+	# long scans. The surrounding subshell preserves the caller's working directory.
+	if [[ "$scan_tree" != "$aidevops_path" ]]; then
+		cd "$scan_tree" || return 1
 	fi
+	_run_weekly_complexity_scan_in "$scan_tree" "$repos_json" "$aidevops_slug" "$now_epoch" || scan_rc=$?
 	return "$scan_rc"
-}
+)
 
 # _run_weekly_complexity_scan_in — scan phases against a prepared tree (GH#34426)
 # Arguments: $1 - aidevops_path (scan tree), $2 - repos_json, $3 - slug, $4 - now_epoch
