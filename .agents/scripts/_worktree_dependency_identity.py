@@ -197,6 +197,16 @@ def workspace_identity(repo, worktree):
     if name != "pnpm-lock.yaml" or regular_bytes(repo / "node_modules/.pnpm/lock.yaml") != lock:
         raise Rejected("stale-installed-lock")
     inventory = pnpm_inventory(lock)
+    members = workspace_members(worktree, workspace_patterns(config))
+    for relative in members:
+        source, dest = package_directories(repo, worktree, relative)
+        manifest = matching_package(source, dest)
+        inventory.add(f"{manifest.get('name')}@{manifest.get('version')}")
+    return sorted(members), inventory
+
+
+def workspace_patterns(config):
+    """Parse only the supported YAML packages block, not unrelated settings."""
     patterns = []
     section = False
     for line in config.decode("utf-8").splitlines():
@@ -217,6 +227,11 @@ def workspace_identity(repo, worktree):
             patterns.append(pattern)
     if not patterns:
         raise Rejected("unsupported-workspace-pattern")
+    return patterns
+
+
+def workspace_members(worktree, patterns):
+    """Expand inclusion and exclusion globs without admitting dependency trees."""
     members = {Path(".")}
     excluded = set()
     for pattern in patterns:
@@ -226,12 +241,7 @@ def workspace_identity(repo, worktree):
                 continue
             if (path / "package.json").is_file():
                 (excluded if pattern.startswith("!") else members).add(relative)
-    members -= excluded
-    for relative in members:
-        source, dest = package_directories(repo, worktree, relative)
-        manifest = matching_package(source, dest)
-        inventory.add(f"{manifest.get('name')}@{manifest.get('version')}")
-    return sorted(members), inventory
+    return members - excluded
 
 
 def npm_inventory(source, modules, lock, parsed):
