@@ -356,6 +356,30 @@ run_lifecycle_only_update_test() (
 	_update_existing_install 1.0.0 compact || return 1
 	[[ "$VERIFY_SHA" == "$docs_sha" ]] || return 1
 	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$docs_sha" ]] || return 1
+
+	# New-commit path: setup failure must propagate (GH#40333), success must not.
+	_update_render_changelog() { return 0; }
+	_update_verify_signature() { return 0; }
+	get_version() { printf '1.0.1\n'; }
+	printf '# next\n' >"$INSTALL_DIR/NEXT.md"
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" add -A
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" commit -qm next
+	next_sha=$("$TEST_NATIVE_GIT" -C "$INSTALL_DIR" rev-parse HEAD)
+	# The audited fetch step fast-forwards the checkout in production; model it.
+	_AIDEVOPS_UPDATE_CANONICAL_FAST_FORWARDED=true
+	_update_fetch_main() {
+		"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" update-ref refs/remotes/origin/main "$next_sha"
+		"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" reset -q --hard "$next_sha"
+		return 0
+	}
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" reset -q --hard "$docs_sha"
+	SETUP_RC=23
+	SETUP_SHA="$next_sha"
+	if _update_existing_install 1.0.0 compact; then return 1; fi
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" reset -q --hard "$docs_sha"
+	SETUP_RC=0
+	_update_existing_install 1.0.0 compact || return 1
+	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$next_sha" ]] || return 1
 	return 0
 )
 if run_lifecycle_only_update_test; then
