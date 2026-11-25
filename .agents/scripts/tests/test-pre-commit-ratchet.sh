@@ -148,6 +148,7 @@ source_hook_helpers() {
 		/^_show_repeated_literals\(\)/        { c=1 }
 		/^validate_return_statements\(\)/     { c=1 }
 		/^_positional_lexer_helpers\(\)/      { c=1 }
+		/^_positional_context_helpers\(\)/    { c=1 }
 		/^_scan_positional_parameters\(\)/    { c=1 }
 		/^validate_positional_parameters\(\)/ { c=1 }
 		/^validate_string_literals\(\)/       { c=1 }
@@ -579,6 +580,45 @@ FIXTURE
 	return 0
 }
 
+test_positional_params_nested_shell_contexts() {
+	local content
+	read -r -d '' content <<'FIXTURE' || true
+cat <<TEXT
+$(printf value | awk '{print $1}')
+`awk '{print $2}' input`
+don't hide direct $3
+"$4" remains expandable
+$(awk '
+{print $5}
+' input)
+TEXT
+echo "$6"
+FIXTURE
+	test_positional_quote_case heredoc_substitution_contexts 3 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+echo "${value#'$1'}"
+echo "${value##'$2'}"
+echo "${value%'$3'}"
+echo "${value%%'$4'}"
+echo "${value:-it's $5}"
+echo "${value-'$6'}"
+echo "$7"
+FIXTURE
+	test_positional_quote_case parameter_pattern_quotes 3 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+version="$(case x in x) awk '{print $1}' input ;; esac)"
+echo "$2"
+version="$(case x in
+  (x|y) case y in y) awk '{print $3}' input ;; esac ;;
+  z) echo "$4" ;;
+esac)"
+version="$(printf '%s' "$(awk '{print $5}' input)")"
+echo "$6"
+FIXTURE
+	test_positional_quote_case case_pattern_contexts 3 "$content"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Classification labels (output contract)
 # ---------------------------------------------------------------------------
@@ -653,6 +693,7 @@ main() {
 	test_positional_params_new_usage_blocks
 	test_positional_params_quoting
 	test_positional_params_review_regressions
+	test_positional_params_nested_shell_contexts
 	test_classification_labels_present
 	test_check_secrets_remains_absolute
 

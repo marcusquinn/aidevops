@@ -292,7 +292,84 @@ _positional_lexer_helpers() {
 		hd_tabs[hd_count] = tabs
 		hd_quoted[hd_count] = quoted
 		hd_end[hd_count] = word
+		hd_depth[hd_count] = depth
 		return j - 1
+	}'
+	return 0
+}
+
+_positional_context_helpers() {
+	# shellcheck disable=SC2016  # awk literals, not shell expansions
+	printf "%s\n" '
+	BEGIN { case_pattern = "pattern"; case_body = "body"; case_header = "header" }
+	function case_syntax(text, pos,    c, pair, word, rest, before, at_command) {
+		c = substr(text, pos, 1); pair = substr(text, pos, 2)
+		if (case_n && case_depth[case_n] == depth) {
+			if (case_state[case_n] == case_pattern && c == ")") {
+				case_state[case_n] = case_body; return 1
+			}
+			if (case_state[case_n] == case_pattern && c == "(") return 1
+			if (case_state[case_n] == case_body && (pair == ";;" || pair == ";&")) {
+				case_state[case_n] = case_pattern
+				return (substr(text, pos, 3) == ";;&" ? 3 : 2)
+			}
+		}
+		before = substr(text, 1, pos - 1)
+		if (pos > 1 && before !~ /[[:space:];()|&]$/) return 0
+		rest = substr(text, pos)
+		if (!match(rest, /^[[:alpha:]_][[:alnum:]_]*/)) return 0
+		word = substr(rest, 1, RLENGTH)
+		if (substr(rest, length(word) + 1, 1) !~ /^[[:space:];()|&]?$/) return 0
+		sub(/[[:space:]]+$/, "", before)
+		at_command = (!before || before ~ /[;()|&]$/)
+		if (word == "case" && at_command && (!case_n || case_state[case_n] == case_body)) {
+			case_n++; case_depth[case_n] = depth; case_state[case_n] = case_header
+			return length(word)
+		}
+		if (case_n && case_depth[case_n] == depth) {
+			if (word == "in" && case_state[case_n] == case_header) {
+				case_state[case_n] = case_pattern; return length(word)
+			}
+			if (word == "esac" && (case_state[case_n] == case_pattern || at_command)) {
+				case_n--; return length(word)
+			}
+		}
+		return 0
+	}
+	function parameter_literal(rest, quoted) {
+		# Pattern operators retain single-quote semantics even inside double quotes.
+		if (match(rest, /^([[:alpha:]_][[:alnum:]_]*|[0-9]+|[@*#?$!-])(\[[^]]*\])?/))
+			rest = substr(rest, RLENGTH + 1)
+		return quoted && rest !~ /^[#%\/]/
+	}
+	function expansion(text, pos, body_text,    c, pair, count, outer_dq) {
+		c = substr(text, pos, 1); pair = substr(text, pos, 2)
+		if (!in_dq && !body_text && !arithmetic[depth] && (!depth || end_char[depth] != "}")) {
+			count = case_syntax(text, pos)
+			if (count) return count
+		}
+		if (c == "`" && !(depth && end_char[depth] == "`")) {
+			depth++; saved_dq[depth] = in_dq; in_dq = 0
+			literal_sq[depth] = arithmetic[depth] = 0; end_char[depth] = "`"
+			return 1
+		}
+		if (pair == "$(" || pair == "${") {
+			outer_dq = body_text || in_dq || (depth && literal_sq[depth])
+			depth++; saved_dq[depth] = in_dq; in_dq = 0
+			literal_sq[depth] = (pair == "${" && parameter_literal(substr(text, pos + 2), outer_dq))
+			arithmetic[depth] = (substr(text, pos, 3) == "$((")
+			end_char[depth] = (pair == "$(" ? ")" : "}")
+			return 2
+		}
+		if (depth && !in_dq && !body_text && c == end_char[depth]) {
+			in_dq = saved_dq[depth]; depth--
+			return 1
+		}
+		if (!in_dq && !body_text && c == "(" && ((depth && end_char[depth] == ")") || pair == "((")) {
+			arithmetic[depth + 1] = (pair == "((" || arithmetic[depth])
+			depth++; saved_dq[depth] = 0; literal_sq[depth] = 0; end_char[depth] = ")"
+		}
+		return 0
 	}'
 	return 0
 }
@@ -303,20 +380,25 @@ _scan_positional_parameters() {
 	local _awk_script='
 	{
 		raw[NR] = $0
+		heredoc_mode = 0
 		# Heredoc bodies are not shell syntax. Unquoted bodies still expand $N;
 		# quoted delimiters suppress expansion. Queue multiple redirections.
-		if (hd_read <= hd_count && hd_count && !continued && !in_sq && !in_dq) {
+		if (hd_read <= hd_count && hd_count && (hd_active || (!continued && !in_sq && !in_dq))) {
+			hd_active = 1
 			body = $0
 			if (hd_tabs[hd_read]) sub(/^\t+/, "", body)
-			if (body == hd_end[hd_read]) hd_read++
-			else if (!hd_quoted[hd_read]) clean[NR] = $0
-			next
+			if (body == hd_end[hd_read]) {
+				hd_read++; hd_active = (hd_read <= hd_count); next
+			}
+			if (hd_quoted[hd_read]) next
+			heredoc_mode = 1
 		}
 		continued = 0
-		if (!in_sq && !in_dq && $0 ~ /^[[:space:]]*#/) next
+		if (!heredoc_mode && !in_sq && !in_dq && $0 ~ /^[[:space:]]*#/) next
 		line = ""
 		for (i = 1; i <= length($0); i++) {
 			c = substr($0, i, 1)
+			body_text = (heredoc_mode && depth == hd_depth[hd_read])
 			if (in_sq) {
 				if (ansi_sq && c == "\\") { i++; continue }
 				if (c == sq) in_sq = 0
@@ -328,32 +410,13 @@ _scan_positional_parameters() {
 				i++
 				continue
 			}
-			# Expansions have their own quoting context, even inside double quotes.
-			pair = substr($0, i, 2)
-			if (c == "`" && !(depth && end_char[depth] == "`")) {
-				depth++; saved_dq[depth] = in_dq; in_dq = 0
-				literal_sq[depth] = arithmetic[depth] = 0; end_char[depth] = "`"
-				line = line c; continue
+			count = expansion($0, i, body_text)
+			if (count) {
+				line = line substr($0, i, count); i += count - 1; continue
 			}
-			if (pair == "$(" || pair == "${") {
-				outer_dq = in_dq || (depth && literal_sq[depth])
-				depth++; saved_dq[depth] = in_dq; in_dq = 0
-				literal_sq[depth] = (pair == "${" && outer_dq)
-				arithmetic[depth] = (substr($0, i, 3) == "$((")
-				end_char[depth] = (pair == "$(" ? ")" : "}")
-				line = line pair; i++; continue
-			}
-			if (depth && !in_dq && c == end_char[depth]) {
-				in_dq = saved_dq[depth]; depth--
-				line = line c; continue
-			}
-			if (!in_dq && c == "(" && ((depth && end_char[depth] == ")") || pair == "((")) {
-				arithmetic[depth + 1] = (pair == "((" || arithmetic[depth])
-				depth++; saved_dq[depth] = 0; literal_sq[depth] = 0; end_char[depth] = ")"
-			}
-			if (c == dq) in_dq = !in_dq
-			if (!in_dq && c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[[:space:];]/)) break
-			if (!in_dq && c == sq && !(depth && literal_sq[depth])) {
+			if (!body_text && c == dq) in_dq = !in_dq
+			if (!body_text && !in_dq && c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[[:space:];]/)) break
+			if (!body_text && !in_dq && c == sq && !(depth && literal_sq[depth])) {
 				in_sq = 1
 				ansi_sq = (i > 1 && substr($0, i - 1, 1) == "$")
 				sq_start = NR
@@ -361,7 +424,7 @@ _scan_positional_parameters() {
 			}
 			# Recognize ordinary, quoted and tab-stripping heredoc delimiters.
 			# Do not mistake a here-string (<<<) for a heredoc.
-			if (!in_dq && !arithmetic[depth] && pair == "<<" && substr($0, i, 3) != "<<<" && substr($0, i - 1, 1) != "<") {
+			if (!body_text && !in_dq && !arithmetic[depth] && substr($0, i, 2) == "<<" && substr($0, i, 3) != "<<<" && substr($0, i - 1, 1) != "<") {
 				word_end = heredoc_word($0, i + 2)
 				if (word_end) {
 					i = word_end
@@ -384,7 +447,7 @@ _scan_positional_parameters() {
 			report(line, nr)
 		}
 	}'
-	awk "$(_positional_lexer_helpers)$_awk_script" "$@"
+	awk "$(_positional_lexer_helpers)$(_positional_context_helpers)$_awk_script" "$@"
 	return 0
 }
 
