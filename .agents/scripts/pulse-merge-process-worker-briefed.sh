@@ -330,8 +330,9 @@ _is_trusted_services_sync_issue_pr() {
 	local marker='<!-- aidevops:generator=services-sync-check -->'
 	local files_api
 	local pr_api
-	local head_before
-	local head_after
+	local expected_head="${WORKER_BRIEFED_EXPECTED_HEAD:-${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}}"
+	local head_before=""
+	local head_after=""
 
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$issue_api" ]] || return 1
 	pr_api=$(printf 'repos/%s/pulls/%s' "$repo_slug" "$pr_number") || return 1
@@ -347,20 +348,22 @@ _is_trusted_services_sync_issue_pr() {
 	title=$(jq -r '.title // ""' <<<"$issue_meta") || return 1
 	[[ "$title" =~ $re_title ]] || return 1
 
-	#aidevops:trust-boundary — classify one stable head, matching either merge
-	# entrypoint's pin when present. Never reuse scope checked for another head.
+	# Bind scope evidence to the caller's pin. Full-loop can instead consume
+	# the verified head via its existing head-file handoff and pin it at merge.
 	head_before=$(gh api "$pr_api" --jq '.head.sha // ""' 2>/dev/null) || return 1
-	[[ "$head_before" =~ ^[0-9a-f]{40}$ ]] || return 1
-	[[ -z "${WORKER_BRIEFED_EXPECTED_HEAD:-}" || "$head_before" == "$WORKER_BRIEFED_EXPECTED_HEAD" ]] || return 1
-	[[ -z "${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}" || "$head_before" == "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" ]] || return 1
+	if [[ -z "$expected_head" && -n "${WORKER_BRIEFED_PLANNING_HEAD_FILE:-}" ]]; then
+		expected_head="$head_before"
+	fi
+	[[ "$expected_head" =~ ^[0-9a-f]{40}$ ]] || return 1
+	[[ "$head_before" == "$expected_head" ]] || return 1
 	files_json=$(gh api "$files_api" 2>/dev/null) || return 1
 	head_after=$(gh api "$pr_api" --jq '.head.sha // ""' 2>/dev/null) || return 1
-	[[ "$head_after" == "$head_before" ]] || return 1
+	[[ "$head_after" == "$expected_head" ]] || return 1
 	# `arrays` emits nothing for non-array payloads, so the integer check fails closed.
 	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 1
 	[[ "$file_count" =~ ^[0-9]+$ ]] || return 1
 	[[ "$file_count" -ge 1 && "$file_count" -le 2 ]] || return 1
-	# Validate whole JSON strings before raw output can split embedded newlines.
+	# Validate complete JSON strings before raw output can split embedded newlines.
 	jq -e --arg renamed renamed 'all(.[]; .status != $renamed and
 		(.filename == "index.html" or .filename == "data/services-sync.json"))' <<<"$files_json" >/dev/null 2>&1 || return 1
 
@@ -373,6 +376,9 @@ _is_trusted_services_sync_issue_pr() {
 			;;
 		esac
 	done < <(printf '%s' "$files_json" | jq -r '.[].filename')
+	if [[ -n "${WORKER_BRIEFED_PLANNING_HEAD_FILE:-}" ]]; then
+		printf '%s\n' "$head_before" >"$WORKER_BRIEFED_PLANNING_HEAD_FILE" || return 1
+	fi
 	return 0
 }
 
