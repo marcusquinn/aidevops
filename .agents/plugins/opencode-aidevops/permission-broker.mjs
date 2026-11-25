@@ -116,6 +116,8 @@ function recordPermissionToolCall(toolCalls, isHeadless, home, input, output) {
     tool: sanitizePermissionText(input?.tool || input?.name || "unknown", { home, maxLength: 100 }),
     intent: sanitizePermissionText(args?.agent__intent || "", { home, maxLength: MAX_INTENT_LENGTH }),
     target: args.filePath || args.path || "",
+    // Retained only in this bounded in-memory map, never in persisted captures.
+    command: typeof args.command === "string" ? args.command : "",
   });
   while (toolCalls.size > 100) toolCalls.delete(toolCalls.keys().next().value);
 }

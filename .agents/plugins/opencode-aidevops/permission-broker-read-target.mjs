@@ -5,18 +5,32 @@ import { lstatSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveReal } from "./permission-broker-read-only-root.mjs";
 
-// OpenCode may ask for the parent directory wildcard when Read names one file.
-// Require the recorded concrete target; never infer it from a broad /dev/* ask.
+// Deliberately not a shell parser: only plain words and one final device
+// redirection qualify. Expansion, quoting, other paths and compound commands
+// retain the normal gate. The independent bash permission is never approved here.
+export function runtimeRedirectionTarget(command) {
+  if (typeof command !== "string") return "";
+  return /^[A-Za-z0-9_.-]+(?: +[A-Za-z0-9_.-]+)* +[0-9]?(?:>>?|<) *(\/dev\/(?:null|stdin|stdout|stderr|fd\/[0-9]+)) *$/.exec(command)?.[1] || "";
+}
+
+// OpenCode may ask for a parent wildcard. Require a recorded concrete target;
+// never infer it from a broad /dev/* ask or untrusted request metadata.
 export function isWorkerRuntimeRead(context, raw, forbidden) {
   if ((raw?.permission || raw?.type) !== "external_directory") return false;
   const call = context.toolCalls.get(raw?.tool?.callID || raw?.callID || "");
-  if (!["read", "glob", "grep", "list"].includes(call?.tool)) return false;
+  if (call?.tool === "bash") {
+    const device = runtimeRedirectionTarget(call.command);
+    return Boolean(device && hasBoundedReadTarget(raw, device, forbidden));
+  }
+  if (call?.tool !== "read") return false;
   const target = call.target;
   if (!hasBoundedReadTarget(raw, target, forbidden)) return false;
   if (/^\/dev\/(?:null|stdin|stdout|stderr|fd\/[0-9]+)$/.test(target)) return true;
   const root = join(context.home, ".aidevops", ".agent-workspace", "tmp");
   if (!isWithin(root, target)) return false;
-  const realRoot = resolveReal(root);
+  // A link in the managed root itself must not redefine the authorized root.
+  const realRoot = join(resolveReal(context.home), ".aidevops", ".agent-workspace", "tmp");
+  if (resolveReal(root) !== realRoot) return false;
   const realTarget = resolveReal(target);
   return Boolean(realRoot && realTarget && !forbidden.test(realTarget) && isWithin(realRoot, realTarget));
 }

@@ -5,26 +5,28 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "child_process";
 import { createHash } from "crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
 import { registerApprovedWorkerPermissions } from "../config-hook.mjs";
 import { registerWorkerRuntimePermissions } from "../config-worker-permissions.mjs";
 
-test("worker runtime plumbing is narrow, per-agent and independent of signed grants", () => {
+test("worker runtime plumbing is narrow, per-agent and independent of signed grants", (t) => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-runtime-config-")));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
   const config = { permission: "ask", agent: { build: { permission: "ask" } } };
-  assert.equal(registerWorkerRuntimePermissions(config, {}, "/fixture-home"), 0);
+  assert.equal(registerWorkerRuntimePermissions(config, {}, home), 0);
   const env = { WORKER_WORKTREE_PATH: "/work/project", WORKER_ISSUE_NUMBER: "123" };
-  assert.equal(registerWorkerRuntimePermissions(config, env, "/fixture-home"), 14);
+  assert.equal(registerWorkerRuntimePermissions(config, env, home), 14);
   for (const target of [config, config.agent.build]) {
     const rules = target.permission.external_directory;
     assert.equal(rules["*"], "ask");
     for (const path of ["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/*",
-      "/fixture-home/.aidevops/.agent-workspace/tmp", "/fixture-home/.aidevops/.agent-workspace/tmp/**"]) {
+      `${home}/.aidevops/.agent-workspace/tmp`, `${home}/.aidevops/.agent-workspace/tmp/**`]) {
       assert.equal(rules[path], "allow");
     }
-    for (const path of ["/dev/*", "/proc/*", "~/*", "/fixture-home/*", "/fixture-home/.aidevops-private/tmp/**"]) {
+    for (const path of ["/dev/*", "/proc/*", "~/*", `${home}/*`, `${home}/.aidevops-private/tmp/**`]) {
       assert.equal(rules[path], undefined);
     }
   }

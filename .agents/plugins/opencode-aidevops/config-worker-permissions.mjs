@@ -10,6 +10,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
 import { verifyPermissionGrant } from "./worker-permission-grant-verification.mjs";
+import { resolveReal } from "./permission-broker-read-only-root.mjs";
 
 const PATTERN_CAPABLE_PERMISSIONS = new Set(JSON.parse(readFileSync(
   new URL("../../configs/worker-permission-policy.json", import.meta.url), "utf8",
@@ -23,8 +24,10 @@ const MAX_PERMISSION_GRANT_MS = 4 * 60 * 60 * 1000;
 export function registerWorkerRuntimePermissions(config, env = process.env, home = homedir()) {
   if (!env.WORKER_WORKTREE_PATH || !env.WORKER_ISSUE_NUMBER) return 0;
   const tempRoot = join(home, ".aidevops", ".agent-workspace", "tmp");
-  const patterns = ["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/*",
-    tempRoot, `${tempRoot}/**`];
+  const patterns = ["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/*"];
+  if (resolveReal(tempRoot) === join(resolveReal(home), ".aidevops", ".agent-workspace", "tmp")) {
+    patterns.push(tempRoot, `${tempRoot}/**`);
+  }
   let count = addApprovedCapabilityRules(config, [{ permission: "external_directory", patterns }]);
   for (const agent of Object.values(config.agent || {})) {
     count += addApprovedCapabilityRules(agent, [{ permission: "external_directory", patterns }]);
