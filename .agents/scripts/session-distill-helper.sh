@@ -464,7 +464,12 @@ propose_learnings() {
 		extract_learnings
 	fi
 	local source_boundary
-	source_boundary=$(privacy_redact "${AIDEVOPS_OBSERVATION_SOURCE:-git:$PWD}")
+	if [[ -n "${AIDEVOPS_OBSERVATION_SOURCE:-}" ]]; then
+		source_boundary=$(privacy_redact "$AIDEVOPS_OBSERVATION_SOURCE")
+	else
+		# Redact the whole default path (may contain spaces) before prefixing.
+		source_boundary="git:$(privacy_redact_path "$PWD")"
+	fi
 	local existing='[]'
 	[[ -f "$PROPOSALS_FILE" ]] && existing=$(jq -c '.items // []' "$PROPOSALS_FILE")
 	local proposed="$existing"
