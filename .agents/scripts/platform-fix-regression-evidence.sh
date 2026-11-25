@@ -181,20 +181,37 @@ main() {
 		return 1
 	}
 
+	local rc=0
 	trigger_text=$(_platform_trigger_text "$title" "$body_file")
-	if ! _platform_fix_triggered "$trigger_text"; then
+	set +e
+	_platform_fix_triggered "$trigger_text"
+	rc=$?
+	set -e
+	if [[ "$rc" -ne 0 ]]; then
 		printf 'platform regression evidence: not required (no platform-fix terms)\n'
 		return 0
 	fi
-	if _platform_docs_only "$files_file"; then
+	set +e
+	_platform_docs_only "$files_file"
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 0 ]]; then
 		printf 'platform regression evidence: not required (docs-only changes)\n'
 		return 0
 	fi
-	if changed_test=$(_platform_changed_test "$files_file"); then
+	set +e
+	changed_test=$(_platform_changed_test "$files_file")
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 0 ]]; then
 		printf 'platform regression evidence: passed (changed %s)\n' "$changed_test"
 		return 0
 	fi
-	if _platform_has_regression_evidence "$body_file"; then
+	set +e
+	_platform_has_regression_evidence "$body_file"
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 0 ]]; then
 		printf 'platform regression evidence: passed (PR rationale supplied)\n'
 		return 0
 	fi
