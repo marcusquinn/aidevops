@@ -728,6 +728,9 @@ _merge_resolve_squash_subject() {
 		print_error "Use a task-prefixed or conventional title before retrying."
 		return 1
 	fi
+	# Match GitHub's default squash subject: the `(#PR)` suffix is the verified
+	# hint release snapshots use when GitHub drops the commit-to-PR association.
+	[[ "$subject" == *"(#${pr_number})" ]] || subject+=" (#${pr_number})"
 
 	printf '%s\n' "$subject"
 	return 0
