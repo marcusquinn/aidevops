@@ -2504,7 +2504,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19345 perf(process-snapshot): use TZ=UTC0 for macOS full-table ps lstart reads #bug #priority:medium ref:GH#40195 pr:#40217 completed:2026-11-24
 
-- [ ] t19349 fix(pulse): throughput report counts still-running workers so windows ending now are not under-reported #bug #priority:high ref:GH#40220 -> [todo/tasks/t19349-brief.md] logged:2026-11-24
+- [x] t19349 fix(pulse): throughput report counts still-running workers so windows ending now are not under-reported #bug #priority:high ref:GH#40220 -> [todo/tasks/t19349-brief.md] logged:2026-11-24 pr:#40221 completed:2026-11-24
+
+- [ ] t19350 perf(pulse): split-lock cycle entry wakes a detached refill instead of leaving free slots until after preflight #feat #priority:high ref:GH#40224 -> [todo/tasks/t19350-brief.md] logged:2026-11-24
 
 ## In Progress
 

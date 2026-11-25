@@ -542,6 +542,107 @@ test_split_refill_second_pass_gets_fresh_clock() {
 	return 0
 }
 
+# t19350 (GH#40224): cycle entry never dispatches in-process. Split-lock mode
+# wakes a detached refill with the cycle-entry source; shared-lock mode, or an
+# unavailable wake, keeps the deferral. The trigger stays for the refill.
+run_cycle_entry_drain() {
+	local split_rc="$1"
+	local wake_rc="$2"
+	local wake_args="$3"
+	local refill_only="${4:-0}"
+	(
+		# The full cycle never reaches its entry drain in refill-only mode.
+		PULSE_REFILL_ONLY="$refill_only"
+		pulse_dispatch_lock_split_enabled() { return "$split_rc"; }
+		pulse_event_refill_wake_underfilled() {
+			printf '%s\n' "$*" >>"$wake_args"
+			return "$wake_rc"
+		}
+		pulse_event_refill_drain "cycle-entry"
+	)
+	return 0
+}
+
+test_cycle_entry_wakes_detached_refill_in_split_mode() {
+	reset_state
+	local wake_args="${TEST_ROOT}/cycle-entry-wake.args"
+	local apply_log="${HOME}/.aidevops/logs/apply.log"
+	rm -f "$wake_args"
+	pulse_event_refill_write_trigger 621 6621
+	run_cycle_entry_drain 0 0 "$wake_args"
+	assert_eq "split cycle entry wakes one refill with its source" "cycle-entry" "$(cat "$wake_args" 2>/dev/null || true)"
+	assert_file_absent "split cycle entry never dispatches in-process" "$apply_log"
+	assert_file_exists "woken cycle entry retains the trigger for the refill" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	if grep -q 'action=drain_completed source=cycle-entry pass=0 dispatch=woken trigger=retained' "$LOGFILE"; then
+		pass "woken cycle entry is logged"
+	else
+		fail "woken cycle entry is logged" "dispatch=woken was not logged"
+	fi
+
+	local case_spec="" split_rc="" wake_rc=""
+	for case_spec in "1:0:shared-lock" "0:1:unavailable-wake"; do
+		reset_state
+		rm -f "$wake_args"
+		split_rc="${case_spec%%:*}"
+		wake_rc="${case_spec#*:}"
+		wake_rc="${wake_rc%%:*}"
+		pulse_event_refill_write_trigger 622 6622
+		run_cycle_entry_drain "$split_rc" "$wake_rc" "$wake_args"
+		assert_file_absent "${case_spec##*:} cycle entry never dispatches in-process" "$apply_log"
+		if grep -q 'source=cycle-entry pass=0 dispatch=deferred trigger=retained' "$LOGFILE" &&
+			[[ -f "$PULSE_EVENT_REFILL_TRIGGER_FILE" ]]; then
+			pass "${case_spec##*:} cycle entry defers with the trigger retained"
+		else
+			fail "${case_spec##*:} cycle entry defers with the trigger retained" "deferral not observed"
+		fi
+		[[ "$split_rc" == "0" ]] || assert_file_absent "shared-lock cycle entry starts no wake" "$wake_args"
+	done
+
+	# The woken --refill-only run keeps the cycle-entry source and dispatches.
+	reset_state
+	rm -f "$wake_args"
+	pulse_event_refill_write_trigger 623 6623
+	(
+		_LOCK_OWNED=false
+		_DISPATCH_LOCK_OWNED=true
+		run_cycle_entry_drain 0 0 "$wake_args" 1
+	)
+	assert_file_exists "woken cycle-entry refill dispatches" "$apply_log"
+	assert_file_absent "woken cycle-entry refill starts no further wake" "$wake_args"
+	assert_file_absent "woken cycle-entry refill consumes the trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	if grep -q 'action=drain_started source=cycle-entry pass=1' "$LOGFILE"; then
+		pass "woken cycle-entry refill keeps its attribution"
+	else
+		fail "woken cycle-entry refill keeps its attribution" "drain_started source=cycle-entry was not logged"
+	fi
+	return 0
+}
+
+test_underfill_wake_forwards_refill_source() {
+	reset_state
+	local fake_helper="${TEST_ROOT}/fake-refill-helper.sh"
+	local fake_wrapper="${TEST_ROOT}/fake-source-wrapper.sh"
+	local helper_log="${TEST_ROOT}/fake-refill-helper.log"
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\n' "$helper_log" >"$fake_helper"
+	printf '#!/usr/bin/env bash\n# Supports --refill-only for the mixed-version compatibility probe.\n' >"$fake_wrapper"
+	chmod +x "$fake_helper" "$fake_wrapper"
+	local source_arg="" expected="" attempt=0
+	for source_arg in "cycle-entry" "" "bad source"; do
+		rm -f "$helper_log"
+		expected="signal 0 $$ ${source_arg:-active-pulse}"
+		[[ "$source_arg" != "bad source" ]] || expected="signal 0 $$ active-pulse"
+		PULSE_EVENT_REFILL_HELPER="$fake_helper" PULSE_EVENT_REFILL_WRAPPER="$fake_wrapper" \
+			pulse_event_refill_wake_underfilled "$source_arg"
+		attempt=0
+		while [[ ! -s "$helper_log" && "$attempt" -lt 50 ]]; do
+			sleep 0.1
+			attempt=$((attempt + 1))
+		done
+		assert_eq "underfill wake forwards source '${source_arg}'" "$expected" "$(cat "$helper_log" 2>/dev/null || true)"
+	done
+	return 0
+}
+
 test_stale_wake_lock_is_reclaimed() {
 	reset_state
 	local fake_wrapper="${TEST_ROOT}/fake-stale-wake-wrapper.sh"
@@ -586,6 +687,8 @@ main() {
 	test_signal_during_runtime_transition_retains_trigger
 	test_refill_only_defers_during_runtime_transition
 	test_split_refill_second_pass_gets_fresh_clock
+	test_cycle_entry_wakes_detached_refill_in_split_mode
+	test_underfill_wake_forwards_refill_source
 	test_stale_wake_lock_is_reclaimed
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
