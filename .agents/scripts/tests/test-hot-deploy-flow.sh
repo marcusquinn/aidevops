@@ -115,7 +115,7 @@ test_dry_run_shows_plan() {
 		pass "$test_name"
 	else
 		# If it failed due to maintainer check, that's also valid — dry-run happens after
-		if [[ "$exit_code" -ne 0 ]] && echo "$output" | grep -qiE "maintainer|requires GitHub CLI authentication"; then
+		if [[ "$exit_code" -ne 0 ]] && grep -qiE "maintainer|requires GitHub CLI authentication" <<<"$output"; then
 			skip "$test_name" "authentication/maintainer guard blocked dry-run before planning"
 		else
 			fail "$test_name" "Expected DRY RUN output (exit=$exit_code, output=$output)"
