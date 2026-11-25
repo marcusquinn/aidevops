@@ -14,6 +14,12 @@ WORKFLOWS=(
 	".github/workflows/ratchet-post-merge.yml"
 )
 
+installer="${ROOT}/.agents/scripts/qlty-install-pinned.sh"
+grep -Fq "version='${EXPECTED_VERSION}'" "$installer"
+grep -Eq "^digest='[0-9a-f]{64}'$" "$installer"
+grep -Fq 'sha256sum --check --status' "$installer"
+printf 'PASS repository installer pins the expected version and verifies its digest\n'
+
 for workflow in "${WORKFLOWS[@]}"; do
 	workflow_path="${ROOT}/${workflow}"
 	install_count=$(grep -cF 'run: bash .agents/scripts/qlty-install-pinned.sh' "$workflow_path" || true)

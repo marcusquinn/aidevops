@@ -386,7 +386,8 @@ test_sops_git_roundtrip() {
 
 	export SOPS_AGE_KEY_FILE="$age_key_dir/keys.txt"
 
-	if sops encrypt -i "$test_repo/config.enc.yaml"; then
+	# SOPS discovers creation rules from cwd, not the input file's parent.
+	if (cd "$test_repo" && sops encrypt -i config.enc.yaml); then
 		pass "SOPS encryption succeeded"
 	else
 		fail "SOPS encryption failed"
