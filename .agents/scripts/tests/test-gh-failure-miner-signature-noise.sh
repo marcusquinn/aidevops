@@ -162,6 +162,36 @@ duplicate_events='[
 deduplicated_events=$(deduplicate_failed_events_json "$duplicate_events")
 assert_equals "GH#29468 repeated notification for one check run counts once" "1" "$(printf '%s\n' "$deduplicated_events" | jq 'length')"
 
+# GH#40269: generic smell rejection is not a shared infrastructure defect.
+regression_signature="##[error]Qlty smell regression detected (exit 1). Add the 'ratchet-bump' label to override if justified (maintainer only)."
+regression_events=$(printf '%s\n' "$duplicate_events" | jq --arg signature "$regression_signature" 'map(.signature = $signature)')
+regression_clusters=$(build_repo_clusters_json "$regression_events")
+assert_equals "repeated smell rejections remain counted" "2" "$(printf '%s\n' "$regression_clusters" | jq '.[0].count')"
+assert_equals "generic smell rejection is classified PR-specific" "true" "$(printf '%s\n' "$regression_clusters" | jq -r '.[0].pr_specific')"
+regression_report=$(render_report_markdown "$regression_events" 2)
+assert_contains "report preserves rejected PRs as local failures" "[local] Qlty Smell Regression" "$regression_report"
+assert_not_contains "report does not label expected rejection systemic" "[SYSTEMIC]" "$regression_report"
+regression_summary=$(render_prefetch_summary "$regression_events" 2)
+assert_contains "pulse summary keeps failed event total" "failed events: 2" "$regression_summary"
+assert_contains "pulse summary excludes expected regression candidates" "systemic clusters (>= 2): 0" "$regression_summary"
+assert_not_contains "issue-body omits generic regression" "## Proposed Systemic Fix" "$(render_issue_body_markdown "$regression_events" 2)"
+regression_preview=$(create_systemic_issues "$regression_events" 2 3 true)
+assert_contains "dry-run does not dispatch expected regression" "No systemic clusters met threshold (2)." "$regression_preview"
+
+for tooling_signature in "Failed to run qlty smells (empty SARIF output)" "##[error]Qlty smell regression detected (exit 2)."; do
+	tooling_events=$(printf '%s\n' "$regression_events" | jq --arg signature "$tooling_signature" 'map(.signature = $signature)')
+	mixed_events=$(jq -n --argjson regression "$regression_events" --argjson tooling "$tooling_events" '$regression + $tooling')
+	assert_contains "tooling error remains systemic in mixed report" "[SYSTEMIC] Qlty Smell Regression :: $tooling_signature" "$(render_report_markdown "$mixed_events" 2)"
+	assert_contains "pulse still reports tooling candidate" "systemic clusters (>= 2): 1" "$(render_prefetch_summary "$mixed_events" 2)"
+	assert_contains "issue-body selects tooling error" "$tooling_signature" "$(render_issue_body_markdown "$mixed_events" 2)"
+	assert_contains "dry-run still dispatches tooling error" "DRY RUN: would create issue: Systemic CI failure: Qlty Smell Regression" "$(create_systemic_issues "$mixed_events" 2 3 true)"
+done
+
+short_annotation=$(printf '%s\n' "$regression_events" | jq 'map(.signature = "::error::Qlty smell regression detected (exit 1).")')
+assert_equals "short workflow annotation remains PR-specific" "true" "$(build_repo_clusters_json "$short_annotation" | jq -r '.[0].pr_specific')"
+push_regression=$(printf '%s\n' "$regression_events" | jq 'map(.source_kind = "push")')
+assert_equals "same signature on default-branch push is not suppressed" "false" "$(build_repo_clusters_json "$push_regression" | jq -r '.[0].pr_specific')"
+
 # GH#40178 and GH#40176 were filed for the same run with different step labels.
 health_payload='##[error]83 red suites on main (storm bound 10); see the suite-health artifact'
 health_signature=$(normalize_signature_line $'Run all shell suites\tUNKNOWN STEP\t2026-11-24T14:49:48.6080751Z '"$health_payload")

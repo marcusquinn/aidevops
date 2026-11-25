@@ -969,11 +969,26 @@ extract_failed_events_json() {
 	return 0
 }
 
+# GH#40269: a successful scan rejecting added smells is a PR defect, not proof
+# of shared tooling failure. Keep these events visible without systemic dispatch.
+# Match the executed exit-1 annotation narrowly; scan errors remain candidates.
+classify_pr_specific_failures_json() {
+	local events_json="$1"
+	printf '%s\n' "$events_json" | jq 'map(. + {
+		pr_specific: (
+			.source_kind == "pr"
+			and ((.check_name // "") | test("^Qlty Smell Regression$"; "i"))
+			and ((.signature // "") | test("^(##\\[error\\]|::error::)Qlty smell regression detected \\(exit 1\\)\\.( Add the '\''ratchet-bump'\'' label to override if justified \\(maintainer only\\)\\.)?$"))
+		)
+	})'
+	return 0
+}
+
 render_report_markdown() {
 	local events_json="$1"
 	local systemic_threshold="$2"
-	printf '%s\n' "$events_json" | jq -r '
-		def systemic: .count >= $min_count;
+	classify_pr_specific_failures_json "$events_json" | jq -r '
+		def systemic: .count >= $min_count and (.pr_specific | not);
 		def key: (.check_name + " | " + .signature);
 		"## GitHub Failed Notification Report",
 		"",
@@ -992,6 +1007,7 @@ render_report_markdown() {
 		   | map({
 			      check_name: .[0].check_name,
 			      signature: .[0].signature,
+			      pr_specific: all(.[]; .pr_specific),
 			      count: length,
 			      repos: (map(.repo) | unique),
 			      sources: (map(.repo + "|" + .source_kind + "|" + .source_ref) | unique)
@@ -1008,7 +1024,7 @@ render_report_markdown() {
 render_issue_body_markdown() {
 	local events_json="$1"
 	local systemic_threshold="$2"
-	printf '%s\n' "$events_json" | jq -r '
+	classify_pr_specific_failures_json "$events_json" | jq -r '
 		def affected_paths_line($example):
 			if (($example.affected_paths // []) | length) > 0 then
 				"\n  affected files: " + (($example.affected_paths // []) | .[0:8] | join(", ")) +
@@ -1050,7 +1066,7 @@ render_issue_body_markdown() {
 				"- Add a regression guard to detect this signature early in future pulses.\n"
 			end;
 		def key: (.check_name + "|" + .signature);
-		(sort_by(key)
+		(map(select(.pr_specific | not)) | sort_by(key)
 		 | group_by(key)
 		 | map({
 			 check_name: .[0].check_name,
@@ -1092,10 +1108,11 @@ render_issue_body_markdown() {
 
 build_repo_clusters_json() {
 	local events_json="$1"
-	printf '%s\n' "$events_json" | jq '[sort_by(.repo + "|" + .check_name + "|" + .signature) | group_by(.repo + "|" + .check_name + "|" + .signature)[] | {
+	classify_pr_specific_failures_json "$events_json" | jq '[sort_by(.repo + "|" + .check_name + "|" + .signature) | group_by(.repo + "|" + .check_name + "|" + .signature)[] | {
 		repo: .[0].repo,
 		check_name: .[0].check_name,
 		signature: .[0].signature,
+		pr_specific: all(.[]; .pr_specific),
 		count: length,
 		newest_event_at: (map(.completed_at // empty) | max // null),
 		scheduled: (any(.[]; .source_kind == "workflow" and ((.source_ref // "") | startswith("schedule:")))),
@@ -1538,6 +1555,7 @@ create_systemic_issues() {
 	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(
 		(.count >= $min_count or (.scheduled // false) == true)
 		and (.is_infra // false) == false
+		and (.pr_specific // false) == false
 		and ((.signature // "") as $signature | ["billing_outage","job_not_started","signature_not_fetched"] | index($signature) | not)
 	)]' >"$candidate_file"
 
@@ -1586,9 +1604,9 @@ create_systemic_issues() {
 render_prefetch_summary() {
 	local events_json="$1"
 	local systemic_threshold="$2"
-	printf '%s\n' "$events_json" | jq -r '
+	classify_pr_specific_failures_json "$events_json" | jq -r '
 		def key: (.check_name + "|" + .signature);
-		(sort_by(key)
+		(map(select(.pr_specific | not)) | sort_by(key)
 		 | group_by(key)
 		 | map({check_name: .[0].check_name, signature: .[0].signature, count: length, repos: (map(.repo) | unique)})
 		 | sort_by(-.count)) as $clusters
