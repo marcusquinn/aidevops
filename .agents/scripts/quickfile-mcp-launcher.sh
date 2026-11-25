@@ -4,6 +4,29 @@
 
 set -euo pipefail
 
+# Accept the same major version at or above the .nvmrc patch level.
+node_version_ok() {
+	local required_node="$1"
+	local current_node="$2"
+	local required_major="${required_node%%.*}"
+	local current_major="${current_node%%.*}"
+	local req_minor="" req_patch="" cur_minor="" cur_patch="" older=0
+	IFS=. read -r _ req_minor req_patch <<<"$required_node"
+	IFS=. read -r _ cur_minor cur_patch <<<"$current_node"
+	req_minor="${req_minor:-0}"
+	req_patch="${req_patch:-0}"
+	cur_minor="${cur_minor:-0}"
+	cur_patch="${cur_patch:-0}"
+	if ((10#$cur_minor < 10#$req_minor || (10#$cur_minor == 10#$req_minor && 10#$cur_patch < 10#$req_patch))); then
+		older=1
+	fi
+	if [[ "$current_major" != "$required_major" || "$older" -eq 1 ]]; then
+		printf 'QuickFile MCP requires Node.js %s (major %s, same major or newer patch) from .nvmrc; got %s. Set NODE_BIN to a matching executable.\n' "$required_node" "$required_major" "$current_node" >&2
+		return 1
+	fi
+	return 0
+}
+
 main() {
 	local aidevops_bin="${AIDEVOPS_BIN:-aidevops}"
 	local node_bin="${NODE_BIN:-node}"
@@ -65,23 +88,7 @@ main() {
 			return 1
 		}
 		current_node="${current_node#v}"
-		# Accept the same major version at or above the .nvmrc patch level.
-		local required_major="${required_node%%.*}"
-		local current_major="${current_node%%.*}"
-		local req_minor="" req_patch="" cur_minor="" cur_patch="" older=0
-		IFS=. read -r _ req_minor req_patch <<<"$required_node"
-		IFS=. read -r _ cur_minor cur_patch <<<"$current_node"
-		req_minor="${req_minor:-0}"
-		req_patch="${req_patch:-0}"
-		cur_minor="${cur_minor:-0}"
-		cur_patch="${cur_patch:-0}"
-		if ((10#$cur_minor < 10#$req_minor || (10#$cur_minor == 10#$req_minor && 10#$cur_patch < 10#$req_patch))); then
-			older=1
-		fi
-		if [[ "$current_major" != "$required_major" || "$older" -eq 1 ]]; then
-			printf 'QuickFile MCP requires Node.js %s (major %s, same major or newer patch) from .nvmrc; got %s. Set NODE_BIN to a matching executable.\n' "$required_node" "$required_major" "$current_node" >&2
-			return 1
-		fi
+		node_version_ok "$required_node" "$current_node" || return 1
 	fi
 
 	inventory=$("$aidevops_bin" secret inventory) || {
