@@ -38,9 +38,9 @@ _json_escape() {
 _sessions_column_exists() {
 	local db="$1"
 	local column="$2"
-	if "$SQLITE3_BIN" -readonly "$db" "SELECT 1 FROM pragma_table_info('session') WHERE name='$column' LIMIT 1;" 2>/dev/null | grep -q '^1$'; then
-		return 0
-	fi
+	local found
+	found=$("$SQLITE3_BIN" -readonly "$db" "SELECT 1 FROM pragma_table_info('session') WHERE name='$column' LIMIT 1;" 2>/dev/null) || true
+	[[ "$found" == "1" ]] && return 0
 	return 1
 }
 

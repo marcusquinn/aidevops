@@ -31,7 +31,7 @@ _is_macos() {
 _launchd_is_loaded() {
 	local output
 	output=$(launchctl list 2>/dev/null) || true
-	echo "$output" | grep -qF "$LAUNCHD_LABEL"
+	grep -qF -- "$LAUNCHD_LABEL" <<<"$output"
 }
 
 # _resolve_self_path — emit the path that launchd should exec.
@@ -194,8 +194,9 @@ cmd_status() {
 		installed=true
 	fi
 
-	if command -v crontab >/dev/null 2>&1 &&
-		crontab -l 2>/dev/null | grep -qF "aidevops: opencode-db-maintenance"; then
+	local cron_listing=""
+	command -v crontab >/dev/null 2>&1 && cron_listing=$(crontab -l 2>/dev/null || true)
+	if grep -qF -- "aidevops: opencode-db-maintenance" <<<"$cron_listing"; then
 		print_success "Cron entry installed"
 		installed=true
 	fi
