@@ -298,6 +298,10 @@ _commit_and_pr_prepare_metadata() {
 	if [[ -n "${FULL_LOOP_VALIDATOR_DEFERRALS:-}" ]]; then
 		summary_testing="${summary_testing}${summary_testing:+; }local validators deferred to required CI after a host-load timeout: ${FULL_LOOP_VALIDATOR_DEFERRALS}"
 	fi
+	# GH#40322: plugin tests the validator did not block on are named.
+	if [[ -n "${FULL_LOOP_VALIDATOR_FLAKY:-}" ]]; then
+		summary_testing="${summary_testing}${summary_testing:+; }flaky plugin tests (failed in the full suite, passed on serialized rerun; not blocking): ${FULL_LOOP_VALIDATOR_FLAKY}"
+	fi
 	files_changed=$(git diff --name-only "$comparison_base" HEAD) || return 1
 	files_changed=$(printf '%s' "$files_changed" | tr '\n' ',' | sed 's/,/, /g')
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base") || return 1
