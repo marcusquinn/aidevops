@@ -253,6 +253,9 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 14: issue-created token scoping"
+# Tests 14-18 read a fixture OpenCode DB; runtime detection otherwise falls back
+# to the parent-process chain, which is absent on CI runners. Mark it explicitly.
+export OPENCODE=1
 tmp_home=$(mktemp -d 2>/dev/null || mktemp -d -t sighelper)
 mkdir -p "${tmp_home}/.local/share/opencode"
 db_path="${tmp_home}/.local/share/opencode/opencode.db"
@@ -444,6 +447,7 @@ else
 fi
 
 rm -rf "$tmp_home_18"
+unset OPENCODE
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 19: OpenCode session selection prefers current session over PID-start
