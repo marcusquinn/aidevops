@@ -1267,7 +1267,9 @@ Defaults:
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
   tier-coverage prints "<tier>\t<model>\t<reason>" per routing-table candidate:
   selectable, excluded_by_provider_allowlist, no_provider_auth,
-  chatgpt_oauth_unsupported (structural), oauth_pool_exhausted, backed_off (transient).
+  chatgpt_oauth_unsupported (structural), public_triage_oauth_unsupported (structural:
+  Anthropic OAuth under pure public triage; only --role triage selection),
+  oauth_pool_exhausted, backed_off (transient).
   AIDEVOPS_HEADLESS_VARIANT_STANDARD / AIDEVOPS_HEADLESS_VARIANT_THINKING can set tier defaults.
   GPT-5.5 standard-tier worker dispatch omits env-derived variants so OpenCode sends no explicit thinking override.
   AIDEVOPS_HEADLESS_VARIANT sets an OpenCode model variant (for example: high, xhigh).

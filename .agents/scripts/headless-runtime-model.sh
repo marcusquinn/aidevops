@@ -122,13 +122,50 @@ _headless_model_id_denied() {
 	return 1
 }
 
+# GH#40416: public triage is role triage without --private-workload. The role
+# comes from the selection call arguments, never from an inherited variable;
+# only the runtime-owned private-workload switch is consulted, exactly as the
+# launch path does.
+_headless_public_triage_role() {
+	local role="${1:-}"
+	[[ "$role" == "triage" ]] || return 1
+	if declare -F _headless_private_workload_enabled >/dev/null 2>&1 &&
+		_headless_private_workload_enabled; then
+		return 1
+	fi
+	return 0
+}
+
+# GH#40416: succeed when a candidate of <provider> cannot be authenticated by
+# public triage. Pure public triage (OPENCODE_PURE=1) cannot load the plugin
+# that implements Anthropic OAuth, so an Anthropic OAuth credential is a
+# structural exclusion, like chatgpt_oauth_unsupported. Uses the same
+# `.anthropic.type == "oauth"` test as _invoke_opencode_copy_isolated_auth in
+# headless-runtime-invoke.sh, which stays as defence-in-depth
+# (#aidevops:trust-boundary). Unreadable auth is not excluded here; the invoke
+# guard still refuses it.
+_headless_public_triage_oauth_unsupported() {
+	local role="${1:-}"
+	local provider="${2:-}"
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+	[[ "$provider" == "anthropic" ]] || return 1
+	_headless_public_triage_role "$role" || return 1
+	[[ -f "$auth_file" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+	jq -e '.anthropic.type == "oauth"' "$auth_file" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 # Derive the headless model list from the routing table (GH#17769).
 # Flow: routing table standard tier -> optional provider allowlist -> providers with
 # usable auth at dispatch time -> ChatGPT OAuth denylist (GH#38901). This eliminates AIDEVOPS_HEADLESS_MODELS as a
 # user-configurable env var while allowing temporary provider pinning via
 # AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST.
+# Optional $2 is the selection role: public triage also drops candidates it
+# cannot authenticate (GH#40416).
 get_configured_models() {
 	local requested_tier="${1:-standard}"
+	local selection_role="${2:-}"
 	local tier_name
 	tier_name=$(_normalize_headless_tier "$requested_tier")
 	local -a models=()
@@ -146,6 +183,9 @@ get_configured_models() {
 			[[ -z "$item" ]] && continue
 			provider=$(extract_provider "$item" 2>/dev/null || printf '%s' "")
 			[[ -z "$provider" ]] && continue
+			if _headless_public_triage_oauth_unsupported "$selection_role" "$provider"; then
+				continue
+			fi
 			models+=("$item")
 		done
 		if [[ ${#models[@]} -gt 0 ]]; then
@@ -174,6 +214,10 @@ get_configured_models() {
 					continue
 				fi
 			fi
+			# GH#40416: public triage cannot authenticate Anthropic OAuth.
+			if _headless_public_triage_oauth_unsupported "$selection_role" "$provider"; then
+				continue
+			fi
 
 			models+=("$model")
 	done < <(_allowlisted_tier_candidates "$tier_name")
@@ -193,12 +237,14 @@ get_configured_models() {
 # instead of only "All configured models are currently backed off". Prints
 # "<model>=<reason>" lines. Structural reasons persist until configuration
 # changes: excluded_by_provider_allowlist, no_provider_auth,
-# chatgpt_oauth_unsupported. Transient reasons clear on their own:
-# oauth_pool_exhausted, backed_off. Otherwise: selectable. Read-only; the
-# deprecated AIDEVOPS_HEADLESS_MODELS override is not classified.
+# chatgpt_oauth_unsupported, public_triage_oauth_unsupported (GH#40416; only
+# when the optional role $2 is public triage). Transient reasons clear on
+# their own: oauth_pool_exhausted, backed_off. Otherwise: selectable.
+# Read-only; the deprecated AIDEVOPS_HEADLESS_MODELS override is not classified.
 tier_candidate_exclusion_reasons() {
 	local tier_name=""
 	tier_name=$(_normalize_headless_tier "${1:-standard}")
+	local selection_role="${2:-}"
 	local allowlisted="" model="" provider="" reason="" in_allowlist=false
 	local oauth_denied_ids="" oauth_denied_loaded=false
 	allowlisted=$'\n'"$(_allowlisted_tier_candidates "$tier_name")"$'\n'
@@ -228,6 +274,9 @@ tier_candidate_exclusion_reasons() {
 					reason="chatgpt_oauth_unsupported"
 				fi
 			fi
+			if _headless_public_triage_oauth_unsupported "$selection_role" "$provider"; then
+				reason="public_triage_oauth_unsupported"
+			fi
 			if [[ "$reason" == "selectable" ]] && model_backoff_active "$model"; then
 				reason="backed_off"
 			fi
@@ -244,6 +293,7 @@ tier_candidate_exclusion_reasons() {
 tier_selection_unavailable_line() {
 	local tier_name=""
 	tier_name=$(_normalize_headless_tier "${1:-standard}")
+	local selection_role="${2:-}"
 	local line="" reasons="" excluded=""
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
@@ -251,7 +301,7 @@ tier_selection_unavailable_line() {
 		if [[ "$line" == *=excluded_by_provider_allowlist ]]; then
 			excluded+="${excluded:+,}${line%=*}"
 		fi
-	done < <(tier_candidate_exclusion_reasons "$tier_name")
+	done < <(tier_candidate_exclusion_reasons "$tier_name" "$selection_role")
 	local out="tier_selection_unavailable tier=${tier_name} reasons=${reasons:-none}"
 	[[ -z "$excluded" ]] || out+=" hint=provider_allowlist_excludes:${excluded}"
 	printf '%s\n' "$out"
@@ -409,6 +459,9 @@ _first_healthy_configured_model() {
 	# GH#32929: capability escalation excludes the route that just failed so a
 	# tier sharing that model can offer its next distinct healthy candidate.
 	local excluded_model="${4:-}"
+	# GH#40416: selection role (call argument, never inherited) so public
+	# triage skips candidates it cannot authenticate.
+	local selection_role="${5:-}"
 	local current_model="" current_provider="" configured_count=0 fallback_model=""
 	while IFS= read -r current_model; do
 		[[ -n "$current_model" ]] || continue
@@ -430,7 +483,7 @@ _first_healthy_configured_model() {
 		# Search the filtered configured list for the preference, retaining the
 		# first healthy fallback. Preferences cannot bypass provider allowlists.
 		[[ -n "$fallback_model" ]] || fallback_model="$current_model"
-	done < <(get_configured_models "$tier_name")
+	done < <(get_configured_models "$tier_name" "$selection_role")
 	if [[ -n "$fallback_model" ]]; then
 		printf '%s' "$fallback_model"
 		return 0
@@ -520,7 +573,7 @@ _choose_model_auto() {
 		current_model=$(_choose_worker_round_robin_model "$tier_name") || select_status=$?
 		[[ "$select_status" -ne 0 ]] || rotated=true
 	else
-		current_model=$(_first_healthy_configured_model "$tier_name" "$selection_mode" "$preferred_model") || select_status=$?
+		current_model=$(_first_healthy_configured_model "$tier_name" "$selection_mode" "$preferred_model" "" "$role") || select_status=$?
 	fi
 	# GH#35684: get_configured_models drops providers whose auth or OAuth pool
 	# is unavailable, so a transient cooldown of every configured provider
@@ -536,7 +589,7 @@ _choose_model_auto() {
 	if [[ "$select_status" -eq 75 || -z "$current_model" ]]; then
 		print_warning "All configured models are currently backed off"
 		# GH#40140: name each candidate's exclusion; failure path only.
-		print_warning "$(tier_selection_unavailable_line "$tier_name")"
+		print_warning "$(tier_selection_unavailable_line "$tier_name" "$role")"
 		return 75
 	fi
 

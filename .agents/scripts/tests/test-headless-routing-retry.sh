@@ -30,6 +30,10 @@ print_error() {
 	return 0
 }
 
+# Keep the real implementation for tests that exercise it (GH#40416); the
+# model library's include guard is readonly, so it cannot be re-sourced.
+real_get_configured_models_def=$(declare -f get_configured_models)
+
 get_configured_models() {
 	printf '%s\n' "openai/primary" "anthropic/secondary" "google/tertiary"
 	return 0
@@ -560,6 +564,88 @@ fi
 		printf 'FAIL: capability escalation re-ran the identical Sol medium route\n' >&2
 		exit 1
 	fi
+)
+
+# GH#40416: public triage runs pure OpenCode, which cannot authenticate
+# Anthropic OAuth. Selection must skip that candidate for --role triage only,
+# fall through to the next native candidate, and fail before launch (75) naming
+# public_triage_oauth_unsupported when none remains.
+(
+	# Restore the real get_configured_models that the file-level stub shadows.
+	eval "$real_get_configured_models_def"
+	auth_fixture="${fixture_dir}/auth-oauth.json"
+	printf '%s\n' '{"anthropic":{"type":"oauth"},"opencode-go":{"type":"api","key":"placeholder"}}' >"$auth_fixture"
+	export OPENCODE_AUTH_FILE="$auth_fixture"
+	unset AIDEVOPS_PRIVATE_WORKLOAD
+	_allowlisted_tier_candidates() {
+		local tier_name="$1"
+		case "$tier_name" in
+		standard) printf '%s\n' "anthropic/claude-sonnet-5-5" "opencode-go/deepseek-v4.1-flash" ;;
+		thinking) printf '%s\n' "anthropic/claude-opus-5-5" ;;
+		esac
+		return 0
+	}
+	model_tier_candidates() {
+		_allowlisted_tier_candidates "$1"
+		return 0
+	}
+	provider_auth_available() {
+		local provider_name="$1"
+		: "$provider_name"
+		return 0
+	}
+	provider_oauth_pool_available() {
+		local provider_name="$1"
+		: "$provider_name"
+		return 0
+	}
+	model_backoff_active() {
+		local model_name="$1"
+		: "$model_name"
+		return 1
+	}
+	extract_provider() {
+		local model_name="$1"
+		printf '%s\n' "${model_name%%/*}"
+		return 0
+	}
+	set_last_provider() {
+		local role_name="$1"
+		local provider_name="$2"
+		: "$role_name" "$provider_name"
+		return 0
+	}
+	warnings_file="${fixture_dir}/warnings.txt"
+	print_warning() {
+		printf '%s\n' "$1" >>"$warnings_file"
+		return 0
+	}
+
+	# Triage + standard: Anthropic OAuth skipped, next native candidate wins.
+	[[ "$(_choose_model_auto triage standard)" == "opencode-go/deepseek-v4.1-flash" ]]
+	# Worker and pulse keep Anthropic OAuth selectable.
+	[[ "$(_choose_model_auto worker standard)" == "anthropic/claude-sonnet-5-5" ]]
+	[[ "$(_choose_model_auto pulse standard)" == "anthropic/claude-sonnet-5-5" ]]
+	# An inherited role-like variable must not switch the behaviour on.
+	[[ "$(AIDEVOPS_HEADLESS_ROLE=triage _choose_model_auto worker standard)" == "anthropic/claude-sonnet-5-5" ]]
+	# Private workload keeps its existing behaviour (explicit --model path).
+	_headless_private_workload_enabled() {
+		return 0
+	}
+	[[ "$(_choose_model_auto triage standard)" == "anthropic/claude-sonnet-5-5" ]]
+	unset -f _headless_private_workload_enabled
+
+	# Triage + thinking: only an Anthropic OAuth candidate -> fails before launch.
+	thinking_status=0
+	_choose_model_auto triage thinking >/dev/null || thinking_status=$?
+	[[ "$thinking_status" -eq 75 ]]
+	grep -q 'tier_selection_unavailable tier=thinking .*anthropic/claude-opus-5-5=public_triage_oauth_unsupported' "$warnings_file"
+	# The same tier remains selectable for a worker.
+	[[ "$(_choose_model_auto worker thinking)" == "anthropic/claude-opus-5-5" ]]
+
+	# Non-OAuth Anthropic credentials stay selectable for triage.
+	printf '%s\n' '{"anthropic":{"type":"api","key":"placeholder"}}' >"$auth_fixture"
+	[[ "$(_choose_model_auto triage standard)" == "anthropic/claude-sonnet-5-5" ]]
 )
 
 printf 'PASS: headless routing exhausts bounded same-tier provider candidates\n'
