@@ -358,15 +358,19 @@ _worker_db_schema_template_path() {
 
 # Snapshot a freshly initialised, data-empty worker DB as the template.
 # Args: $1 = worker DB path. Best effort: callers ignore failure.
+# Ledger discovery tolerates a shared-DB lock, so a live init can succeed with
+# empty ledgers; validate the snapshot so it never replaces a usable template.
 _store_worker_db_schema_template() {
 	local worker_db="$1"
-	local template="" tmp="" tmp_sql=""
+	local template="" template_dir="." tmp="" tmp_sql=""
 	template=$(_worker_db_schema_template_path)
-	mkdir -p "${template%/*}" 2>/dev/null || return 1
+	[[ "$template" == */* ]] && template_dir="${template%/*}"
+	mkdir -p "${template_dir:-/}" 2>/dev/null || return 1
 	tmp="${template}.tmp.$$"
 	tmp_sql=$(sql_escape "$tmp")
 	rm -f "$tmp" 2>/dev/null || true
 	if ! (umask 077 && sqlite3_with_timeout "$worker_db" "VACUUM INTO '${tmp_sql}';" >/dev/null 2>&1) ||
+		! _worker_db_schema_template_usable "$tmp" ||
 		! mv -f "$tmp" "$template" 2>/dev/null; then
 		rm -f "$tmp" 2>/dev/null || true
 		return 1

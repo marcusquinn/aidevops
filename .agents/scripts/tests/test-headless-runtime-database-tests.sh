@@ -563,7 +563,7 @@ test_worker_db_schema_template_seeds_locked_fresh_init() {
 	local seeded_db="${fixture_dir}/seeded/opencode.db"
 	local unseeded_db="${fixture_dir}/unseeded/opencode.db"
 	local live_status=0 seeded_status=0 unseeded_status=0 holder_pid="" started=0 seeded_seconds=0
-	local template_state="" seeded_state="" seeded_logged=no unseeded_exists=no
+	local template_state="" seeded_state="" seeded_logged=no unseeded_exists=no ledgerless_stored=no
 	local saved_timeout_fn=""
 	mkdir -p "$shared_dir" "${fixture_dir}/live" "${fixture_dir}/seeded" "${fixture_dir}/unseeded"
 	rm -f "$shared_db" "$template"
@@ -587,6 +587,9 @@ SQL
 	}
 
 	_initialize_worker_db_from_shared_schema "$live_db" "$shared_db" >/dev/null 2>&1 || live_status=$?
+	# A snapshot whose ledgers are empty must not replace the usable template.
+	sqlite3 "${fixture_dir}/ledgerless.db" "CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);"
+	_store_worker_db_schema_template "${fixture_dir}/ledgerless.db" && ledgerless_stored=yes
 	if [[ -f "$template" ]]; then
 		template_state=$(sqlite3 "$template" "PRAGMA user_version; SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'shared-schema-ready'; SELECT COUNT(*) FROM project;")
 	fi
@@ -610,15 +613,15 @@ SQL
 	eval "$saved_timeout_fn"
 	unset AIDEVOPS_WORKER_DB_TEMPLATE AIDEVOPS_WORKER_DB_INIT_ATTEMPTS AIDEVOPS_WORKER_DB_INIT_RETRY_DELAY
 
-	if [[ "$live_status" -eq 0 && "$template_state" == $'7\n1\n0' && "$seeded_status" == "0" &&
-		"$seeded_state" == $'7\n1\n0' && "$seeded_logged" == "yes" && "$seeded_seconds" -lt 3 &&
-		"$unseeded_status" -eq 1 && "$unseeded_exists" == "no" ]]; then
+	if [[ "$live_status" -eq 0 && "$template_state" == $'7\n1\n0' && "$ledgerless_stored" == "no" &&
+		"$seeded_status" == "0" && "$seeded_state" == $'7\n1\n0' && "$seeded_logged" == "yes" &&
+		"$seeded_seconds" -lt 3 && "$unseeded_status" -eq 1 && "$unseeded_exists" == "no" ]]; then
 		print_result "locked worker DB init seeds from the cached schema template" 0
 		return 0
 	fi
 
 	print_result "locked worker DB init seeds from the cached schema template" 1 \
-		"live=$live_status template=${template_state//$'\n'/,} seeded=$seeded_status seeded_state=${seeded_state//$'\n'/,} logged=$seeded_logged seconds=$seeded_seconds unseeded=$unseeded_status unseeded_exists=$unseeded_exists"
+		"live=$live_status template=${template_state//$'\n'/,} ledgerless_stored=$ledgerless_stored seeded=$seeded_status seeded_state=${seeded_state//$'\n'/,} logged=$seeded_logged seconds=$seeded_seconds unseeded=$unseeded_status unseeded_exists=$unseeded_exists"
 	return 0
 }
 
