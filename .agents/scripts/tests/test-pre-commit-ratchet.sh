@@ -147,6 +147,9 @@ source_hook_helpers() {
 		/^_count_repeated_literals\(\)/       { c=1 }
 		/^_show_repeated_literals\(\)/        { c=1 }
 		/^validate_return_statements\(\)/     { c=1 }
+		/^_positional_lexer_helpers\(\)/      { c=1 }
+		/^_positional_context_helpers\(\)/    { c=1 }
+		/^_scan_positional_parameters\(\)/    { c=1 }
 		/^validate_positional_parameters\(\)/ { c=1 }
 		/^validate_string_literals\(\)/       { c=1 }
 		/^run_shellcheck\(\)/                 { c=1 }
@@ -255,7 +258,7 @@ test_string_literals_preexisting_pass() {
 	local stderr_out ret=0
 	stderr_out=$(validate_string_literals "offender.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -eq 0 ] && echo "$stderr_out" | grep -q 'Pre-existing repeated string literals'; then
+	if [ "$ret" -eq 0 ] && grep -q 'Pre-existing repeated string literals' <<<"$stderr_out"; then
 		print_result "string_literals: pre-existing same-count PASSES (ratchet)" 0
 	else
 		print_result "string_literals: pre-existing same-count PASSES (ratchet)" 1 \
@@ -273,7 +276,7 @@ test_string_literals_new_literal_blocks() {
 	local stderr_out ret=0
 	stderr_out=$(validate_string_literals "offender.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -gt 0 ] && echo "$stderr_out" | grep -q 'NEW repeated string literals'; then
+	if [ "$ret" -gt 0 ] && grep -q 'NEW repeated string literals' <<<"$stderr_out"; then
 		print_result "string_literals: NEW literal BLOCKS (ratchet)" 0
 	else
 		print_result "string_literals: NEW literal BLOCKS (ratchet)" 1 \
@@ -353,7 +356,7 @@ test_return_statements_preexisting_pass() {
 	local stderr_out ret=0
 	stderr_out=$(validate_return_statements "returns.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -eq 0 ] && echo "$stderr_out" | grep -q 'Pre-existing missing returns'; then
+	if [ "$ret" -eq 0 ] && grep -q 'Pre-existing missing returns' <<<"$stderr_out"; then
 		print_result "return_statements: pre-existing missing returns PASS (ratchet)" 0
 	else
 		print_result "return_statements: pre-existing missing returns PASS (ratchet)" 1 \
@@ -371,7 +374,7 @@ test_return_statements_new_missing_blocks() {
 	local stderr_out ret=0
 	stderr_out=$(validate_return_statements "returns.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -gt 0 ] && echo "$stderr_out" | grep -q 'NEW missing return statements'; then
+	if [ "$ret" -gt 0 ] && grep -q 'NEW missing return statements' <<<"$stderr_out"; then
 		print_result "return_statements: NEW missing return BLOCKS (ratchet)" 0
 	else
 		print_result "return_statements: NEW missing return BLOCKS (ratchet)" 1 \
@@ -381,7 +384,7 @@ test_return_statements_new_missing_blocks() {
 }
 
 # ---------------------------------------------------------------------------
-# Positional parameter validator — 2 cases
+# Positional parameter validator — baseline and shell quoting regressions
 # ---------------------------------------------------------------------------
 
 test_positional_params_preexisting_pass() {
@@ -395,7 +398,7 @@ test_positional_params_preexisting_pass() {
 	local stderr_out ret=0
 	stderr_out=$(validate_positional_parameters "posparam.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -eq 0 ] && echo "$stderr_out" | grep -q 'Pre-existing positional parameter usage'; then
+	if [ "$ret" -eq 0 ] && grep -q 'Pre-existing positional parameter usage' <<<"$stderr_out"; then
 		print_result "positional_params: pre-existing usage PASSES (ratchet)" 0
 	else
 		print_result "positional_params: pre-existing usage PASSES (ratchet)" 1 \
@@ -413,12 +416,206 @@ test_positional_params_new_usage_blocks() {
 	local stderr_out ret=0
 	stderr_out=$(validate_positional_parameters "posparam.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -gt 0 ] && echo "$stderr_out" | grep -q 'NEW direct positional parameter usage'; then
+	if [ "$ret" -gt 0 ] && grep -q 'NEW direct positional parameter usage' <<<"$stderr_out"; then
 		print_result "positional_params: NEW usage BLOCKS (ratchet)" 0
 	else
 		print_result "positional_params: NEW usage BLOCKS (ratchet)" 1 \
 			"expected exit>0 + 'NEW' error, got exit=$ret output=[$stderr_out]"
 	fi
+	return 0
+}
+
+# Run the real validator against a debt-free base, then the same content as HEAD
+# to verify that the quote-aware count is shared by both sides of the ratchet.
+test_positional_quote_case() {
+	local name="$1"
+	local expected="$2"
+	local content="$3"
+	local output ret=0
+	init_repo "posparam_${name}"
+	commit_base "quoting.sh" $'#!/usr/bin/env bash\n'
+	stage_change "quoting.sh" "$content"
+	source_hook_helpers
+	output=$(validate_positional_parameters "quoting.sh" 2>&1) || ret=$?
+	if { [ "$expected" -eq 0 ] && [ "$ret" -eq 0 ] && [[ "$output" != *"positional parameter usage"* ]]; } ||
+		{ [ "$expected" -gt 0 ] && [ "$ret" -gt 0 ] && [[ "$output" == *"new: $expected, pre-existing: 0"* ]]; }; then
+		print_result "positional_params: $name (count=$expected)" 0
+	else
+		print_result "positional_params: $name (count=$expected)" 1 "exit=$ret output=[$output]"
+	fi
+	commit_base "quoting.sh" "$content"
+	stage_change "quoting.sh" "$content
+# unchanged quoting baseline
+"
+	ret=0
+	output=$(validate_positional_parameters "quoting.sh" 2>&1) || ret=$?
+	if [ "$ret" -eq 0 ] && { [ "$expected" -eq 0 ] || [[ "$output" == *"usage in quoting.sh: $expected (not blocking)"* ]]; }; then
+		print_result "positional_params: $name HEAD parity" 0
+	else
+		print_result "positional_params: $name HEAD parity" 1 "exit=$ret output=[$output]"
+	fi
+	return 0
+}
+
+test_positional_params_quoting() {
+	local content
+	read -r -d '' content <<'FIXTURE' || true
+awk '
+  $1 ~ /value/ { print $2 }
+  # an apostrophe is not shell comment syntax here
+' input
+FIXTURE
+	test_positional_quote_case multiline_awk 0 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+# don't let this comment swallow shell code
+echo $1
+echo ok # don't let inline comments swallow code either
+echo $2
+FIXTURE
+	test_positional_quote_case comment_apostrophes 2 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+echo "it's $1"
+echo $2
+echo \'
+echo $3
+FIXTURE
+	test_positional_quote_case literal_apostrophes 3 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+awk 'print "it'"'"'s", $1
+print $2'
+echo $3
+FIXTURE
+	test_positional_quote_case close_literal_reopen 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+cat <<TEXT
+don't open a shell quote here
+expanded $1
+TEXT
+echo $2
+cat <<'LITERAL'
+don't expand $3
+LITERAL
+echo $4
+cat <<-TABS
+	it's plain text
+	TABS
+echo $5
+FIXTURE
+	test_positional_quote_case heredoc_apostrophes 4 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+cat <<"FIRST" <<\SECOND
+it's $1
+FIRST
+it's $2
+SECOND
+echo $3
+FIXTURE
+	test_positional_quote_case queued_quoted_heredocs 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+echo 'unterminated
+echo $1
+echo $2
+FIXTURE
+	test_positional_quote_case unterminated_fails_safe 2 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+awk '
+{ print $1 }
+'
+echo $2
+FIXTURE
+	test_positional_quote_case shell_after_multiline 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+version="$(printf value | awk '{print $2}')"
+escaped="${value//"'"/"''"}"
+echo $1
+version="$(awk '
+{ print $2 }
+')"
+echo "it's $3"
+echo "${value:-it's $4}"
+echo "that's $5"
+FIXTURE
+	test_positional_quote_case expansion_contexts 4 "$content"
+	return 0
+}
+
+test_positional_params_review_regressions() {
+	local content
+	read -r -d '' content <<'FIXTURE' || true
+cat <<'TEXT' \
+  "$1"
+constant
+TEXT
+FIXTURE
+	test_positional_quote_case continued_heredoc 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+message=$'it\'s fine'
+echo "$1"
+echo 'done'
+FIXTURE
+	test_positional_quote_case ansi_c_escapes 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+version="`awk '{print $1}' input`"
+echo "it's $2"
+FIXTURE
+	test_positional_quote_case backtick_context 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+mask=$((1 << 2))
+((mask = 1 << 2))
+awk '{ print $1 }' input
+echo "$2"
+FIXTURE
+	test_positional_quote_case arithmetic_shifts 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+cat <<E"OF"
+literal $1
+EOF
+cat <<'E'OF
+literal $2
+EOF
+awk '{ print $3 }' input
+echo "$4"
+FIXTURE
+	test_positional_quote_case partial_heredoc_quotes 1 "$content"
+	return 0
+}
+
+test_positional_params_nested_shell_contexts() {
+	local content
+	read -r -d '' content <<'FIXTURE' || true
+cat <<TEXT
+$(printf value | awk '{print $1}')
+`awk '{print $2}' input`
+don't hide direct $3
+"$4" remains expandable
+$(awk '
+{print $5}
+' input)
+TEXT
+echo "$6"
+FIXTURE
+	test_positional_quote_case heredoc_substitution_contexts 3 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+echo "${value#'$1'}"
+echo "${value##'$2'}"
+echo "${value%'$3'}"
+echo "${value%%'$4'}"
+echo "${value:-it's $5}"
+echo "${value-'$6'}"
+echo "$7"
+FIXTURE
+	test_positional_quote_case parameter_pattern_quotes 3 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+version="$(case x in x) awk '{print $1}' input ;; esac)"
+echo "$2"
+version="$(case x in
+  (x|y) case y in y) awk '{print $3}' input ;; esac ;;
+  z) echo "$4" ;;
+esac)"
+version="$(printf '%s' "$(awk '{print $5}' input)")"
+echo "$6"
+FIXTURE
+	test_positional_quote_case case_pattern_contexts 3 "$content"
 	return 0
 }
 
@@ -442,10 +639,10 @@ test_classification_labels_present() {
 	out_new=$(validate_string_literals "offender.sh" 2>&1 || true)
 
 	local ok=0
-	if ! echo "$out_pre" | grep -q '(not blocking)'; then
+	if ! grep -q '(not blocking)' <<<"$out_pre"; then
 		ok=1
 	fi
-	if ! echo "$out_new" | grep -q 'new:'; then
+	if ! grep -q 'new:' <<<"$out_new"; then
 		ok=1
 	fi
 
@@ -494,6 +691,9 @@ main() {
 	test_return_statements_new_missing_blocks
 	test_positional_params_preexisting_pass
 	test_positional_params_new_usage_blocks
+	test_positional_params_quoting
+	test_positional_params_review_regressions
+	test_positional_params_nested_shell_contexts
 	test_classification_labels_present
 	test_check_secrets_remains_absolute
 

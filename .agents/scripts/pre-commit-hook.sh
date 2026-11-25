@@ -253,36 +253,208 @@ validate_return_statements() {
 	return $violations
 }
 
+_positional_lexer_helpers() {
+	# Keep the awk helpers separate from the record scanner for maintainability.
+	# shellcheck disable=SC2016  # $1, $[1-9] etc. are awk regex literals, not shell expansions
+	printf "%s\n" '
+	BEGIN { sq = "\047"; dq = "\042" }
+	function report(line, nr) {
+		if (line ~ /^[[:space:]]*#/) return
+		sub(/[[:space:]]+#.*/, "", line)
+		if (line ~ /local[[:space:]].*=.*\$[1-9]/) return
+		if (line ~ /\$[1-9][0-9.,\/]/) return
+		if (line ~ /\$[1-9][[:space:]]*\|/) return
+		if (line ~ /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)/) return
+		if (line ~ /\$[1-9]/) print nr ": " raw[nr]
+	}
+	function heredoc_word(text, start,    j, ch, quote, word, quoted, tabs) {
+		j = start
+		if (substr(text, j, 1) == "-") { tabs = 1; j++ }
+		while (substr(text, j, 1) ~ /[[:space:]]/ && j <= length(text)) j++
+		start = j
+		for (; j <= length(text); j++) {
+			ch = substr(text, j, 1)
+			if (!quote && ch ~ /[[:space:];&|<>()]/) break
+			if (ch == "\\" && quote != sq) {
+				quoted = 1
+				ch = substr(text, ++j, 1)
+				# Within double quotes only shell-special backslashes are removed.
+				if (quote == dq && ch !~ /[$`"\\]/) word = word "\\"
+			} else if (ch == quote) { quote = ""; continue }
+			else if (!quote && (ch == sq || ch == dq)) {
+				quote = ch; quoted = 1; continue
+			}
+			word = word ch
+		}
+		if (j == start || quote) return 0
+		hd_count++
+		if (!hd_read) hd_read = 1
+		hd_tabs[hd_count] = tabs
+		hd_quoted[hd_count] = quoted
+		hd_end[hd_count] = word
+		hd_depth[hd_count] = depth
+		return j - 1
+	}'
+	return 0
+}
+
+_positional_context_helpers() {
+	# shellcheck disable=SC2016  # awk literals, not shell expansions
+	printf "%s\n" '
+	BEGIN { case_pattern = "pattern"; case_body = "body"; case_header = "header" }
+	function case_syntax(text, pos,    c, pair, word, rest, before, at_command) {
+		c = substr(text, pos, 1); pair = substr(text, pos, 2)
+		if (case_n && case_depth[case_n] == depth) {
+			if (case_state[case_n] == case_pattern && c == ")") {
+				case_state[case_n] = case_body; return 1
+			}
+			if (case_state[case_n] == case_pattern && c == "(") return 1
+			if (case_state[case_n] == case_body && (pair == ";;" || pair == ";&")) {
+				case_state[case_n] = case_pattern
+				return (substr(text, pos, 3) == ";;&" ? 3 : 2)
+			}
+		}
+		before = substr(text, 1, pos - 1)
+		if (pos > 1 && before !~ /[[:space:];()|&]$/) return 0
+		rest = substr(text, pos)
+		if (!match(rest, /^[[:alpha:]_][[:alnum:]_]*/)) return 0
+		word = substr(rest, 1, RLENGTH)
+		if (substr(rest, length(word) + 1, 1) !~ /^[[:space:];()|&]?$/) return 0
+		sub(/[[:space:]]+$/, "", before)
+		at_command = (!before || before ~ /[;()|&]$/)
+		if (word == "case" && at_command && (!case_n || case_state[case_n] == case_body)) {
+			case_n++; case_depth[case_n] = depth; case_state[case_n] = case_header
+			return length(word)
+		}
+		if (case_n && case_depth[case_n] == depth) {
+			if (word == "in" && case_state[case_n] == case_header) {
+				case_state[case_n] = case_pattern; return length(word)
+			}
+			if (word == "esac" && (case_state[case_n] == case_pattern || at_command)) {
+				case_n--; return length(word)
+			}
+		}
+		return 0
+	}
+	function parameter_literal(rest, quoted) {
+		# Pattern operators retain single-quote semantics even inside double quotes.
+		if (match(rest, /^([[:alpha:]_][[:alnum:]_]*|[0-9]+|[@*#?$!-])(\[[^]]*\])?/))
+			rest = substr(rest, RLENGTH + 1)
+		return quoted && rest !~ /^[#%\/]/
+	}
+	function expansion(text, pos, body_text,    c, pair, count, outer_dq) {
+		c = substr(text, pos, 1); pair = substr(text, pos, 2)
+		if (!in_dq && !body_text && !arithmetic[depth] && (!depth || end_char[depth] != "}")) {
+			count = case_syntax(text, pos)
+			if (count) return count
+		}
+		if (c == "`" && !(depth && end_char[depth] == "`")) {
+			depth++; saved_dq[depth] = in_dq; in_dq = 0
+			literal_sq[depth] = arithmetic[depth] = 0; end_char[depth] = "`"
+			return 1
+		}
+		if (pair == "$(" || pair == "${") {
+			outer_dq = body_text || in_dq || (depth && literal_sq[depth])
+			depth++; saved_dq[depth] = in_dq; in_dq = 0
+			literal_sq[depth] = (pair == "${" && parameter_literal(substr(text, pos + 2), outer_dq))
+			arithmetic[depth] = (substr(text, pos, 3) == "$((")
+			end_char[depth] = (pair == "$(" ? ")" : "}")
+			return 2
+		}
+		if (depth && !in_dq && !body_text && c == end_char[depth]) {
+			in_dq = saved_dq[depth]; depth--
+			return 1
+		}
+		if (!in_dq && !body_text && c == "(" && ((depth && end_char[depth] == ")") || pair == "((")) {
+			arithmetic[depth + 1] = (pair == "((" || arithmetic[depth])
+			depth++; saved_dq[depth] = 0; literal_sq[depth] = 0; end_char[depth] = ")"
+		}
+		return 0
+	}'
+	return 0
+}
+
+_scan_positional_parameters() {
+	# Use the same lexer for on-disk content and HEAD content piped on stdin.
+	# shellcheck disable=SC2016  # awk literals, not shell expansions
+	local _awk_script='
+	{
+		raw[NR] = $0
+		heredoc_mode = 0
+		# Heredoc bodies are not shell syntax. Unquoted bodies still expand $N;
+		# quoted delimiters suppress expansion. Queue multiple redirections.
+		if (hd_read <= hd_count && hd_count && (hd_active || (!continued && !in_sq && !in_dq))) {
+			hd_active = 1
+			body = $0
+			if (hd_tabs[hd_read]) sub(/^\t+/, "", body)
+			if (body == hd_end[hd_read]) {
+				hd_read++; hd_active = (hd_read <= hd_count); next
+			}
+			if (hd_quoted[hd_read]) next
+			heredoc_mode = 1
+		}
+		continued = 0
+		if (!heredoc_mode && !in_sq && !in_dq && $0 ~ /^[[:space:]]*#/) next
+		line = ""
+		for (i = 1; i <= length($0); i++) {
+			c = substr($0, i, 1)
+			body_text = (heredoc_mode && depth == hd_depth[hd_read])
+			if (in_sq) {
+				if (ansi_sq && c == "\\") { i++; continue }
+				if (c == sq) in_sq = 0
+				continue
+			}
+			if (c == "\\") {
+				if (i == length($0)) continued = 1
+				line = line c substr($0, i + 1, 1)
+				i++
+				continue
+			}
+			count = expansion($0, i, body_text)
+			if (count) {
+				line = line substr($0, i, count); i += count - 1; continue
+			}
+			if (!body_text && c == dq) in_dq = !in_dq
+			if (!body_text && !in_dq && c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[[:space:];]/)) break
+			if (!body_text && !in_dq && c == sq && !(depth && literal_sq[depth])) {
+				in_sq = 1
+				ansi_sq = (i > 1 && substr($0, i - 1, 1) == "$")
+				sq_start = NR
+				continue
+			}
+			# Recognize ordinary, quoted and tab-stripping heredoc delimiters.
+			# Do not mistake a here-string (<<<) for a heredoc.
+			if (!body_text && !in_dq && !arithmetic[depth] && substr($0, i, 2) == "<<" && substr($0, i, 3) != "<<<" && substr($0, i - 1, 1) != "<") {
+				word_end = heredoc_word($0, i + 2)
+				if (word_end) {
+					i = word_end
+					continue
+				}
+			}
+			line = line c
+		}
+		clean[NR] = line
+	}
+	END {
+		for (nr = 1; nr <= NR; nr++) {
+			line = clean[nr]
+			# Fail safe: an unclosed quote must not hide the remaining file.
+			# Restore the old line-local scan from the unmatched opening quote.
+			if (in_sq && nr >= sq_start) {
+				line = raw[nr]
+				gsub(/\047[^\047]*\047/, "", line)
+			}
+			report(line, nr)
+		}
+	}'
+	awk "$(_positional_lexer_helpers)$(_positional_context_helpers)$_awk_script" "$@"
+	return 0
+}
+
 validate_positional_parameters() {
 	local violations=0
 
 	print_info "Validating positional parameters (ratchet)..."
-
-	# Shared awk script — extracted so we can run it over both staged content
-	# (the on-disk file) and HEAD content (piped from git show).
-	# shellcheck disable=SC2016  # $1, $[1-9] etc. are awk regex literals, not shell expansions
-	local _awk_script='
-	{
-		line = $0
-		# Strip single-quoted segments — shell does not expand $ inside single quotes,
-		# so awk field refs like awk '"'"'$1 >= 3'"'"' are not positional params.
-		# \047 is octal for single-quote (avoids shell quoting issues).
-		gsub(/\047[^\047]*\047/, "", line)
-		# Skip pure comment lines (after stripping quoted content)
-		if (line ~ /^[[:space:]]*#/) next
-		# Strip inline comments
-		sub(/[[:space:]]+#.*/, "", line)
-		# Skip lines with local var assignments (proper usage pattern)
-		if (line ~ /local[[:space:]].*=.*\$[1-9]/) next
-		# Skip currency/pricing patterns: $N followed by digit, decimal, comma, slash
-		if (line ~ /\$[1-9][0-9.,\/]/) next
-		# Skip markdown table cells: $N followed by pipe
-		if (line ~ /\$[1-9][[:space:]]*\|/) next
-		# Skip pricing unit words
-		if (line ~ /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)/) next
-		# After stripping, if $[1-9] is still present, flag as violation
-		if (line ~ /\$[1-9]/) print NR ": " $0
-	}'
 
 	for file in "$@"; do
 		# Skip test files — fixtures deliberately inject bare positional
@@ -295,7 +467,7 @@ validate_positional_parameters() {
 		if [[ -f "$file" ]]; then
 			local staged_output head_output
 			local staged_count=0 head_count=0
-			staged_output=$(awk "$_awk_script" "$file" 2>/dev/null || true)
+			staged_output=$(_scan_positional_parameters "$file" 2>/dev/null || true)
 			if [[ -n "$staged_output" ]]; then
 				staged_count=$(printf '%s\n' "$staged_output" | wc -l | tr -d ' ')
 			fi
@@ -303,7 +475,7 @@ validate_positional_parameters() {
 			local head_content
 			head_content=$(_get_head_content "$file")
 			if [[ -n "$head_content" ]]; then
-				head_output=$(printf '%s\n' "$head_content" | awk "$_awk_script" 2>/dev/null || true)
+				head_output=$(printf '%s\n' "$head_content" | _scan_positional_parameters 2>/dev/null || true)
 				if [[ -n "$head_output" ]]; then
 					head_count=$(printf '%s\n' "$head_output" | wc -l | tr -d ' ')
 				fi
