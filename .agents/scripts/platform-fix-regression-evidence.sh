@@ -96,6 +96,12 @@ _platform_has_regression_evidence() {
 		if [[ "$in_section" -eq 1 ]] && printf '%s\n' "$line" | grep -qE '^[[:space:]]*#{1,6}[[:space:]]+'; then
 			break
 		fi
+		if [[ "$in_section" -eq 1 ]]; then
+			[[ "$line" == *'<!-- aidevops:sig -->'* ]] && break
+			if grep -qiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?|for|ref)[[:space:]]+#[0-9]+([[:space:]].*)?$' <<<"$line"; then
+				break
+			fi
+		fi
 		if [[ "$in_section" -eq 1 ]] && [[ -n "${line//[[:space:]]/}" ]]; then
 			case "$line" in
 			'<!--'*'-->') ;;
