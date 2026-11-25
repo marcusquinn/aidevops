@@ -92,8 +92,8 @@ test_reclassify_helper_exists() {
 test_escalate_calls_reclassify() {
 	# Assert the reclassify call appears inside escalate_issue_tier — the
 	# only safe place where the empty-crash_type branch should fire.
-	if awk '/^escalate_issue_tier\(\)/,/^}$/' "$WORKER_LIFECYCLE_ESCALATION" \
-		| grep -q '_maybe_reclassify_worker_failed_as_no_work'; then
+	if grep -q '_maybe_reclassify_worker_failed_as_no_work' \
+		< <(awk '/^escalate_issue_tier\(\)/,/^}$/' "$WORKER_LIFECYCLE_ESCALATION"); then
 		print_result "wired: escalate_issue_tier() calls _maybe_reclassify_..." 0
 	else
 		print_result "wired: escalate_issue_tier() calls _maybe_reclassify_..." 1 \
@@ -105,8 +105,8 @@ test_escalate_calls_reclassify() {
 test_pulse_cleanup_uses_shared_reader() {
 	# Confirm _post_launch_recovery_claim_released no longer duplicates
 	# the log-tail reading logic — DRY with shared helper (acceptance #4).
-	if awk '/_post_launch_recovery_claim_released\(\)/,/^}$/' "$PULSE_CLEANUP" \
-		| grep -q '_read_worker_log_tail_classified'; then
+	if grep -q '_read_worker_log_tail_classified' \
+		< <(awk '/_post_launch_recovery_claim_released\(\)/,/^}$/' "$PULSE_CLEANUP"); then
 		print_result "DRY: pulse-cleanup uses _read_worker_log_tail_classified" 0
 	else
 		print_result "DRY: pulse-cleanup uses _read_worker_log_tail_classified" 1 \

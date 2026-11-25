@@ -636,7 +636,7 @@ _try_worker_ready_stub_brief() {
 
 	local _readiness_output=""
 	_readiness_output=$("$_readiness_helper" check --body "$_body" 2>/dev/null) || true
-	if printf '%s\n' "$_readiness_output" | grep -q 'WORKER_READY=true'; then
+	if grep -q 'WORKER_READY=true' <<<"$_readiness_output"; then
 		log_info "$task_id: linked issue #${_issue_ref} body is worker-ready — capturing full brief"
 		"$_readiness_helper" stub "$task_id" "$_issue_ref" "$_slug" "$project_root" || return 2
 		return 0
