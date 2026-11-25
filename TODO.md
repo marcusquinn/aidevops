@@ -2516,13 +2516,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19358 Add prompt-cache keep-alive to the OpenCode v2 provider-auth adapter #auto-dispatch #feat ref:GH#40264
 
-- [ ] t19367 perf(pulse): size the prelaunch budget from observed prelaunch stage times so loaded runners stop aborting claimed launches #auto-dispatch #feat #priority:high tier:standard ref:GH#40321 logged:2026-11-25 -> [todo/tasks/t19367-brief.md]
+- [x] t19367 perf(pulse): size the prelaunch budget from observed prelaunch stage times so loaded runners stop aborting claimed launches #auto-dispatch #feat #priority:high tier:standard ref:GH#40321 logged:2026-11-25 -> [todo/tasks/t19367-brief.md] pr:#40325 completed:2026-11-25
 
 - [x] t19363 fix(worker-lifecycle): index compaction reservation lookups so journal maintenance stops refusing hook admission with database-locked #bug #priority:high #interactive ref:GH#40293 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19363-brief.md] pr:#40299 completed:2026-11-25
 
 - [x] t19364 perf(pulse): split-lock refill-only dispatch-lock holder gets the elastic dispatch lease #feat #priority:high #interactive tier:standard ref:GH#40308 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19364-brief.md] pr:#40312 completed:2026-11-25
 
-- [ ] t19365 perf(pulse): stop recomputing the ceremony reserve from the full stages log on every candidate admission #feat #priority:high #interactive tier:simple ref:GH#40317 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19365-brief.md]
+- [x] t19365 perf(pulse): stop recomputing the ceremony reserve from the full stages log on every candidate admission #feat #priority:high #interactive tier:simple ref:GH#40317 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19365-brief.md] pr:#40320 completed:2026-11-25
 
 ## In Progress
 
