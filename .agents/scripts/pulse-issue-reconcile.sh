@@ -1022,13 +1022,38 @@ _normalize_unassign_stampless_interactive() {
 #   Pass 1 — _normalize_reassign_self: find issues with active labels but
 #     no assignee and self-assign this runner (with t1996 dedup guard).
 #
-#   Pass 2 — _normalize_unassign_stale: find issues assigned to this runner
-#     with active labels but no running worker, and reset via
-#     _normalize_clear_status_labels so they can be re-dispatched.
+#   Pass 2 — _normalize_unassign_stale_search (every run, GH#40231), with
+#     _normalize_unassign_stale as per-repo fallback/backstop: find issues
+#     assigned to this runner with active labels but no running worker, and
+#     reset via _normalize_clear_status_labels so they can be re-dispatched.
+#     The pending checkpoint-lease and deferred claim-release drains also run
+#     on every run, before the listing passes.
+#
+#   Pass 2c — _normalize_unassign_available_stale (GH#39327): release stale
+#     assignees from open status:available + auto-dispatch issues
+#     (prior-lifecycle assignees after a reopen, or is-assigned stale
+#     recovery); capped per cycle.
+#
+#   Pass 2b — _normalize_unassign_stampless_interactive (t2148): recover aged
+#     stampless origin:interactive claims. `claim-task-id.sh` auto-assigns on
+#     creation (t1970) without the formal claim flow, leaving an
+#     `origin:interactive + assignee` pair that blocks dispatch forever via
+#     `_has_active_claim`. A real interactive session creates a stamp via
+#     `interactive-session-helper.sh claim`, so a missing stamp is itself the
+#     liveness signal; stamped claims were handled by Pass 0. Age threshold
+#     STAMPLESS_INTERACTIVE_AGE_THRESHOLD, default 1h (t2942; 86400 restores
+#     the original 24h).
 #
 #   Pass 3 — _normalize_label_invariants (t2040): enforce at-most-one
 #     `status:*` and at-most-one `tier:*` invariants, backfilling polluted
-#     issues left by pre-t2033 / pre-t1997 write-without-remove bugs.
+#     issues left by pre-t2033 / pre-t1997 write-without-remove bugs; bounded
+#     by PULSE_QUEUED_SCAN_LIMIT per repo.
+#
+# The listing passes are independent but share one live open-issue listing
+# per repo per run (fetched lazily by the first pass that reaches the repo;
+# see _normalize_repo_listing). They run least-recently-started first and
+# stamp the start before running, so a pass interrupted by the stage
+# watchdog yields first place next cycle.
 #
 # Note: the combined "label AND assignee" rule (t1996) applies here:
 #   - A status label without an assignee = degraded state (safe to claim)
@@ -1063,41 +1088,19 @@ normalize_active_issue_assignments() {
 	# Default max runtime for cross-runner time-based expiry (3h, matches worker-watchdog.sh default)
 	local cross_runner_max_runtime="${WORKER_MAX_RUNTIME:-10800}"
 
-	# Pass 1 (reassign_self): assign runner to orphaned active issues (active
-	# label, no assignee).
-	# Pass 2 (unassign_stale): reset stale assignments (active label, assignee
-	# present, no running worker).
-	# Pass 2c (unassign_available_stale, GH#39327): release stale assignees from
-	# open status:available + auto-dispatch issues (prior-lifecycle assignees
-	# after a reopen, or is-assigned stale recovery); capped per cycle.
-	# Pass 2b (unassign_stampless_interactive, t2148): recover aged stampless origin:interactive claims.
-	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
-	# (per t1970) but the interactive session never runs the formal
-	# claim flow, leaving an `origin:interactive + assignee` pair that
-	# blocks pulse dispatch forever via `_has_active_claim`. The 1h
-	# default (t2942) matches status-based stale recovery — the absence
-	# of a stamp file is itself the liveness signal: a real interactive
-	# session creates a stamp via `interactive-session-helper.sh claim`,
-	# while ad-hoc self-assigns from `claim-task-id.sh` (per t1970)
-	# never produce one. Stamped claims were already handled by Pass 0.
-	# Override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD
-	# (set to 86400 to restore the original 24h behaviour from t2148).
+	# GH#40231: stale-claim search and claim-release drains run on every run,
+	# before the listing passes, so the stage watchdog cannot starve them.
+	local stale_search_ok=0
+	_normalize_claim_recovery_every_run "$runner_user" "$repos_json" "$now_epoch" \
+		"$cross_runner_max_runtime" "$dedup_helper" && stale_search_ok=1
+
+	# Pass 2b age threshold (t2148/t2942; see header).
 	local stampless_age_threshold="${STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-3600}"
-	# Pass 3 (label_invariants, t2040): enforce label invariants (at most one
-	# status:*, at most one tier:*); bounded by PULSE_QUEUED_SCAN_LIMIT per repo.
-	#
-	# Passes are independent but share one live open-issue listing per repo
-	# per run (fetched lazily by the first pass that reaches the repo; see
-	# _normalize_repo_listing). Run them least-recently-started first and stamp
-	# the start before running, so a pass interrupted by the stage watchdog
-	# yields first place next cycle.
 	_listing_dir=$(mktemp -d 2>/dev/null) || _listing_dir=""
 	if [[ -z "$_listing_dir" ]]; then
 		# No shared cache: skip listing-dependent passes rather than listing
 		# each repo once per pass. Independent cleanups still run.
 		echo "[pulse-wrapper] normalize_active_issue_assignments: mktemp -d failed; skipping listing-dependent passes this run" >>"$LOGFILE"
-		_normalize_stale_close_pending_checkpoint_leases
-		_normalize_deferred_claim_releases
 		return 0
 	fi
 	_NORMALIZE_LISTING_DIR="$_listing_dir"
@@ -1107,6 +1110,11 @@ normalize_active_issue_assignments() {
 	# Resolve the order up front: passes read their own stdin streams.
 	pass_order=$(_normalize_pass_order "$pass_state_dir" "$now_epoch")
 	for pass in $pass_order; do
+		# GH#40231: left unstamped, so the backstop sorts first when it is due.
+		if [[ "$pass" == unassign_stale && "$stale_search_ok" -eq 1 ]] &&
+			! _normalize_stale_per_repo_backstop_due "$pass_state_dir" "$now_epoch"; then
+			continue
+		fi
 		_normalize_mark_pass_started "$pass_state_dir" "$pass"
 		_phase_start=$SECONDS
 		case "$pass" in
@@ -1114,8 +1122,6 @@ normalize_active_issue_assignments() {
 			_normalize_reassign_self "$runner_user" "$repos_json" "$dedup_helper"
 			;;
 		unassign_stale)
-			_normalize_stale_close_pending_checkpoint_leases
-			_normalize_deferred_claim_releases
 			_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime" "$dedup_helper"
 			;;
 		unassign_available_stale)
