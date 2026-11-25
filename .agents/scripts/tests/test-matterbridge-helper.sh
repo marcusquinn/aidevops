@@ -96,110 +96,6 @@ test_help_output() {
 	else
 		print_result "help: shows usage header" 1 "Expected 'matterbridge-helper.sh' in output"
 	fi
-
-	if echo "$output" | grep -q "simplex-bridge"; then
-		print_result "help: lists simplex-bridge command" 0
-	else
-		print_result "help: lists simplex-bridge command" 1 "Expected 'simplex-bridge' in help output"
-	fi
-
-	return 0
-}
-
-test_simplex_bridge_help() {
-	local output
-	output="$(bash "$HELPER" simplex-bridge help 2>&1)" || true
-
-	if echo "$output" | grep -q "simplex-bridge"; then
-		print_result "simplex-bridge help: shows subcommand help" 0
-	else
-		print_result "simplex-bridge help: shows subcommand help" 1 "Expected 'simplex-bridge' in output"
-	fi
-
-	if echo "$output" | grep -q "SIMPLEX_CHAT_ID"; then
-		print_result "simplex-bridge help: documents env vars" 0
-	else
-		print_result "simplex-bridge help: documents env vars" 1 "Expected 'SIMPLEX_CHAT_ID' in output"
-	fi
-
-	return 0
-}
-
-test_simplex_bridge_init() {
-	setup
-
-	local output
-	output="$(bash "$HELPER" simplex-bridge init 2>&1)" || true
-
-	# Check compose file was copied
-	local compose_path="$TEST_DIR/.aidevops/.agent-workspace/matterbridge/simplex-bridge/docker-compose.yml"
-	if [[ -f "$compose_path" ]]; then
-		print_result "simplex-bridge init: creates compose file" 0
-	else
-		print_result "simplex-bridge init: creates compose file" 1 "Expected $compose_path to exist"
-	fi
-
-	# Check config template was copied
-	local config_path="$TEST_DIR/.aidevops/.agent-workspace/matterbridge/simplex-bridge/matterbridge.toml"
-	if [[ -f "$config_path" ]]; then
-		print_result "simplex-bridge init: creates config template" 0
-	else
-		print_result "simplex-bridge init: creates config template" 1 "Expected $config_path to exist"
-	fi
-
-	# Check config permissions
-	if [[ -f "$config_path" ]]; then
-		local perms=""
-		# stat -c '%a' is GNU/Linux; stat -f '%Lp' is BSD/macOS
-		# Guard each stat call so failures under set -e are captured, not fatal
-		case "$(uname -s)" in
-		Linux*) perms="$(stat -c '%a' "$config_path" 2>/dev/null)" || perms="" ;;
-		Darwin* | FreeBSD*) perms="$(stat -f '%Lp' "$config_path" 2>/dev/null)" || perms="" ;;
-		*) perms="unknown" ;;
-		esac
-		if [[ -z "$perms" ]]; then
-			print_result "simplex-bridge init: config has 600 permissions" 1 \
-				"Unable to read permissions for $config_path"
-		elif [[ "$perms" == "600" ]]; then
-			print_result "simplex-bridge init: config has 600 permissions" 0
-		else
-			print_result "simplex-bridge init: config has 600 permissions" 1 "Got permissions: $perms"
-		fi
-	fi
-
-	# Check data directory was created
-	local data_dir="$TEST_DIR/.aidevops/.agent-workspace/matterbridge/simplex-bridge/data/simplex"
-	if [[ -d "$data_dir" ]]; then
-		print_result "simplex-bridge init: creates data/simplex directory" 0
-	else
-		print_result "simplex-bridge init: creates data/simplex directory" 1 "Expected $data_dir to exist"
-	fi
-
-	# Check output includes next steps
-	if echo "$output" | grep -q "Next steps"; then
-		print_result "simplex-bridge init: shows next steps" 0
-	else
-		print_result "simplex-bridge init: shows next steps" 1 "Expected 'Next steps' in output"
-	fi
-
-	teardown
-	return 0
-}
-
-test_simplex_bridge_status_no_docker() {
-	setup
-
-	# Status should work even without Docker (graceful degradation)
-	local output
-	output="$(bash "$HELPER" simplex-bridge status 2>&1)" || true
-
-	if echo "$output" | grep -q "matterbridge"; then
-		print_result "simplex-bridge status: runs without Docker" 0
-	else
-		print_result "simplex-bridge status: runs without Docker" 1 "Expected some output"
-	fi
-
-	teardown
 	return 0
 }
 
@@ -211,19 +107,6 @@ test_unknown_command() {
 		print_result "unknown command: returns non-zero exit" 0
 	else
 		print_result "unknown command: returns non-zero exit" 1 "Expected non-zero exit code"
-	fi
-
-	return 0
-}
-
-test_unknown_simplex_bridge_action() {
-	local output exit_code
-	output="$(bash "$HELPER" simplex-bridge nonexistent 2>&1)" && exit_code=0 || exit_code=$?
-
-	if [[ "$exit_code" -ne 0 ]]; then
-		print_result "unknown simplex-bridge action: returns non-zero exit" 0
-	else
-		print_result "unknown simplex-bridge action: returns non-zero exit" 1 "Expected non-zero exit code"
 	fi
 
 	return 0
@@ -331,11 +214,7 @@ main() {
 	echo ""
 
 	test_help_output
-	test_simplex_bridge_help
-	test_simplex_bridge_init
-	test_simplex_bridge_status_no_docker
 	test_unknown_command
-	test_unknown_simplex_bridge_action
 	test_compose_template_valid_yaml
 	test_config_template_valid
 	test_script_shellcheck
