@@ -237,9 +237,14 @@ def op_remove(conn, name, expected):
     stored = first_string(conn.command(b"GETSCRIPT " + quote(parked)))
     if normalize(stored) != normalize(expected):
         raise SieveError("script changed since it was checked; " + restore_parked(conn, parked, original))
-    if (parked, True) in listing(conn):
+    return drop(conn, parked)
+
+
+def drop(conn, name):
+    """Deactivate NAME if active, then delete it."""
+    if (name, True) in listing(conn):
         conn.command(b'SETACTIVE ""')
-    conn.command(b"DELETESCRIPT " + quote(parked))
+    conn.command(b"DELETESCRIPT " + quote(name))
     return 0
 
 
@@ -254,10 +259,7 @@ def op_delete(conn, name):
 
 def op_delete_active(conn, name):
     """Explicitly deactivate (if active) and delete NAME."""
-    if (name, True) in listing(conn):
-        conn.command(b'SETACTIVE ""')
-    conn.command(b"DELETESCRIPT " + quote(name))
-    return 0
+    return drop(conn, name)
 
 
 def park(conn, name):
@@ -272,10 +274,7 @@ def op_remove_parked(conn, name, expected):
     stored = first_string(conn.command(b"GETSCRIPT " + quote(name)))
     if normalize(stored) != normalize(expected):
         raise SieveError("parked script changed since it was checked; left in place")
-    if (name, True) in listing(conn):
-        conn.command(b'SETACTIVE ""')
-    conn.command(b"DELETESCRIPT " + quote(name))
-    return 0
+    return drop(conn, name)
 
 
 def restore_parked(conn, parked, name):
@@ -293,24 +292,33 @@ OPS = {"list": (op_list, 0), "get": (op_get, 1), "install": (op_install, 2),
        "delete-active": (op_delete_active, 1)}
 
 
+USAGE = ("usage: managesieve_client.py PASSWORD_VAR USER list|get NAME|install NAME SCRIPT"
+         "|install-file NAME PATH|remove NAME SCRIPT|remove-parked NAME SCRIPT")
+ENDPOINT_VARS = ("SIEVE_HOST", "SIEVE_PORT", "PURELYMAIL_SIEVE_HOST", "PURELYMAIL_SIEVE_PORT")
+
+
+def config_error(argv, entry):
+    """Return the first usage/config problem as a message, or None."""
+    bad_usage = entry is None or len(argv) - 4 != entry[1]
+    argv = list(argv) + [""] * 4  # checks below are evaluated eagerly
+    checks = (
+        (bad_usage, USAGE),
+        (not HOST.strip(), "sieve: SIEVE_HOST is required (or legacy PURELYMAIL_SIEVE_HOST)"),
+        (argv[1] in ENDPOINT_VARS, "sieve: endpoint variables cannot hold the password"),
+        (not re.fullmatch(r"[0-9]{1,5}", PORT) or not 1 <= int(PORT) <= 65535,
+         "sieve: invalid port (expected 1-65535)"),
+        (not os.environ.get(argv[1], "").rstrip("\r\n"), "sieve: password not available"),
+    )
+    return next((message for failed, message in checks if failed), None)
+
+
 def main(argv):
     entry = OPS.get(argv[3]) if len(argv) >= 4 else None
-    if entry is None or len(argv) - 4 != entry[1]:
-        sys.stderr.write("usage: managesieve_client.py PASSWORD_VAR USER list|get NAME|install NAME SCRIPT|install-file NAME PATH|remove NAME SCRIPT|remove-parked NAME SCRIPT\n")
+    error = config_error(argv, entry)
+    if error:
+        sys.stderr.write(error + "\n")
         return 2
-    if not HOST.strip():
-        sys.stderr.write("sieve: SIEVE_HOST is required (or legacy PURELYMAIL_SIEVE_HOST)\n")
-        return 2
-    if argv[1] in ("SIEVE_HOST", "SIEVE_PORT", "PURELYMAIL_SIEVE_HOST", "PURELYMAIL_SIEVE_PORT"):
-        sys.stderr.write("sieve: endpoint variables cannot hold the password\n")
-        return 2
-    if not re.fullmatch(r"[0-9]{1,5}", PORT) or not 1 <= int(PORT) <= 65535:
-        sys.stderr.write("sieve: invalid port (expected 1-65535)\n")
-        return 2
-    password = os.environ.get(argv[1], "").rstrip("\r\n")
-    if not password:
-        sys.stderr.write("sieve: password not available\n")
-        return 2
+    password = os.environ[argv[1]].rstrip("\r\n")
     conn = None
     try:
         conn = Conn(argv[2], password)
