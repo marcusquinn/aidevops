@@ -258,6 +258,7 @@ _scan_positional_parameters() {
 	# (the on-disk file) and HEAD content (piped from git show).
 	# shellcheck disable=SC2016  # $1, $[1-9] etc. are awk regex literals, not shell expansions
 	local _awk_script='
+	BEGIN { sq = "\047"; dq = "\042" }
 	function report(line, nr) {
 		if (line ~ /^[[:space:]]*#/) return
 		sub(/[[:space:]]+#.*/, "", line)
@@ -267,36 +268,72 @@ _scan_positional_parameters() {
 		if (line ~ /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)/) return
 		if (line ~ /\$[1-9]/) print nr ": " raw[nr]
 	}
+	function heredoc_word(text, start,    j, ch, quote, word, quoted, tabs) {
+		j = start
+		if (substr(text, j, 1) == "-") { tabs = 1; j++ }
+		while (substr(text, j, 1) ~ /[[:space:]]/ && j <= length(text)) j++
+		start = j
+		for (; j <= length(text); j++) {
+			ch = substr(text, j, 1)
+			if (!quote && ch ~ /[[:space:];&|<>()]/) break
+			if (ch == "\\" && quote != sq) {
+				quoted = 1
+				ch = substr(text, ++j, 1)
+				# Within double quotes only shell-special backslashes are removed.
+				if (quote == dq && ch !~ /[$`"\\]/) word = word "\\"
+			} else if (ch == quote) { quote = ""; continue }
+			else if (!quote && (ch == sq || ch == dq)) {
+				quote = ch; quoted = 1; continue
+			}
+			word = word ch
+		}
+		if (j == start || quote) return 0
+		hd_count++
+		if (!hd_read) hd_read = 1
+		hd_tabs[hd_count] = tabs
+		hd_quoted[hd_count] = quoted
+		hd_end[hd_count] = word
+		return j - 1
+	}
 	{
 		raw[NR] = $0
 		# Heredoc bodies are not shell syntax. Unquoted bodies still expand $N;
 		# quoted delimiters suppress expansion. Queue multiple redirections.
-		if (hd_read <= hd_count && hd_count) {
+		if (hd_read <= hd_count && hd_count && !continued && !in_sq && !in_dq) {
 			body = $0
 			if (hd_tabs[hd_read]) sub(/^\t+/, "", body)
 			if (body == hd_end[hd_read]) hd_read++
 			else if (!hd_quoted[hd_read]) clean[NR] = $0
 			next
 		}
+		continued = 0
 		if (!in_sq && !in_dq && $0 ~ /^[[:space:]]*#/) next
 		line = ""
 		for (i = 1; i <= length($0); i++) {
 			c = substr($0, i, 1)
 			if (in_sq) {
-				if (c == "\047") in_sq = 0
+				if (ansi_sq && c == "\\") { i++; continue }
+				if (c == sq) in_sq = 0
 				continue
 			}
 			if (c == "\\") {
+				if (i == length($0)) continued = 1
 				line = line c substr($0, i + 1, 1)
 				i++
 				continue
 			}
 			# Expansions have their own quoting context, even inside double quotes.
 			pair = substr($0, i, 2)
+			if (c == "`" && !(depth && end_char[depth] == "`")) {
+				depth++; saved_dq[depth] = in_dq; in_dq = 0
+				literal_sq[depth] = arithmetic[depth] = 0; end_char[depth] = "`"
+				line = line c; continue
+			}
 			if (pair == "$(" || pair == "${") {
 				outer_dq = in_dq || (depth && literal_sq[depth])
 				depth++; saved_dq[depth] = in_dq; in_dq = 0
 				literal_sq[depth] = (pair == "${" && outer_dq)
+				arithmetic[depth] = (substr($0, i, 3) == "$((")
 				end_char[depth] = (pair == "$(" ? ")" : "}")
 				line = line pair; i++; continue
 			}
@@ -304,30 +341,24 @@ _scan_positional_parameters() {
 				in_dq = saved_dq[depth]; depth--
 				line = line c; continue
 			}
-			if (depth && !in_dq && c == "(" && end_char[depth] == ")") {
+			if (!in_dq && c == "(" && ((depth && end_char[depth] == ")") || pair == "((")) {
+				arithmetic[depth + 1] = (pair == "((" || arithmetic[depth])
 				depth++; saved_dq[depth] = 0; literal_sq[depth] = 0; end_char[depth] = ")"
 			}
-			if (c == "\042") in_dq = !in_dq
+			if (c == dq) in_dq = !in_dq
 			if (!in_dq && c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[[:space:];]/)) break
-			if (!in_dq && c == "\047" && !(depth && literal_sq[depth])) {
+			if (!in_dq && c == sq && !(depth && literal_sq[depth])) {
 				in_sq = 1
+				ansi_sq = (i > 1 && substr($0, i - 1, 1) == "$")
 				sq_start = NR
 				continue
 			}
 			# Recognize ordinary, quoted and tab-stripping heredoc delimiters.
 			# Do not mistake a here-string (<<<) for a heredoc.
-			if (!in_dq && substr($0, i, 2) == "<<" && substr($0, i, 3) != "<<<" && substr($0, i - 1, 1) != "<") {
-				rest = substr($0, i + 2)
-				if (match(rest, /^-?[[:space:]]*(\047[^\047]+\047|\042[^\042]+\042|\\?[[:alnum:]_]+)/)) {
-					token = substr(rest, 1, RLENGTH)
-					hd_count++
-					if (!hd_read) hd_read = 1
-					hd_tabs[hd_count] = (token ~ /^-/)
-					sub(/^-?[[:space:]]*/, "", token)
-					hd_quoted[hd_count] = (token ~ /[\047\042\\]/)
-					gsub(/[\047\042\\]/, "", token)
-					hd_end[hd_count] = token
-					i += 1 + RLENGTH
+			if (!in_dq && !arithmetic[depth] && pair == "<<" && substr($0, i, 3) != "<<<" && substr($0, i - 1, 1) != "<") {
+				word_end = heredoc_word($0, i + 2)
+				if (word_end) {
+					i = word_end
 					continue
 				}
 			}

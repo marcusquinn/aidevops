@@ -534,6 +534,42 @@ echo "${value:-it's $4}"
 echo "that's $5"
 FIXTURE
 	test_positional_quote_case expansion_contexts 4 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+cat <<'TEXT' \
+  "$1"
+constant
+TEXT
+FIXTURE
+	test_positional_quote_case continued_heredoc 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+message=$'it\'s fine'
+echo "$1"
+echo 'done'
+FIXTURE
+	test_positional_quote_case ansi_c_escapes 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+version="`awk '{print $1}' input`"
+echo "it's $2"
+FIXTURE
+	test_positional_quote_case backtick_context 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+mask=$((1 << 2))
+((mask = 1 << 2))
+awk '{ print $1 }' input
+echo "$2"
+FIXTURE
+	test_positional_quote_case arithmetic_shifts 1 "$content"
+	read -r -d '' content <<'FIXTURE' || true
+cat <<E"OF"
+literal $1
+EOF
+cat <<'E'OF
+literal $2
+EOF
+awk '{ print $3 }' input
+echo "$4"
+FIXTURE
+	test_positional_quote_case partial_heredoc_quotes 1 "$content"
 	return 0
 }
 
