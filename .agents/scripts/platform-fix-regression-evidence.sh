@@ -98,7 +98,7 @@ _platform_has_regression_evidence() {
 		fi
 		if [[ "$in_section" -eq 1 ]]; then
 			[[ "$line" == *'<!-- aidevops:sig -->'* ]] && break
-			if grep -qiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?|for|ref)[[:space:]]+#[0-9]+([[:space:]].*)?$' <<<"$line"; then
+			if grep -qiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?|for|ref)[[:space:]]+#[0-9]+([^[:alnum:]_].*)?$' <<<"$line"; then
 				break
 			fi
 		fi

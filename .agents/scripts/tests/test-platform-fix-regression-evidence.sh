@@ -97,6 +97,12 @@ run_fail_case \
 	'.agents/scripts/sandbox-exec-helper.sh'
 
 run_fail_case \
+	'placeholder before punctuated closing line' \
+	'Fix macOS sandbox' \
+	$'## Regression Evidence\nn/a\n\nResolves #40332.' \
+	'.agents/scripts/sandbox-exec-helper.sh'
+
+run_fail_case \
 	'short rationale before reference line' \
 	'Fix macOS sandbox' \
 	$'## Regression Evidence\nmanual\n\nFor #40332\nLater text is not rationale.' \
