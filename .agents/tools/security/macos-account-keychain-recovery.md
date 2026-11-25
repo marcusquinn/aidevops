@@ -66,17 +66,27 @@ uninstaller. Ask the user first.
   fault rewrote it, that may not be any password the user remembers.
 - Agent effects: `gh auth token`, ssh keys saved with `--apple-use-keychain`,
   commit signing and Chrome Safe Storage fail or prompt. Background routines
-  calling `security find-generic-password` can loop prompts; pause them until
-  the keychain is restored (GH#37232).
+  calling `security find-generic-password` can queue dozens of processes and
+  leave an undismissable SecurityAgent dialog; pause them until the live
+  keychain is unlocked. Clear an existing queue as in section 3 (GH#37232).
 
 ## 3. Test passwords safely
 
 - Account password: `dscl . -authonly <user>` (prompts; no output = match).
   Repeated failures can count towards lockout, so try once per password.
+- **Absolute keychain paths only:** every keychain argument passed to `security`
+  must be an absolute path, never a bare name or relative path. A bare
+  `login.keychain-db` can resolve to the live file in `~/Library/Keychains/`,
+  not the recovered copy. Replace `/absolute/path/to/recovery/` below with the
+  actual recovery folder; quote paths containing spaces. Unquoted `~/` expands
+  to an absolute home path; a quoted `"~/..."` does not.
 - Keychain password: copy the file into its own new folder, named exactly
   `login.keychain-db`, then have the user run
-  `security unlock-keychain <folder>/login.keychain-db`. No output = unlocked.
-  Lock and delete the copy afterwards.
+  `security unlock-keychain "/absolute/path/to/recovery/login.keychain-db"`.
+  No output = unlocked, not permission to read every item. Keep the copy until
+  recovery is verified, then lock it with
+  `security lock-keychain "/absolute/path/to/recovery/login.keychain-db"`.
+  Remove it from any temporary search list before deleting it, with user consent.
 - Observed on macOS 26 (cause unknown): identical bytes rejected the correct
   password under another file name and accepted it as `login.keychain-db`.
   Never conclude a password is wrong from a test on a renamed copy.
@@ -86,6 +96,47 @@ uninstaller. Ask the user first.
   `ctypes` against the Security framework), not commands that may trigger
   SecurityAgent.
 
+### Stuck SecurityAgent dialog
+
+1. Pause background agents, `gh` credential lookups and other keychain callers
+   first, so they cannot refill the queue. Inspect processes with
+   `ps -axo pid,uid,command`. Identify the current user's pending
+   `security find-generic-password` processes; terminate only those confirmed
+   PIDs with `kill <pid> ...`. Recheck the queue; do not broadly kill all
+   `security` processes or touch another user's processes.
+2. If Cancel/OK still cannot dismiss the dialog, identify the current user's
+   SecurityAgent PID in the same process listing. Try `kill <SecurityAgent-pid>`;
+   if SIGTERM is ignored and the dialog persists, use
+   `kill -9 <SecurityAgent-pid>` as a last resort. This interrupts that user's
+   active authorization dialogs; launchd respawns SecurityAgent when needed.
+3. Have the user unlock the **live** keychain using its full path:
+   `security unlock-keychain ~/Library/Keychains/login.keychain-db`.
+   Use the live keychain's password, not automatically the recovered copy's old
+   password. Confirm access before resuming background callers.
+
+### Item-access prompt rejects the password
+
+An unlocked copy can still show an item-level ACL prompt that rejects known
+passwords. Do not keep retrying or infer that the keychain password is wrong;
+prefer Keychain Access's **Show password** route:
+
+1. Record the existing user search list with `security list-keychains -d user`.
+   To make the copy visible, use `security list-keychains -d user -s` followed
+   by **every existing absolute path in its original order**, then the copy's
+   absolute path. The `-s` option replaces the list; do not discard other entries.
+   If the list contains only the live login keychain, for example, run
+   `security list-keychains -d user -s ~/Library/Keychains/login.keychain-db "/absolute/path/to/recovery/login.keychain-db"`.
+2. Quit and relaunch Keychain Access, select the recovered copy by its location
+   (both files may display as "login"), and unlock it with its own password.
+   Open the required item, tick **Show password**, and let the user authenticate
+   in the GUI. Copy and paste directly into the target app, never into chat,
+   command arguments or logs. Clear the clipboard after use. If GUI access also
+   fails, stop and treat access as unknown; do not weaken the item's ACL.
+3. Restore the recorded search list with `security list-keychains -d user -s`
+   followed by the original absolute paths, omitting the temporarily added copy.
+   Verify with `security list-keychains -d user`, then lock the copy. Retain it
+   until recovery is verified; removing a search-list entry does not delete it.
+
 ## 4. Recover old keychain items
 
 Order of preference:
@@ -93,7 +144,7 @@ Order of preference:
 1. **Old password known:** unlock the set-aside file and move it back, or
    export items with Keychain Access. To restore it as the login keychain,
    first make its password match the current login password: the user runs
-   `security set-keychain-password <copy>` and types the old, then the new,
+   `security set-keychain-password "/absolute/path/to/recovery/login.keychain-db"` and types the old, then the new,
    password. Login does not rekey a keychain whose password differs; it
    prompts, and may reset the keychain if the prompt fails. Before swapping,
    inventory and securely preserve items created in the new login keychain;
@@ -145,12 +196,12 @@ the passphrase), `gh auth status`, a signed test commit, and a Chrome launch.
   before restarting, and before reopening such apps.
 - **WireGuard (macOS app):** each tunnel config is a generic-password item with
   service `com.wireguard.macos`. To recover, unlock a copy that holds the item
-  and find its account with `security dump-keychain <copy>` (attributes only,
+  and find its account with `security dump-keychain "/absolute/path/to/recovery/login.keychain-db"` (attributes only,
   no secrets). Extract the configs from a separate copy before opening
   WireGuard, and keep that copy until recovery is verified: WireGuard may
   delete tunnel items whose preferences are missing at startup. The config contains a private key, so it must never reach the
   transcript: have a script or the user write the
-  `security find-generic-password -s com.wireguard.macos -a <account> -w <copy>`
+  `security find-generic-password -s com.wireguard.macos -a <account> -w "/absolute/path/to/recovery/login.keychain-db"`
   output straight to a `600` `.conf` file in the agent workspace. Import it in
   WireGuard, confirm the tunnel connects (`scutil --nc list`), then delete the
   plaintext file. On-demand rules live in the system VPN configuration, not the
