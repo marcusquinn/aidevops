@@ -354,6 +354,10 @@ fi
 exit 0
 ''')
         stub.chmod(0o700)
+        # macOS permits GUI launching even when display variables are empty.
+        launcher = bin_dir / "open"
+        launcher.write_text("#!/usr/bin/env bash\nexit 0\n")
+        launcher.chmod(0o700)
         env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(home / ".local/share"),
                    PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
                    AIDEVOPS_OAUTH_POOL_FILE=str(home / "pool.json"),
@@ -363,16 +367,16 @@ exit 0
         args = ["bash", script, "add", "openai"]
         if prefilled:
             args.append("routing@example.com")
-        result = subprocess.run(args, env=env, input='\n' if prefilled else
-                                "routing@example.com\n\n", text=True,
+        stdin = "" if mode == "invalid" else ('\n' if prefilled else "routing@example.com\n\n")
+        result = subprocess.run(args, env=env, input=stdin, text=True,
                                 capture_output=True, start_new_session=True, timeout=20)
         output = result.stdout + result.stderr
         calls_file = home / "opencode-calls"
         calls = calls_file.read_text().splitlines() if calls_file.exists() else []
         label = f"{name} (prefilled={prefilled})"
         assert result.returncode == (0 if success else 1), (label, output)
-        assert output.count("Account email: ") == (0 if prefilled else 1), (label, output)
-        assert output.count("Using email: routing@example.com") == int(prefilled), (label, output)
+        assert output.count("Account email: ") == int(not prefilled and mode != "invalid"), (label, output)
+        assert output.count("Using email: routing@example.com") == int(prefilled and mode != "invalid"), (label, output)
         assert output.count("falling back to callback URL flow") == int(fallback), (label, output)
         auto = name == "v2-callback"
         assert output.count("OpenCode 2 (version 2 or later) detected; using callback URL flow") == int(auto), (label, output)

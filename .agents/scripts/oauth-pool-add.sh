@@ -426,12 +426,18 @@ cmd_add() {
 		return $?
 	fi
 
+	# Reject invalid OpenAI modes before requesting account input.
+	local openai_add_mode="${AIDEVOPS_OPENAI_ADD_MODE:-device}" oc_major
+	if [[ "$provider" == "openai" && "$openai_add_mode" != "device" && "$openai_add_mode" != "callback" ]]; then
+		print_error "Invalid AIDEVOPS_OPENAI_ADD_MODE: ${openai_add_mode} (valid: device, callback)"
+		return 1
+	fi
+
 	local email
 	email=$(_add_prompt_email "$prefill_email") || return 1
 
 	# OpenCode 2+ lacks V1 device-login flags; select callback without a failure warning.
 	if [[ "$provider" == "openai" ]]; then
-		local openai_add_mode="${AIDEVOPS_OPENAI_ADD_MODE:-device}" oc_major
 		case "$openai_add_mode" in
 		device)
 			oc_major=$(_opencode_major_version) || oc_major=""
@@ -445,10 +451,6 @@ cmd_add() {
 			;;
 		callback)
 			print_info "Using callback URL flow for OpenAI (AIDEVOPS_OPENAI_ADD_MODE=callback)"
-			;;
-		*)
-			print_error "Invalid AIDEVOPS_OPENAI_ADD_MODE: ${openai_add_mode} (valid: device, callback)"
-			return 1
 			;;
 		esac
 	fi
