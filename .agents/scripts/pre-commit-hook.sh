@@ -253,11 +253,7 @@ validate_return_statements() {
 	return $violations
 }
 
-validate_positional_parameters() {
-	local violations=0
-
-	print_info "Validating positional parameters (ratchet)..."
-
+_scan_positional_parameters() {
 	# Shared awk script — extracted so we can run it over both staged content
 	# (the on-disk file) and HEAD content (piped from git show).
 	# shellcheck disable=SC2016  # $1, $[1-9] etc. are awk regex literals, not shell expansions
@@ -335,6 +331,14 @@ validate_positional_parameters() {
 			report(line, nr)
 		}
 	}'
+	awk "$_awk_script" "$@"
+	return 0
+}
+
+validate_positional_parameters() {
+	local violations=0
+
+	print_info "Validating positional parameters (ratchet)..."
 
 	for file in "$@"; do
 		# Skip test files — fixtures deliberately inject bare positional
@@ -347,7 +351,7 @@ validate_positional_parameters() {
 		if [[ -f "$file" ]]; then
 			local staged_output head_output
 			local staged_count=0 head_count=0
-			staged_output=$(awk "$_awk_script" "$file" 2>/dev/null || true)
+			staged_output=$(_scan_positional_parameters "$file" 2>/dev/null || true)
 			if [[ -n "$staged_output" ]]; then
 				staged_count=$(printf '%s\n' "$staged_output" | wc -l | tr -d ' ')
 			fi
@@ -355,7 +359,7 @@ validate_positional_parameters() {
 			local head_content
 			head_content=$(_get_head_content "$file")
 			if [[ -n "$head_content" ]]; then
-				head_output=$(printf '%s\n' "$head_content" | awk "$_awk_script" 2>/dev/null || true)
+				head_output=$(printf '%s\n' "$head_content" | _scan_positional_parameters 2>/dev/null || true)
 				if [[ -n "$head_output" ]]; then
 					head_count=$(printf '%s\n' "$head_output" | wc -l | tr -d ' ')
 				fi

@@ -147,6 +147,7 @@ source_hook_helpers() {
 		/^_count_repeated_literals\(\)/       { c=1 }
 		/^_show_repeated_literals\(\)/        { c=1 }
 		/^validate_return_statements\(\)/     { c=1 }
+		/^_scan_positional_parameters\(\)/    { c=1 }
 		/^validate_positional_parameters\(\)/ { c=1 }
 		/^validate_string_literals\(\)/       { c=1 }
 		/^run_shellcheck\(\)/                 { c=1 }
