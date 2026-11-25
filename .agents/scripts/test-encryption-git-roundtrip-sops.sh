@@ -43,13 +43,13 @@ test_sops_helper_dispatch() {
 	local help_output
 	help_output=$("$helper" help 2>&1) || true
 
-	if echo "$help_output" | grep -q "SOPS Encrypted Config"; then
+	if grep -q "SOPS Encrypted Config" <<<"$help_output"; then
 		pass "sops-helper.sh help outputs expected header"
 	else
 		fail "sops-helper.sh help missing expected header"
 	fi
 
-	if echo "$help_output" | grep -q "encrypt"; then
+	if grep -q "encrypt" <<<"$help_output"; then
 		pass "sops-helper.sh help documents 'encrypt' command"
 	else
 		fail "sops-helper.sh help missing 'encrypt' command documentation"
@@ -59,7 +59,7 @@ test_sops_helper_dispatch() {
 	local unknown_output
 	unknown_output=$("$helper" nonexistent 2>&1) || true
 
-	if echo "$unknown_output" | grep -qi "unknown\|error"; then
+	if grep -qi "unknown\|error" <<<"$unknown_output"; then
 		pass "sops-helper.sh rejects unknown command"
 	else
 		fail "sops-helper.sh did not reject unknown command"
@@ -69,7 +69,7 @@ test_sops_helper_dispatch() {
 	local no_file_output
 	no_file_output=$("$helper" encrypt 2>&1) || true
 
-	if echo "$no_file_output" | grep -qi "usage\|error\|unbound"; then
+	if grep -qi "usage\|error\|unbound" <<<"$no_file_output"; then
 		pass "sops-helper.sh encrypt without file produces error"
 	else
 		fail "sops-helper.sh encrypt without file did not produce error"
@@ -79,7 +79,7 @@ test_sops_helper_dispatch() {
 	local bad_file_output
 	bad_file_output=$("$helper" encrypt "/tmp/nonexistent-$$-file.yaml" 2>&1) || true
 
-	if echo "$bad_file_output" | grep -qi "not found\|error"; then
+	if grep -qi "not found\|error" <<<"$bad_file_output"; then
 		pass "sops-helper.sh encrypt with nonexistent file produces error"
 	else
 		fail "sops-helper.sh encrypt with nonexistent file did not produce error"
@@ -323,19 +323,19 @@ _sops_verify_decryption() {
 	local decrypted
 	decrypted=$(sops decrypt "$config_file") || true
 
-	if echo "$decrypted" | grep -q "super-secret-password-12345"; then
+	if grep -q "super-secret-password-12345" <<<"$decrypted"; then
 		pass "Decrypted content contains original password"
 	else
 		fail "Decrypted content missing original password"
 	fi
 
-	if echo "$decrypted" | grep -q "api-key-for-testing-xyz"; then
+	if grep -q "api-key-for-testing-xyz" <<<"$decrypted"; then
 		pass "Decrypted content contains original API key"
 	else
 		fail "Decrypted content missing original API key"
 	fi
 
-	if echo "$decrypted" | grep -q "db.example.com"; then
+	if grep -q "db.example.com" <<<"$decrypted"; then
 		pass "Decrypted content contains original host"
 	else
 		fail "Decrypted content missing original host"

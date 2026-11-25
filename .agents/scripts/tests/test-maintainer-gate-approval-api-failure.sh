@@ -368,7 +368,7 @@ has_combined_slurp_and_jq() {
 	if sed -e :a -e '/\\$/N; s/\\\n[[:space:]]*/ /; ta' "$workflow_file" |
 		grep 'gh[[:space:]][[:space:]]*api' |
 		grep -F -- '--slurp' |
-		grep -Fq -- '--jq'; then
+		grep -F -- '--jq' >/dev/null; then
 		return 0
 	fi
 	return 1
