@@ -242,9 +242,12 @@ _invoke_opencode_disable_snapshots() {
 # OPENCODE_DISABLE_FFF selects OpenCode's ripgrep backend instead: glob and
 # grep run live on every call, and only the TUI fuzzy picker (unused headless)
 # reads a startup file list. Runs inside the launch subshell like the snapshot
-# switch above; the worker sandbox passes OPENCODE_* through. A value the
-# caller already set wins. Opt out with AIDEVOPS_WORKER_OPENCODE_FFF=1.
+# switch above; the worker/pulse sandbox passes OPENCODE_* through. Private,
+# triage and model-replay runs are skipped: build_sandbox_passthrough_csv keeps
+# their reviewed allowlists, which would drop the flag. A value the caller
+# already set wins. Opt out with AIDEVOPS_WORKER_OPENCODE_FFF=1.
 _invoke_opencode_disable_fff() {
+	[[ "$private_workload" -ne 1 && "$public_triage" -ne 1 ]] || return 0
 	[[ "${AIDEVOPS_WORKER_OPENCODE_FFF:-0}" != "1" ]] || return 0
 	[[ -z "${OPENCODE_DISABLE_FFF+x}" ]] || return 0
 	export OPENCODE_DISABLE_FFF=1
