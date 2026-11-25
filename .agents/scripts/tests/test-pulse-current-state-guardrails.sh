@@ -194,10 +194,49 @@ test_reconciled_outcomes_shape_all_worker_pressure_consumers() {
 	guardrail_counts=$(_dispatch_recent_current_state_counts)
 	pacing_counts=$(_dispatch_recent_worker_pressure_counts)
 	capacity_counts=$(_pulse_capacity_recent_health_counts)
-	if [[ "$guardrail_counts" == "3 8 1 0" && "$pacing_counts" == "8 1" && "$capacity_counts" == "8 1 0 1 0" ]]; then
+	# t19351: capacity drops the six unreconciled permission_required blockers.
+	if [[ "$guardrail_counts" == "3 8 1 0" && "$pacing_counts" == "8 1" && "$capacity_counts" == "2 1 0 1 0" ]]; then
 		print_result "guardrail: reconciled outcomes shape capacity, guardrails, and launch pacing" 0
 	else
 		print_result "guardrail: reconciled outcomes shape capacity, guardrails, and launch pacing" 1 \
+			"guardrail=${guardrail_counts} pacing=${pacing_counts} capacity=${capacity_counts}"
+	fi
+	return 0
+}
+
+# t19351 (GH#40226): the capacity cap counts only pressure failures. Clean
+# exits failed by reconciliation, claim coordination, merged-PR reaps and
+# worker blockers stay generic failures for guardrails and launch pacing.
+test_capacity_counts_only_pressure_failures() {
+	reset_guardrail_env
+	local now=""
+	now=$(date +%s)
+	{
+		printf '{"ts":%s,"role":"worker","repo_slug":"owner/repo","issue_number":21,"attempt_id":"attempt-21","result":"success","exit_code":0}\n' "$now"
+		printf '{"ts":%s,"role":"worker","repo_slug":"owner/repo","issue_number":22,"attempt_id":"attempt-22","result":"post_pr_handoff","exit_code":0}\n' "$now"
+		printf '{"ts":%s,"role":"worker","result":"failed","exit_code":1,"failure_reason":"worker_ownership_lost"}\n' "$now"
+		printf '{"ts":%s,"role":"worker","result":"failed","exit_code":0,"failure_reason":"merged_pr_reap"}\n' "$now"
+		printf '{"ts":%s,"role":"worker","result":"blocked","exit_code":83,"failure_reason":"blocked"}\n' "$now"
+		printf '{"ts":%s,"role":"worker","result":"premature_exit","exit_code":77}\n' "$now"
+		printf '{"ts":%s,"role":"worker","result":"local_error","exit_code":1,"failure_reason":"local_error"}\n' "$now"
+		printf '{"ts":%s,"role":"worker","result":"watchdog_stall_killed","exit_code":79,"failure_reason":"watchdog_stall_killed"}\n' "$now"
+		printf '{"ts":%s,"role":"worker","result":"provider_error","exit_code":2,"provider_error_type":"server_error","provider_status":"500"}\n' "$now"
+		printf '{"ts":%s,"role":"worker","result":"rate_limit","exit_code":1,"failure_reason":"rate_limit","provider_status":"429"}\n' "$now"
+	} >"$AIDEVOPS_HEADLESS_METRICS_FILE"
+	{
+		printf '{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":21,"attempt_id":"attempt-21","effective_outcome":"failed","evidence_timestamp":%s}\n' "$now"
+		printf '{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":22,"attempt_id":"attempt-22","effective_outcome":"failed","evidence_timestamp":%s}\n' "$now"
+	} >"$AIDEVOPS_OBJECTIVE_EVIDENCE_FILE"
+
+	local guardrail_counts="" pacing_counts="" capacity_counts="" guardrail_failures=""
+	guardrail_counts=$(_dispatch_recent_current_state_counts)
+	pacing_counts=$(_dispatch_recent_worker_pressure_counts)
+	capacity_counts=$(_pulse_capacity_recent_health_counts)
+	read -r _ guardrail_failures _ <<<"$guardrail_counts"
+	if [[ "$guardrail_failures" == "10" && "$pacing_counts" == "10 1" && "$capacity_counts" == "5 1 0 1 0" ]]; then
+		print_result "capacity: task-outcome failures do not halve the target; guardrails and pacing keep them" 0
+	else
+		print_result "capacity: task-outcome failures do not halve the target; guardrails and pacing keep them" 1 \
 			"guardrail=${guardrail_counts} pacing=${pacing_counts} capacity=${capacity_counts}"
 	fi
 	return 0
@@ -944,6 +983,7 @@ test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
 test_mixed_runtime_roles_do_not_reduce_worker_capacity
 test_reconciled_outcomes_shape_all_worker_pressure_consumers
+test_capacity_counts_only_pressure_failures
 test_open_pr_backlog_is_repo_scoped_with_debt_exemption
 test_open_pr_backlog_counts_only_ready_worker_prs
 test_historical_pr_events_cannot_throttle

@@ -175,6 +175,10 @@ _pulse_capacity_provider_account_counts() {
 #######################################
 # Count recent terminal worker-role provider health signals. Continuation
 # events remain progress evidence but never become failure/capacity pressure.
+# t19351: failures are pressure failures only (--capacity-pressure): clean
+# exits whose objective later failed, worker blockers and claim coordination
+# are task outcomes that halving the target cannot relieve. The log field
+# worker_terminal_failures reports this count.
 # Stdout: "<failures> <rate_limits> <service_interruptions> <provider_5xx> <progress_heartbeats>".
 #######################################
 _pulse_capacity_recent_health_counts() {
@@ -202,7 +206,7 @@ _pulse_capacity_recent_health_counts() {
 	[[ "$evidence_limit" =~ ^[1-9][0-9]*$ ]] || evidence_limit=2000
 	[[ -f "$metrics_file" ]] || { printf '0 0 0 0 0\n'; return 0; }
 	local health_counts="" successes="" failures="" rate_limits="" service_interruptions="" provider_5xx="" progress=""
-	health_counts=$(python3 "$health_helper" "$metrics_file" "$evidence_file" "$ttl_seconds" "$evidence_limit") || health_counts="0 3 0 0 0 0"
+	health_counts=$(python3 "$health_helper" "$metrics_file" "$evidence_file" "$ttl_seconds" "$evidence_limit" --capacity-pressure) || health_counts="0 3 0 0 0 0"
 	read -r successes failures rate_limits service_interruptions provider_5xx progress <<<"$health_counts"
 	printf '%s %s %s %s %s\n' "$failures" "$rate_limits" "$service_interruptions" "$provider_5xx" "$progress"
 	return 0
