@@ -277,6 +277,27 @@ _validate_explicit_pr_title() {
 	return 1
 }
 
+# GH#40340: check the Platform Fix Regression Evidence gate before the native
+# macOS suites, which can run for half an hour on a loaded host. The gate reads
+# the title, the changed paths and body prose outside its Files Changed,
+# Testing and Regression Evidence headings; the suites only add Runtime Testing
+# evidence. This preview renders the gate-visible prose in the final body's
+# order and headings, ending with the longest closing line the final body can
+# place after Regression Evidence, so it fails only when the final gate would.
+# The final gate in _commit_and_pr_prepare_metadata stays authoritative.
+# Test harnesses extract functions with sed '/^name() {/,/^}/p': no body line
+# may start with '}'.
+# Arguments: pr_title, comparison_base
+_commit_and_pr_platform_evidence_preflight() {
+	local pr_title="$1" comparison_base="$2" preview="" decisions="" regression=""
+	[[ -z "${summary_decisions:-}" ]] || decisions=$'## Decisions\n\n'"${summary_decisions}"$'\n\n'
+	[[ -z "${summary_regression:-}" ]] || regression=$'## Regression Evidence\n\n'"${summary_regression}"$'\n\n'
+	printf -v preview '## Summary\n\n%s\n\n%s%sResolves #%s' \
+		"${summary_what:-}" "$decisions" "$regression" "${issue_number:-0}"
+	_commit_and_pr_platform_evidence_gate "$pr_title" "$preview" "$comparison_base"
+	return $?
+}
+
 # Derive final-diff metadata after rebase but before any remote mutation.
 # Invalid risk/testing evidence must not leave a pushed orphan branch.
 _commit_and_pr_prepare_metadata() {
@@ -288,6 +309,13 @@ _commit_and_pr_prepare_metadata() {
 	base_ref="origin/${base_branch}"
 	# Freeze the comparison once: upstream movement is not part of this PR.
 	comparison_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
+	# Validate explicit titles before push; avoid double-prefixing derived titles.
+	if [[ -z "$pr_title" ]]; then
+		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")"
+	elif [[ "$pr_title" =~ ^t[0-9]+: ]]; then
+		pr_title=$(_validate_explicit_pr_title "$issue_number" "$pr_title" "$repo") || return 1
+	fi
+	_commit_and_pr_platform_evidence_preflight "$pr_title" "$comparison_base" || return 1
 	local macos_evidence=""
 	macos_evidence=$(macos_checks_evidence "$comparison_base") || return 1
 	if [[ -n "$macos_evidence" ]]; then
@@ -305,13 +333,6 @@ _commit_and_pr_prepare_metadata() {
 	files_changed=$(git diff --name-only "$comparison_base" HEAD) || return 1
 	files_changed=$(printf '%s' "$files_changed" | tr '\n' ',' | sed 's/,/, /g')
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base") || return 1
-
-	# Validate explicit titles before push; avoid double-prefixing derived titles.
-	if [[ -z "$pr_title" ]]; then
-		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")"
-	elif [[ "$pr_title" =~ ^t[0-9]+: ]]; then
-		pr_title=$(_validate_explicit_pr_title "$issue_number" "$pr_title" "$repo") || return 1
-	fi
 	# Use the same origin detection as gh_create_pr (GH#21825).
 	origin_label=$(session_origin_label)
 	local sig_footer="" sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
