@@ -6,7 +6,6 @@
 # Sourced by test-pr-review-thread-response-scanner.sh; not a standalone suite.
 # The entry point owns strict mode, TEST_SCRIPT_DIR, and shared test state.
 
-# shellcheck disable=SC2154 # TEST_SCRIPT_DIR, TEST_HEAD_OID_1, SCANNER come from the sourcing entry point
 [[ -n "${_PRRTS_TEST_FIXTURES_LOADED:-}" ]] && return 0
 _PRRTS_TEST_FIXTURES_LOADED=1
 
