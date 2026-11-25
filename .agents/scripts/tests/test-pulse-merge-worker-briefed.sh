@@ -96,6 +96,11 @@ _all_args=("$@")
 
 # PR files API (GH#36922); a missing fixture simulates an API failure.
 [[ "$*" == *"repos/"*"/pulls/"*"/files"* ]] && { cat "${TEST_ROOT}/pr-files.json" 2>/dev/null; exit $?; }
+# Services-sync scope must use immutable base/head SHAs, never a PR file read.
+if [[ "$*" == *"/compare/2222222222222222222222222222222222222222...0123456789abcdef0123456789abcdef01234567?per_page=1"* ]]; then
+	jq -n --slurpfile files "${TEST_ROOT}/pr-files.json" '{files:$files[0]}'
+	exit $?
+fi
 # PR head SHA read (bound before/after the file list)
 [[ "$*" == *"repos/"*"/pulls/"[0-9]* && "$*" == *"head.sha"* ]] && { printf '%s\n' "${MOCK_PR_HEAD_SHA:-0123456789abcdef0123456789abcdef01234567}"; exit 0; }
 
@@ -1165,6 +1170,7 @@ _run_services_sync_case() {
 		'{author_association:"CONTRIBUTOR",user:{login:"github-actions[bot]",type:$ty},title:$t,labels:$l,body:$body}' >"${TEST_ROOT}/issue.json"
 	printf '[]' >"${TEST_ROOT}/comments.json"
 	printf '%s' "$files" >"${TEST_ROOT}/pr-files.json"
+	printf '%s' '2222222222222222222222222222222222222222' >"${TEST_ROOT}/base-sha.txt"
 	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
 
 	local result=0

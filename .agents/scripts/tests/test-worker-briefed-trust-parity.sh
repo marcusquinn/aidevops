@@ -96,7 +96,7 @@ gh() {
 	repos/owner/repo/pulls/100)
 		[[ "${SERVICES_HEAD_FAIL:-0}" == 0 ]] || return 1
 		payload="$ROUTINE_META"
-		[[ -n "$payload" ]] || payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
+		[[ -n "$payload" ]] || payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"},"base":{"sha":"2222222222222222222222222222222222222222"}}'
 		if [[ -n "$SERVICES_HEAD_AFTER" && -f "${TEST_ROOT}/services-files-read" ]]; then
 			payload=$(jq -n --arg sha "$SERVICES_HEAD_AFTER" '{head:{sha:$sha}}')
 		fi
@@ -111,6 +111,11 @@ gh() {
 		fi
 		;;
 	# Only SHA-pinned reads are answered: an unpinned diff read fails the test.
+	repos/owner/repo/compare/2222222222222222222222222222222222222222...0123456789abcdef0123456789abcdef01234567'?per_page=1')
+		[[ "$PR_FILES_API_FAIL" == 0 ]] || return 1
+		if [[ -n "$SERVICES_HEAD_AFTER" ]]; then touch "${TEST_ROOT}/services-files-read"; fi
+		payload=$(jq -n --argjson files "${SERVICES_PINNED_FILES:-$PR_FILES}" '{files:$files}')
+		;;
 	repos/owner/repo/compare/"${ROUTINE_BASE}...${ROUTINE_HEAD}?per_page=1")
 		[[ "$PR_FILES_API_FAIL" == 0 ]] || return 1
 		payload=$(jq -n --argjson files "$PR_FILES" --arg mb "$ROUTINE_MERGE_BASE" \
@@ -282,6 +287,9 @@ WORKER_BRIEFED_EXPECTED_HEAD=0123456789abcdef0123456789abcdef01234567
 FULL_LOOP_EXPECTED_PR_HEAD_SHA="$WORKER_BRIEFED_EXPECTED_HEAD"
 PR_FILES='[{"filename":"data/services-sync.json","status":"modified"}]'
 expect_parity 0 'services-sync brief with json-only diff allowed on both paths'
+SERVICES_PINNED_FILES='[{"filename":"outside.html","status":"modified"}]'
+expect_parity 1 'services-sync A-B-A live head cannot substitute in-scope files for pinned diff'
+unset SERVICES_PINNED_FILES
 unset WORKER_BRIEFED_EXPECTED_HEAD
 expect_parity 0 'services-sync full-loop pin alone binds scope on both paths'
 FULL_LOOP_EXPECTED_PR_HEAD_SHA=3333333333333333333333333333333333333333

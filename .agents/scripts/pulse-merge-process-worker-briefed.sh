@@ -333,10 +333,11 @@ _is_trusted_services_sync_issue_pr() {
 	local expected_head="${WORKER_BRIEFED_EXPECTED_HEAD:-${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}}"
 	local head_before=""
 	local head_after=""
+	local base_sha=""
+	local comparison=""
 
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$issue_api" ]] || return 1
 	pr_api=$(printf 'repos/%s/pulls/%s' "$repo_slug" "$pr_number") || return 1
-	files_api="${pr_api}/files?per_page=100"
 	issue_meta=$(gh api "$issue_api" 2>/dev/null) || return 1
 	# One predicate: a real issue (not a PR) with a string body, the exact bot
 	# identity, the generator marker and the origin:worker label. Anything else
@@ -356,7 +357,15 @@ _is_trusted_services_sync_issue_pr() {
 	fi
 	[[ "$expected_head" =~ ^[0-9a-f]{40}$ ]] || return 1
 	[[ "$head_before" == "$expected_head" ]] || return 1
-	files_json=$(gh api "$files_api" 2>/dev/null) || return 1
+	base_sha=$(gh api "$pr_api" --jq '.base.sha // ""' 2>/dev/null) || return 1
+	[[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	# The PR files endpoint is mutable, even between matching head reads
+	# (A -> B -> A). Compare immutable SHAs so scope always describes the pin.
+	# GitHub returns at most 300 comparison files; our 1-2 bound rejects that
+	# truncation limit, and the first page includes the full bounded file list.
+	files_api="repos/${repo_slug}/compare/${base_sha}...${expected_head}?per_page=1"
+	comparison=$(gh api "$files_api" 2>/dev/null) || return 1
+	files_json=$(jq -ce '.files | arrays' <<<"$comparison") || return 1
 	head_after=$(gh api "$pr_api" --jq '.head.sha // ""' 2>/dev/null) || return 1
 	[[ "$head_after" == "$expected_head" ]] || return 1
 	# `arrays` emits nothing for non-array payloads, so the integer check fails closed.
