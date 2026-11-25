@@ -208,11 +208,35 @@ run_cmd_with_timeout() {
 # Return the remaining cycle budget after a finalisation reserve. Missing or
 # invalid clocks/configuration fail open so standalone routines retain their
 # existing timeout behaviour. Pass 0 for admission checks that own a reserve.
-# A dispatch lease is elastic only for the actual instance owner. Standalone
+#
+# t19364: under PULSE_DISPATCH_LOCK_SPLIT=1 a worker-exit refill-only run holds
+# the dispatch lock (not the instance lock) for its whole drain, and the
+# cycle's dispatch stages skip while it does. A fixed clock there ended most
+# rounds at the candidate admission reserve with slots free, then paid a fresh
+# census next pass. Its lease is that lock with a fresh heartbeat: candidate
+# admission refreshes it and contenders reclaim it past the same ceiling.
+# Round top-ups and refill passes keep their own bounds.
+_pulse_dispatch_lock_lease_active() {
+	local lockdir="" heartbeat="" ceiling="${PULSE_LOCK_MAX_AGE_S:-1800}" epoch_now=""
+	[[ "${PULSE_REFILL_ONLY:-0}" == 1 && "${_LOCK_OWNED:-false}" != true ]] || return 1
+	declare -F pulse_dispatch_lock_still_owned >/dev/null 2>&1 || return 1
+	declare -F pulse_dispatch_lockdir >/dev/null 2>&1 || return 1
+	pulse_dispatch_lock_still_owned || return 1
+	lockdir=$(pulse_dispatch_lockdir) || return 1
+	read -r heartbeat 2>/dev/null <"${lockdir}/heartbeat_epoch" || return 1
+	[[ "$heartbeat" =~ ^[1-9][0-9]*$ && "$ceiling" =~ ^[1-9][0-9]*$ ]] || return 1
+	epoch_now=$(date +%s) || return 1
+	((heartbeat <= epoch_now && epoch_now - heartbeat <= ceiling)) || return 1
+	return 0
+}
+
+# A dispatch lease is elastic only for the actual instance owner, or for a
+# split-lock refill-only run that owns the dispatch lock (t19364). Standalone
 # routines and housekeeping keep their bounded cycle semantics.
 _pulse_dispatch_lease_active() {
 	local owner="" heartbeat="" now="" ceiling="${PULSE_LOCK_MAX_AGE_S:-1800}"
 	[[ "${PULSE_ELASTIC_DISPATCH_ENABLED:-1}" == 1 && -n "${LOCKDIR:-}" ]] || return 1
+	_pulse_dispatch_lock_lease_active && return 0
 	# Silence stderr before opening: after lock release (supervisor phase) the
 	# lock files are absent and `<file 2>/dev/null` would still log the error.
 	read -r owner 2>/dev/null <"${LOCKDIR}/pid" || return 1

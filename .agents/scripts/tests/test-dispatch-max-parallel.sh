@@ -1949,6 +1949,49 @@ test_elastic_dispatch_lease() {
 	return 0
 }
 
+# t19364: a split-lock refill-only run owns the dispatch lock, not the
+# instance lock; a fresh dispatch-lock heartbeat is its elastic lease.
+test_split_refill_dispatch_lock_lease() {
+	local rc=0
+	(
+		set -e
+		source "${SCRIPT_DIR}/pulse-watchdog.sh"
+		source "${SCRIPT_DIR}/pulse-instance-lock.sh"
+		local LOCKDIR="${TEST_ROOT}/split-refill-lock" WRAPPER_LOGFILE="$LOGFILE"
+		local PULSE_LOCK_MAX_AGE_S=1800 PULSE_STALE_THRESHOLD=3600 PULSE_START_EPOCH=1
+		local _PULSE_ELASTIC_DISPATCH=1 PULSE_REFILL_ONLY=1 _LOCK_OWNED=false
+		local dispatch_lockdir="${LOCKDIR}.dispatch"
+		mkdir -p "$LOCKDIR" "$dispatch_lockdir"
+		printf '999999\n' >"${LOCKDIR}/pid"
+		date +%s >"${LOCKDIR}/supervisor_heartbeat_epoch"
+		_DISPATCH_LOCK_OWNED=true _DISPATCH_LOCK_OWNER_PID="$$"
+		printf '%s\n' "$$" >"${dispatch_lockdir}/pid"
+		date +%s >"${dispatch_lockdir}/heartbeat_epoch"
+		_pulse_dispatch_lease_active
+		[[ "$(_dispatch_round_budget_plan before)" == 'full 0' ]] || exit 1
+		_pulse_cycle_remaining_seconds 0 && exit 1
+		# Not a refill-only run: bounded, as before.
+		PULSE_REFILL_ONLY=0
+		_pulse_dispatch_lease_active && exit 1
+		PULSE_REFILL_ONLY=1
+		# Stale dispatch-lock heartbeat: no lease.
+		printf '1\n' >"${dispatch_lockdir}/heartbeat_epoch"
+		_pulse_dispatch_lease_active && exit 1
+		_pulse_cycle_remaining_seconds 0 >/dev/null || exit 1
+		date +%s >"${dispatch_lockdir}/heartbeat_epoch"
+		# Reclaimed by another holder: no lease.
+		printf '999998\n' >"${dispatch_lockdir}/pid"
+		_pulse_dispatch_lease_active && exit 1
+		printf '%s\n' "$$" >"${dispatch_lockdir}/pid"
+		# Lock released in memory: no lease.
+		_DISPATCH_LOCK_OWNED=false
+		_pulse_dispatch_lease_active && exit 1
+		rm -rf "$LOCKDIR" "$dispatch_lockdir"
+	) || rc=1
+	print_result "elastic lease: split-lock refill dispatch-lock holder elastic, stale/lost/non-refill bounded" "$rc"
+	return 0
+}
+
 test_observed_ceremony_reserve() {
 	local rc=0
 	(
@@ -2115,6 +2158,7 @@ test_enumeration_overrun_retains_refill() {
 # Run all tests
 # =============================================================================
 test_elastic_dispatch_lease
+test_split_refill_dispatch_lock_lease
 test_observed_ceremony_reserve
 test_enumeration_budget_admission
 test_enumeration_timing_persists_average
