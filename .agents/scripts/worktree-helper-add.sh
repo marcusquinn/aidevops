@@ -500,7 +500,8 @@ _provision_worktree_node_modules() (
 	fi
 	[[ ! -e "$destination" && ! -L "$destination" ]] || return 1
 	validator="$(dirname "${BASH_SOURCE[0]}")/worktree-dependency-provision.py"
-	if _provision_source_clearly_over_budget "${repo_root}/${relative}/node_modules" "$max_bytes"; then
+	if [[ ! -f "${repo_root}/pnpm-workspace.yaml" ]] &&
+		_provision_source_clearly_over_budget "${repo_root}/${relative}/node_modules" "$max_bytes"; then
 		printf 'dependency-provision-rejected reason=source-exceeds-budget\n' >&2
 		return 1
 	fi
@@ -559,6 +560,38 @@ _restore_worktree_node_modules_one() {
 	return 1
 }
 
+# Workspace members share one root lock rather than package-local lockfiles.
+# Return 1 on identity rejection so callers retain their existing fallback path.
+_restore_worktree_pnpm_workspace() {
+	local wt_path="$1"
+	local repo_root="$2"
+	local owner_contract="${3:-}"
+	local validator="${BASH_SOURCE[0]%/*}/worktree-dependency-provision.py"
+	local members="" relative="" provision_relative="" started=0 elapsed=0 outcome=""
+	[[ -f "${repo_root}/pnpm-workspace.yaml" && -f "${repo_root}/pnpm-lock.yaml" ]] || return 1
+	[[ "${WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED:-auto}" != "0" ]] || return 1
+	started=$SECONDS
+	if ! members=$(python3 "$validator" "$repo_root" "$wt_path" . --workspace-list); then
+		elapsed=$((SECONDS - started))
+		printf 'Dependency workspace restore package=. outcome=rejected elapsed_seconds=%s\n' "$elapsed"
+		return 1
+	fi
+	while IFS= read -r relative; do
+		[[ -n "$relative" && -d "${repo_root}/${relative}/node_modules" ]] || continue
+		[[ ! -e "${wt_path}/${relative}/node_modules" && ! -L "${wt_path}/${relative}/node_modules" ]] || continue
+		started=$SECONDS
+		outcome=rejected
+		provision_relative="$relative"
+		[[ "$relative" != "." ]] || provision_relative=""
+		if _restore_worktree_node_modules_one "$wt_path" "$repo_root" "$provision_relative" "$owner_contract"; then
+			outcome=provisioned
+		fi
+		elapsed=$((SECONDS - started))
+		printf 'Dependency workspace restore package=%s outcome=%s elapsed_seconds=%s\n' "$relative" "$outcome" "$elapsed"
+	done <<<"$members"
+	return 0
+}
+
 # Args: $1=worktree path, $2=canonical repo root, $3=optional exact owner
 #       registration contract created by cmd_add (see _provision_*).
 _restore_worktree_node_modules() {
@@ -580,6 +613,10 @@ _restore_worktree_node_modules() {
 		return 0
 	fi
 
+	if _restore_worktree_pnpm_workspace "$wt_path" "$repo_root" "$owner_contract"; then
+		_restore_worktree_node_modules_release_lock "$_lock_dir"
+		return 0
+	fi
 	local _pkg_file=""
 	local _restored=0
 	local _max_dirs="$WORKTREE_NODE_MODULES_RESTORE_MAX_DIRS"

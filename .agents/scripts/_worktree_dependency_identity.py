@@ -5,15 +5,15 @@
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import stat
 import subprocess  # nosec B404 -- fixed read-only Git plumbing, never a shell.
 from contextlib import contextmanager
 
 
-class Rejected(ValueError):
-    """A dependency snapshot cannot safely be provisioned."""
+from _worktree_dependency_manifest import (
+    Rejected, pnpm_inventory, required_dependencies, workspace_members, workspace_patterns,
+)
 
 
 @contextmanager
@@ -40,38 +40,6 @@ def object_json(data):
     if not isinstance(result, dict):
         raise Rejected("invalid-object-metadata")
     return result
-
-
-def pnpm_inventory(lock):
-    """Accept only pnpm's simple v9 packages map, not arbitrary YAML features."""
-    text = lock.decode("utf-8")
-    if not re.search(r"(?m)^lockfileVersion: ['\"]?9\.0['\"]?$", text):
-        raise Rejected("unsupported-pnpm-lock")
-    packages = {pnpm_package_key(line) for line in pnpm_package_lines(text)}
-    if not packages:
-        raise Rejected("missing-pnpm-inventory")
-    return packages
-
-
-def pnpm_package_lines(text):
-    section = False
-    for line in text.splitlines():
-        if line == "packages:":
-            section = True
-            continue
-        if not section:
-            continue
-        if line and not line.startswith(" "):
-            return
-        if line.startswith("  ") and not line.startswith("   "):
-            yield line
-
-
-def pnpm_package_key(line):
-    match = re.fullmatch(r"  ['\"]?(@?[a-zA-Z0-9_./-]+@[0-9][a-zA-Z0-9.+_-]*)['\"]?:", line)
-    if not match:
-        raise Rejected("unsupported-pnpm-package-key")
-    return match[1]
 
 
 def regular_bytes(path, limit=8 * 1024 * 1024):
@@ -137,12 +105,12 @@ def package_directories(repo, worktree, relative):
     return source, dest
 
 
-def matching_package(source, dest):
+def matching_package(source, dest, require_name=True):
     package = regular_bytes(source / "package.json")
     if package != regular_bytes(dest / "package.json"):
         raise Rejected("stale-package-identity")
     parsed = object_json(package)
-    if not parsed.get("name"):
+    if require_name and not parsed.get("name"):
         raise Rejected("missing-package-identity")
     return parsed
 
@@ -161,6 +129,15 @@ def matching_lock(source, dest):
 
 def identity(repo, worktree, relative):
     repo, worktree = repository_identity(repo, worktree)
+    if (repo / "pnpm-workspace.yaml").is_file() and (repo / "pnpm-lock.yaml").is_file():
+        members, inventory = workspace_identity(repo, worktree)
+        if relative not in members:
+            raise Rejected("not-workspace-member")
+        source, dest = package_directories(repo, worktree, relative)
+        manifest = matching_package(source, dest, require_name=relative != Path("."))
+        required = required_dependencies(manifest)
+        return contained_path(source / "node_modules"), (
+            "workspace", inventory, repo, source / "node_modules", required, worktree)
     source, dest = package_directories(repo, worktree, relative)
     parsed = matching_package(source, dest)
     name, lock = matching_lock(source, dest)
@@ -173,6 +150,25 @@ def identity(repo, worktree, relative):
     else:
         inventory = ("npm", npm_inventory(source, modules, lock, parsed))
     return modules, inventory
+
+
+def workspace_identity(repo, worktree):
+    """Accept block-list workspace globs, failing closed on unsupported YAML."""
+    config = regular_bytes(repo / "pnpm-workspace.yaml")
+    if config != regular_bytes(worktree / "pnpm-workspace.yaml"):
+        raise Rejected("stale-workspace-identity")
+    name, lock = matching_lock(repo, worktree)
+    if name != "pnpm-lock.yaml" or regular_bytes(repo / "node_modules/.pnpm/lock.yaml") != lock:
+        raise Rejected("stale-installed-lock")
+    inventory = pnpm_inventory(lock)
+    members = workspace_members(worktree, workspace_patterns(config))
+    for relative in members:
+        source, dest = package_directories(repo, worktree, relative)
+        is_root = relative == Path(".")
+        manifest = matching_package(source, dest, require_name=not is_root)
+        if manifest.get("name"):
+            inventory.add(f"{manifest.get('name')}@{manifest.get('version')}")
+    return sorted(members), inventory
 
 
 def npm_inventory(source, modules, lock, parsed):

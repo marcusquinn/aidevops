@@ -4,66 +4,18 @@
 
 import hashlib
 import os
-import re
 from pathlib import Path
 import stat
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack
 
+from _worktree_dependency_closure import check_closure
 from _worktree_dependency_identity import Rejected, contained_path, object_json, open_directory, regular_bytes, trusted
+from _worktree_dependency_payload import (
+    PayloadCopies, resolution_root, safe_entry_name, skipped_root_entry,
+)
 
 
-STALE_STAGING = re.compile(r"^.+_tmp_\d+$")
-# Non-module entries that macOS and build tools create at the dependency root
-# (GH#39037). They are skipped, never copied, so a worker cannot resolve them; any
-# other unrecorded entry, or one of these names with another type, still rejects.
-SKIPPED_ROOT_FILES = {".metadata_never_index", ".DS_Store"}
-SKIPPED_ROOT_DIRECTORIES = {".vite", ".vite-temp", ".cache"}
-
-
-def skipped_root_entry(rel, mode):
-    if len(rel.parts) != 1:
-        return False
-    if stat.S_ISDIR(mode):
-        return bool(STALE_STAGING.match(rel.name)) or rel.name in SKIPPED_ROOT_DIRECTORIES
-    return stat.S_ISREG(mode) and rel.name in SKIPPED_ROOT_FILES
-
-
-def safe_entry_name(name):
-    lower = name.lower()
-    sensitive = {".git", ".ssh", ".aws", ".npmrc", ".netrc", ".pypirc", "credentials.json"}
-    if lower in sensitive or lower.startswith(".env") or lower.endswith((".pem", ".key", ".p12", ".pfx")):
-        raise Rejected("credential-bearing-path")
-
-
-def metadata_entry(name, mode):
-    if name in {".bin", ".pnpm"}:
-        return stat.S_ISDIR(mode)
-    files = {".package-lock.json", ".modules.yaml", ".pnpm-workspace-state-v1.json"}
-    return name in files and stat.S_ISREG(mode)
-
-
-def package_position(path):
-    return path.parent.name == "node_modules" or (
-        path.parent.name.startswith("@") and path.parent.parent.name == "node_modules")
-
-
-def resolution_root(path, mode):
-    namespace = path.name.startswith("@") and stat.S_ISDIR(mode)
-    if path.parent.name == "node_modules":
-        return not (namespace or metadata_entry(path.name, mode))
-    return package_position(path)
-
-
-@contextmanager
-def directory_at(parent, name):
-    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
-    try:
-        yield fd
-    finally:
-        os.close(fd)
-
-
-class Snapshot:
+class Snapshot(PayloadCopies):
     """One bounded traversal with pinned source and destination descriptors."""
 
     def __init__(self, root, max_bytes, max_entries, inventory):
@@ -75,6 +27,10 @@ class Snapshot:
         self.count = 0
         self.records = {}
         self.seen_packages = set()
+        self.workspace = bool(inventory and inventory[0] == "workspace")
+        self.boundary = inventory[2] if self.workspace else self.root
+        self.logical_root = inventory[3] if self.workspace else self.root
+        self.fallback_bytes = 0
 
     def walk(self, fd, relative, output, depth=0):
         trusted(os.fstat(fd))
@@ -90,7 +46,7 @@ class Snapshot:
             # copied nor inventoried, so source and staged snapshots keep identical digests.
             return
         self.count += 1
-        if self.count > self.max_entries:
+        if self.count > (2000000 if self.workspace else self.max_entries):
             raise Rejected("entry-budget-exceeded")
         safe_entry_name(rel.name)
         self.check_package_root(rel, info.st_mode)
@@ -105,11 +61,30 @@ class Snapshot:
 
     def resolved_inside(self, rel):
         try:
-            resolved = (self.root / rel).resolve(strict=True)
+            candidate = self.root / rel
+            if self.workspace and candidate.is_symlink():
+                target = os.readlink(candidate)
+                if os.path.isabs(target):
+                    raise Rejected("escaping-dependency-link")
+                candidate = self.logical_root / rel.parent / target
+                destination = self.inventory[5]
+                eventual = destination / self.logical_root.relative_to(self.boundary) / rel.parent / target
+                if not eventual.resolve().is_relative_to(destination):
+                    raise Rejected("escaping-worktree-link")
+            elif self.workspace:
+                candidate = self.logical_root / rel
+            resolved = candidate.resolve(strict=True)
         except (FileNotFoundError, NotADirectoryError):
             raise Rejected("dangling-dependency-link") from None
-        if not resolved.is_relative_to(self.root):
+        if not resolved.is_relative_to(self.boundary):
             raise Rejected("escaping-package-root")
+        if self.workspace:
+            relative = resolved.relative_to(self.boundary)
+            for part in relative.parts:
+                safe_entry_name(part)
+            destination = self.inventory[5]
+            if not (destination / relative).resolve().is_relative_to(destination):
+                raise Rejected("escaping-worktree-link")
         return resolved
 
     def inventory_key(self, package_path, manifest):
@@ -147,48 +122,6 @@ class Snapshot:
         if output is not None:
             os.symlink(target, rel.name, dir_fd=output)
 
-    def copy_directory(self, fd, rel, output, depth):
-        with ExitStack() as stack:
-            child = stack.enter_context(directory_at(fd, rel.name))
-            target = None
-            if output is not None:
-                os.mkdir(rel.name, mode=0o755, dir_fd=output)
-                target = stack.enter_context(directory_at(output, rel.name))
-            self.records[str(rel)] = b"dir\0"
-            self.walk(child, rel, target, depth + 1)
-
-    def read_payload(self, fd, name):
-        source_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
-        with os.fdopen(source_fd, "rb") as source:
-            before = os.fstat(source_fd)
-            trusted(before)
-            if not stat.S_ISREG(before.st_mode) or before.st_size > self.max_bytes - self.total:
-                raise Rejected("byte-budget-exceeded")
-            data = source.read(self.max_bytes - self.total + 1)
-            self.total += len(data)
-            after = os.fstat(source_fd)
-            if self.total > self.max_bytes or (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-                raise Rejected("changed-or-oversized-source")
-        return data, before.st_mode & 0o755
-
-    def record_package(self, rel, data):
-        package_path = Path("node_modules") / rel.parent
-        if self.inventory and rel.name == "package.json" and package_position(package_path):
-            key = self.inventory_key(package_path, object_json(data))
-            self.seen_packages.add(key)
-
-    def copy_file(self, fd, rel, output):
-        data, mode = self.read_payload(fd, rel.name)
-        self.record_package(rel, data)
-        self.records[str(rel)] = b"file\0" + str(mode).encode() + hashlib.sha256(data).digest()
-        if output is None:
-            return
-        destination_fd = os.open(rel.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                                 0o600, dir_fd=output)
-        with os.fdopen(destination_fd, "wb") as destination:
-            destination.write(data)
-            os.fchmod(destination_fd, mode)
-
     def scan(self, copy_to):
         with ExitStack() as stack:
             fd = stack.enter_context(open_directory(self.root))
@@ -199,8 +132,17 @@ class Snapshot:
             self.walk(fd, Path(), output_fd)
         if self.count == 0:
             raise Rejected("missing-dependencies")
-        if self.inventory and self.seen_packages != self.inventory[1]:
+        if self.inventory and not self.workspace and self.seen_packages != self.inventory[1]:
             raise Rejected("incomplete-package-inventory")
+        if self.workspace:
+            # Lock inventories also contain optional packages for other platforms.
+            # Require this importer's entry points instead of every lock package.
+            for dependency in self.inventory[4]:
+                rel = Path(dependency)
+                if not os.path.lexists(self.root / rel):
+                    raise Rejected("incomplete-package-inventory")
+                self.check_package_root(rel, (self.root / rel).lstat().st_mode)
+                check_closure(self.resolved_inside(rel), set(), self.boundary)
         digest = hashlib.sha256()
         for name, value in sorted(self.records.items()):
             digest.update(name.encode() + b"\0" + value)

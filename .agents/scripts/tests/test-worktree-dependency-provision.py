@@ -62,7 +62,7 @@ class ProvisionTests(unittest.TestCase):
     def validate(self):
         return provision.identity(self.repo, self.wt, Path("."))
 
-    def run_restore(self, owner="current", exact="true", root="auto", budget="67108864"):
+    def run_restore(self, owner="current", exact="true", root="auto", budget="67108864", interactive=False):
         # All ownership and controller inputs are fixtures; never use the live registry.
         script = r'''
 source "$1/worktree-helper-add.sh"
@@ -74,9 +74,16 @@ check_worktree_owner_snapshot() {
 worktree_has_exact_owner_contract() { [[ "$EXACT" == true ]]; }
 _dlw_node_modules_restore_acquire_lock() { return 0; }
 _dlw_node_modules_restore_release_lock() { return 0; }
-_dlw_restore_worktree_deps "$2" "$3"
+_restore_worktree_node_modules_acquire_lock() { return 0; }
+_restore_worktree_node_modules_release_lock() { return 0; }
+if [[ "$RESTORE_MODE" == interactive ]]; then
+    _restore_worktree_node_modules "$2" "$3" >>"$LOGFILE" 2>&1
+else
+    _dlw_restore_worktree_deps "$2" "$3"
+fi
 '''
         env = {**os.environ, "OWNER": owner, "EXACT": exact,
+               "RESTORE_MODE": "interactive" if interactive else "headless",
                "LOGFILE": str(self.root / "restore.log"), "AIDEVOPS_WORKSPACE_DIR": str(self.root),
                "WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED": root,
                "WORKTREE_NODE_MODULES_RESTORE_ENABLED": "1",
@@ -270,6 +277,134 @@ _dlw_restore_worktree_deps "$2" "$3"
         copied = self.wt / "node_modules" / "example" / "index.js"
         self.assertTrue(copied.resolve().is_relative_to(self.wt))
         self.assertEqual(copied.read_text(), "export const fixture = 1;\n")
+
+    def make_workspace(self):
+        self.make_pnpm()
+        for parent in (self.repo, self.wt):
+            (parent / "pnpm-workspace.yaml").write_text("packages:\n  - 'packages/*'\n  - 'apps/*'\n")
+            for relative in ("packages/one", "packages/two", "apps/web"):
+                self.write(parent / relative / "package.json", {
+                    "name": relative.split("/")[-1], "version": "1.0.0", "dependencies": {"example": "1.0.0"}})
+        for relative in ("packages/one", "packages/two", "apps/web"):
+            modules = self.repo / relative / "node_modules"
+            modules.mkdir()
+            (modules / "example").symlink_to("../../../node_modules/example")
+            (modules / "one").symlink_to("../../../packages/one")
+        (self.modules / "one").symlink_to("../packages/one")
+
+    def test_workspace_restores_all_members_and_isolates_writes(self):
+        self.make_workspace()
+        self.run_restore()
+        for relative in ("packages/one", "packages/two", "apps/web"):
+            copied = self.wt / relative / "node_modules/example/index.js"
+            self.assertEqual(copied.read_text(), "export const fixture = 1;\n")
+            self.assertTrue(copied.resolve().is_relative_to(self.wt))
+            self.assertEqual((self.wt / relative / "node_modules/one").resolve(), self.wt / "packages/one")
+        copied.write_text("changed only in worktree")
+        self.assertEqual((self.modules / "example/index.js").read_text(), "export const fixture = 1;\n")
+        log = (self.root / "restore.log").read_text()
+        self.assertEqual(log.count("outcome=provisioned elapsed_seconds="), 4)
+
+    def test_workspace_lock_mismatch_and_escape(self):
+        self.make_workspace()
+        (self.wt / "pnpm-lock.yaml").write_text("different")
+        self.run_restore()
+        self.assertIn("stale-lock-identity", (self.root / "restore.log").read_text())
+        self.assertFalse((self.wt / "node_modules").exists())
+        (self.wt / "pnpm-lock.yaml").write_bytes((self.repo / "pnpm-lock.yaml").read_bytes())
+        (self.modules / "example/escape").symlink_to(self.root)
+        self.run_restore()
+        self.assertFalse((self.wt / "node_modules").exists())
+
+    @staticmethod
+    def fallback_clone(_source, output, name):
+        """Platform-independent stand-in for an unsupported clone boundary."""
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        return os.open(name, flags, 0o600, dir_fd=output), False
+
+    def test_workspace_unsupported_clone_keeps_byte_budget(self):
+        from unittest.mock import patch
+        self.make_workspace()
+        modules, inventory = self.validate()
+        stage = self.wt / "stage"
+        stage.mkdir(mode=0o700)
+        with patch("_worktree_dependency_payload.clone_descriptor", side_effect=self.fallback_clone):
+            with self.assertRaisesRegex(provision.Rejected, "byte-budget-exceeded"):
+                provision.snapshot(modules, 10, 20000, stage, inventory)
+
+    def test_workspace_original_target_cannot_escape_through_worktree_alias(self):
+        self.make_workspace()
+        (self.repo / "alias").symlink_to("packages", target_is_directory=True)
+        (self.wt / "alias").symlink_to(self.root, target_is_directory=True)
+        (self.modules / "example/escape").symlink_to("../../../../../alias/one")
+        self.run_restore()
+        self.assertFalse((self.wt / "node_modules").exists())
+
+    def test_workspace_missing_member_dependency_is_rejected(self):
+        self.make_workspace()
+        (self.repo / "packages/one/node_modules/example").unlink()
+        modules, inventory = provision.identity(self.repo, self.wt, Path("packages/one"))
+        with self.assertRaisesRegex(provision.Rejected, "incomplete-package-inventory"):
+            provision.snapshot(modules, 67108864, 20000, inventory=inventory)
+
+    def test_workspace_interactive_hidden_members_and_exclusions(self):
+        self.make_workspace()
+        for parent in (self.repo, self.wt):
+            (parent / "packages/one").rename(parent / "packages/.one")
+            (parent / "pnpm-workspace.yaml").write_text("packages:\n  - packages/*\n  - '!packages/two'\n  - apps/*\n")
+        for path in (self.modules / "one", self.repo / "packages/.one/node_modules/one",
+                     self.repo / "packages/two/node_modules/one", self.repo / "apps/web/node_modules/one"):
+            path.unlink()
+        self.run_restore(interactive=True)
+        self.assertTrue((self.wt / "packages/.one/node_modules/example/package.json").is_file())
+        self.assertTrue((self.wt / "apps/web/node_modules/example/package.json").is_file())
+        self.assertFalse((self.wt / "packages/two/node_modules").exists())
+
+    def test_workspace_fallback_copies_multiple_chunks(self):
+        from unittest.mock import patch
+        self.make_workspace()
+        payload = self.modules / "example/payload"
+        payload.write_bytes(b"fixture" * 200000)
+        modules, inventory = self.validate()
+        stage = self.wt / "stage"
+        stage.mkdir(mode=0o700)
+        with patch("_worktree_dependency_payload.clone_descriptor", side_effect=self.fallback_clone):
+            provision.snapshot(modules, 67108864, 20000, stage, inventory)
+        copied = stage / ".pnpm/example@1.0.0/node_modules/example/payload"
+        self.assertEqual(copied.read_bytes(), payload.read_bytes())
+
+    def test_workspace_clone_exceeds_copy_budget_without_shared_writes(self):
+        from _worktree_dependency_payload import clone_descriptor
+        from _worktree_dependency_identity import open_directory
+        self.make_workspace()
+        stage = self.wt / "stage"
+        stage.mkdir(mode=0o700)
+        payload = self.modules / "example/payload"
+        payload.write_bytes(b"fixture" * 200000)
+        # Probe the real filesystem, not a mocked successful ioctl.
+        with payload.open("rb") as source, open_directory(stage) as output:
+            target, cloned = clone_descriptor(source.fileno(), output, "probe")
+            os.close(target)
+        (stage / "probe").unlink()
+        if not cloned:
+            self.skipTest("filesystem lacks CoW; bounded fallback is tested separately")
+        modules, inventory = self.validate()
+        provision.snapshot(modules, 10, 1, stage, inventory)
+        copied = stage / ".pnpm/example@1.0.0/node_modules/example/payload"
+        self.assertEqual(copied.read_bytes(), payload.read_bytes())
+        copied.write_text("isolated")
+        self.assertGreater(payload.stat().st_size, 1000000)
+
+    def test_workspace_member_command_runs_without_install(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is unavailable")
+        self.make_workspace()
+        self.run_restore()
+        result = subprocess.check_output(  # nosec B603 -- resolved Node, fixed offline fixture expression.
+            [node, "-p", "require('example/package.json').version"],
+            cwd=self.wt / "packages/one", text=True, timeout=10)
+        self.assertEqual(result.strip(), "1.0.0")
 
     def test_extra_unrecorded_package(self):
         self.write(self.modules / "extra" / "package.json", {"name": "extra", "version": "1.0.0"})
