@@ -185,9 +185,11 @@ test_dashboard_wraps_person_stats_rate_limit_probes() {
 
 test_dashboard_wraps_local_activity_helpers_with_timeout() {
 	local name="dashboard bounds local activity helper calls"
-	local summary_pattern="timeout_sec \"\$STATS_HEALTH_ACTIVITY_TIMEOUT\" bash \"\$activity_helper\" summary"
-	local session_pattern="timeout_sec \"\$STATS_HEALTH_ACTIVITY_TIMEOUT\" bash \"\$activity_helper\" session-time"
-	if grep -Fq "$summary_pattern" "$DASHBOARD_LIB" && grep -Fq "$session_pattern" "$DASHBOARD_LIB"; then
+	local summary_pattern="timeout_sec \"\$timeout\" bash \"\$activity_helper\" summary"
+	local session_pattern="timeout_sec \"\$timeout\" bash \"\$activity_helper\" session-time"
+	if grep -Fq "$summary_pattern" "$DASHBOARD_LIB" && grep -Fq "$session_pattern" "$DASHBOARD_LIB" &&
+		grep -Fq 'timeout=$(_stats_health_optional_section_timeout 2)' "$DASHBOARD_LIB" &&
+		grep -Fq 'timeout=$(_stats_health_optional_section_timeout 1)' "$DASHBOARD_LIB"; then
 		pass "$name"
 	else
 		fail "$name" "missing wall-clock timeout around local activity or session-time helper"

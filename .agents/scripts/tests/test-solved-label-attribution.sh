@@ -109,7 +109,7 @@ else
 	pass "unmerged PR is never treated as solved"
 fi
 
-pulse_source="$(<"$SCRIPT_DIR/pulse-merge.sh")"
+pulse_source="$(<"$SCRIPT_DIR/pulse-merge-issue-closeout.sh")"
 # shellcheck disable=SC2016  # Static source assertion; variables are intentionally literal.
 literal_solved_call='set_solved_label "$linked_issue" "$repo_slug" "$_solved_actor"'
 assert_contains "pulse merge applies solved label on linked issue" \

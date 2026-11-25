@@ -70,11 +70,12 @@ NODE
 }
 
 main() {
-	local first_add="" first_create="" persistent_guard="" trusted_cleanup=""
+	local first_add="" first_create="" persistent_guard="" trusted_cleanup="" triage_labels=""
 	first_add=$(grep -n 'await github\.rest\.issues\.addLabels' "$WORKFLOW" | head -1 | cut -d: -f1)
 	first_create=$(grep -n 'await github\.rest\.issues\.createLabel' "$WORKFLOW" | head -1 | cut -d: -f1)
 	persistent_guard=$(grep -n "issueLabels\.has('persistent')" "$WORKFLOW" | head -1 | cut -d: -f1)
 	trusted_cleanup=$(grep -n 'if (authorIsTrusted)' "$WORKFLOW" | head -1 | cut -d: -f1)
+	triage_labels=$(grep -n 'const triageLabels =' "$WORKFLOW" | head -1 | cut -d: -f1)
 	TESTS_RUN=$((TESTS_RUN + 1))
 	if [[ "$first_add" =~ ^[0-9]+$ && "$first_create" =~ ^[0-9]+$ && "$first_add" -lt "$first_create" ]]; then
 		printf 'PASS critical label application precedes label creation\n'
@@ -90,7 +91,7 @@ main() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
-	if [[ "$persistent_guard" =~ ^[0-9]+$ && "$first_add" =~ ^[0-9]+$ && "$persistent_guard" -lt "$first_add" ]]; then
+	if [[ "$persistent_guard" =~ ^[0-9]+$ && "$triage_labels" =~ ^[0-9]+$ && "$persistent_guard" -lt "$triage_labels" ]]; then
 		printf 'PASS persistent non-task guard precedes triage label application\n'
 	else
 		printf 'FAIL persistent non-task guard does not precede triage label application\n' >&2
@@ -134,8 +135,8 @@ main() {
 		"scanner is fetched from the framework repository, not the caller"
 	check_pattern "ref: \\$\{\{ inputs\.aidevops_ref \|\| 'main' \}\}" \
 		"scanner checkout follows the pinned aidevops_ref"
-	check_pattern "action === 'opened' && issueLabels\.has\('needs-maintainer-review'\)" \
-		"trusted NMR cleanup is limited to creation"
+	check_pattern "action === 'opened' && !throttleReport && issueLabels\.has\('needs-maintainer-review'\)" \
+		"trusted NMR cleanup is limited to creation of non-throttle reports"
 	check_pattern "action === 'reopened' && hasExternalAuthoritySource" \
 		"reopened issues already triaged are not re-gated"
 	check_pattern "uses: \./\.github/workflows/issue-triage-gate-reusable\.yml" \

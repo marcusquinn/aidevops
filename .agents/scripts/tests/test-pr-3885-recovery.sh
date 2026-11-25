@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 QUALITY_FILE="${REPO_ROOT}/.agents/scripts/quality-cli-manager.sh"
 STUCK_FILE="${REPO_ROOT}/.agents/scripts/stuck-detection-helper.sh"
-WORKTREE_FILE="${REPO_ROOT}/.agents/scripts/worktree-helper.sh"
+WORKTREE_FILE="${REPO_ROOT}/.agents/scripts/worktree-helper-git.sh"
 GITIGNORE_FILE="${REPO_ROOT}/.gitignore"
 
 TESTS_RUN=0
