@@ -347,7 +347,7 @@ _run_scoped_node_checks() {
 			return 1
 		fi
 	fi
-	local phase="" script_name="" check_count=0 command_rc=0 check_index=0 deferring=0
+	local phase="" script_name="" check_count=0 command_rc=0 check_index=0 deferring=0 phase_timeout=""
 	for phase in format lint typecheck test; do
 		script_name=$(_validator_select_script "$package_json" "$phase") || continue
 		check_count=$((check_count + 1))
@@ -359,26 +359,33 @@ _run_scoped_node_checks() {
 				"not run after an earlier timeout in this scope"; then
 			continue
 		fi
+		phase_timeout="$t"
+		# Callers run this function in a per-scope subshell and test is its
+		# last phase, so the selected concurrency reaches no other scope.
+		if [[ "$phase" == "test" ]] && jq -e '.name == "opencode-aidevops"' "$package_json" >/dev/null 2>&1; then
+			_validator_plugin_test_concurrency
+			phase_timeout=$(_validator_plugin_test_timeout "$t")
+			if [[ "$phase_timeout" != "$t" ]]; then
+				print_info "[validators] serialized plugin tests: timeout ${phase_timeout}s (validator timeout ${t}s)"
+			fi
+		fi
 		print_info "[validators] scope=${scope_label} reason=$([[ "$scope" == "." ]] && printf 'root-or-shared-change' || printf 'affected-workspace') command=$pm run $script_name"
 		_validator_snapshot "${snapshot_dir}/before-${check_index}" || return 1
 		command_rc=0
 		(
 			cd "$scope" || exit 1
-			if [[ "$phase" == "test" ]] && jq -e '.name == "opencode-aidevops"' package.json >/dev/null 2>&1; then
-				_validator_plugin_test_concurrency
-			fi
-			timeout_sec "$t" "$pm" run "$script_name"
+			timeout_sec "$phase_timeout" "$pm" run "$script_name"
 		) >"${snapshot_dir}/command-${check_index}.log" 2>&1 || command_rc=$?
 		_restore_validator_repo_root "$(git rev-parse --show-toplevel 2>/dev/null)" "$script_name" || return 1
 		_validator_snapshot "${snapshot_dir}/after-${check_index}" || return 1
 		_validator_state_unchanged "${snapshot_dir}/before-${check_index}" "${snapshot_dir}/after-${check_index}" "$pm run $script_name ($scope_label)" || return 1
 		if [[ "$command_rc" -eq 124 ]]; then
 			if _validator_defer_to_required_ci "$phase" "$pm run $script_name ($scope_label)" "$snapshot_dir" \
-				"local TIMEOUT after ${t}s"; then
+				"local TIMEOUT after ${phase_timeout}s"; then
 				deferring=1
 				continue
 			fi
-			print_error "[validators] TIMEOUT after ${t}s: $pm run $script_name ($scope_label)"
+			print_error "[validators] TIMEOUT after ${phase_timeout}s: $pm run $script_name ($scope_label)"
 			_validator_timeout_remedy
 			return 1
 		elif [[ "$command_rc" -ne 0 ]]; then
@@ -428,7 +435,7 @@ _validator_print_failure_log() {
 
 # Only the full-loop plugin gate adapts to host load; direct npm/CI runs keep
 # Node's default concurrency. Reduce contention at moderate load and serialize
-# at high load (GH#35499, GH#39133). Never extend budgets.
+# at high load (GH#35499, GH#39133). Never extend per-test budgets.
 _validator_plugin_test_concurrency() {
 	local concurrency=""
 	if [[ -n "${AIDEVOPS_PLUGIN_TEST_CONCURRENCY+x}" ]]; then
@@ -447,6 +454,21 @@ _validator_plugin_test_concurrency() {
 		export AIDEVOPS_PLUGIN_TEST_CONCURRENCY="$concurrency"
 		print_info "[validators] running plugin tests with concurrency ${concurrency} (host load or unavailable load probe)"
 	fi
+	return 0
+}
+
+# A serialized suite runs its files one at a time on a host already loaded
+# above 4 per CPU, so it cannot finish inside a budget sized for a parallel
+# run (GH#40303). Give that phase a floor; a larger configured timeout wins.
+# Per-test budgets are unchanged, and a hang still ends at the floor.
+_validator_plugin_test_timeout() {
+	local t="$1"
+	local floor=2400
+	if [[ "${AIDEVOPS_PLUGIN_TEST_CONCURRENCY:-}" == 1 && "$t" -lt "$floor" ]]; then
+		printf '%s\n' "$floor"
+		return 0
+	fi
+	printf '%s\n' "$t"
 	return 0
 }
 

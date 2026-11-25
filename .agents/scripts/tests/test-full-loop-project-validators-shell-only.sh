@@ -352,6 +352,56 @@ else
 	print_result "environment timeout and 300-second fallback" 1 "env=${case_env_rc} default=${case_default_rc}"
 fi
 
+# GH#40303: a serialized plugin test phase gets a floor it can finish inside;
+# parallel runs and a larger configured timeout keep the validator timeout.
+PLUGIN_REPO="${TEST_ROOT}/plugin-serial-timeout"
+make_repo "$PLUGIN_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-plugin.log"
+export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
+(
+	cd "$PLUGIN_REPO" || exit 1
+	printf '%s\n' '{"name":"opencode-aidevops","scripts":{"test":"node --test tests/*.mjs"}}' >package.json
+	printf '%s\n' 'export const answer = 42;' >index.mjs
+	git add package.json index.mjs
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'plugin change'
+)
+run_plugin_validators() {
+	local concurrency="$1" expected="$2" validator_timeout="$3"
+	(
+		cd "$PLUGIN_REPO" || exit 1
+		export EXPECTED_TIMEOUT="$expected"
+		timeout_sec() { [[ "$1" == "$EXPECTED_TIMEOUT" ]] || return 1; shift; "$@"; }
+		PATH="${FAKE_BIN}:$PATH" AIDEVOPS_PLUGIN_TEST_CONCURRENCY="$concurrency" \
+			AIDEVOPS_VALIDATOR_TIMEOUT="$validator_timeout" _run_project_validators 0
+	)
+	return $?
+}
+run_plugin_validators 1 2400 300 >"${TEST_ROOT}/plugin-serial.log" 2>&1
+plugin_serial_rc=$?
+run_plugin_validators 4 300 300 >"${TEST_ROOT}/plugin-parallel.log" 2>&1
+plugin_parallel_rc=$?
+run_plugin_validators 1 3000 3000 >"${TEST_ROOT}/plugin-serial-large.log" 2>&1
+plugin_large_rc=$?
+if [[ "$plugin_serial_rc" -eq 0 && "$plugin_parallel_rc" -eq 0 && "$plugin_large_rc" -eq 0 ]] &&
+	grep -q 'serialized plugin tests: timeout 2400s (validator timeout 300s)' "${TEST_ROOT}/plugin-serial.log" &&
+	! grep -q 'serialized plugin tests' "${TEST_ROOT}/plugin-parallel.log" "${TEST_ROOT}/plugin-serial-large.log"; then
+	print_result "serialized plugin tests get a 2400-second floor; parallel and larger timeouts unchanged" 0
+else
+	print_result "serialized plugin tests get a 2400-second floor; parallel and larger timeouts unchanged" 1 \
+		"serial=${plugin_serial_rc} parallel=${plugin_parallel_rc} large=${plugin_large_rc}"
+fi
+(
+	cd "$PLUGIN_REPO" || exit 1
+	timeout_sec() { return 124; }
+	PATH="${FAKE_BIN}:$PATH" AIDEVOPS_PLUGIN_TEST_CONCURRENCY=1 _run_project_validators 0
+) >/dev/null 2>"${TEST_ROOT}/plugin-serial-timeout.log"
+plugin_timeout_rc=$?
+if [[ "$plugin_timeout_rc" -ne 0 ]] && grep -q 'TIMEOUT after 2400s: npm run test' "${TEST_ROOT}/plugin-serial-timeout.log"; then
+	print_result "serialized plugin timeout reports the effective budget" 0
+else
+	print_result "serialized plugin timeout reports the effective budget" 1 "rc=${plugin_timeout_rc}"
+fi
+
 # GH#34502: ignored canonical configuration survives linked-worktree creation.
 # Use spaces in paths to exercise canonical configuration path handling.
 CANONICAL_REPO="${TEST_ROOT}/canonical checkout"
