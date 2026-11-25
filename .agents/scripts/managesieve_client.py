@@ -236,7 +236,8 @@ def op_remove(conn, name, expected):
     parked, original = park(conn, name)
     stored = first_string(conn.command(b"GETSCRIPT " + quote(parked)))
     if normalize(stored) != normalize(expected):
-        raise SieveError("script changed since it was checked; " + restore_parked(conn, parked, original))
+        outcome = restore_parked(conn, parked, original)
+        raise SieveError("script changed since it was checked; " + outcome)
     return drop(conn, parked)
 
 
@@ -251,7 +252,11 @@ def drop(conn, name):
 def op_delete(conn, name):
     """Delete an inactive script; refuse an active one (exit 3, nothing changed)."""
     if (name, True) in listing(conn):
-        sys.stderr.write("sieve: '%s' is active; automatic deactivation is unsafe with concurrent writers; deactivate through server administration under exclusive access before deleting\n" % name)
+        sys.stderr.write(
+            "sieve: '%s' is active; automatic deactivation is unsafe with "
+            "concurrent writers; deactivate through server administration "
+            "under exclusive access before deleting\n" % name
+        )
         return 3
     conn.command(b"DELETESCRIPT " + quote(name))
     return 0
