@@ -32,6 +32,9 @@ PM_RECORD_COMMENT="purelymail-helper"
 PM_OWNERSHIP_PREFIX="purelymail_ownership_proof="
 # Roundcube's managesieve plugin shows only the script named "roundcube".
 PM_SIEVE_SCRIPT="roundcube"
+# Name copy-to-remove parks the script under while it checks it; must match
+# PARK_SUFFIX in purelymail_sieve.py.
+PM_SIEVE_PARKED="${PM_SIEVE_SCRIPT}.aidevops-remove"
 # Parsed DNS options (globals keep Bash 3.2 compatibility without namerefs).
 PM_CF_SECRET="${PURELYMAIL_CF_SECRET:-}"
 PM_ZONE=""
@@ -983,18 +986,37 @@ cmd_copy_to_remove() {
 	local confirm="${3:-}"
 	_pm_valid_address "$address" || return 1
 	_pm_valid_secret_name "$secret" || return 1
-	local scripts current target name _state found=0
+	local scripts name _state has_main=0 has_parked=0
 	scripts=$(_pm_sieve_list_or_fail "$address" "$secret") || return 1
 	while IFS=$'\t' read -r name _state; do
-		[[ "$name" == "$PM_SIEVE_SCRIPT" ]] && found=1
+		[[ "$name" == "$PM_SIEVE_SCRIPT" ]] && has_main=1
+		[[ "$name" == "$PM_SIEVE_PARKED" ]] && has_parked=1
 	done <<<"$scripts"
-	if [[ "$found" -ne 1 ]]; then
+	if [[ "$has_main" -eq 0 && "$has_parked" -eq 0 ]]; then
 		print_info "No '$PM_SIEVE_SCRIPT' Sieve script on $address; nothing to remove"
 		return 0
 	fi
-	current=$(_pm_sieve "$address" "$secret" get "$PM_SIEVE_SCRIPT") || return 1
+	# A parked script means an earlier removal stopped after renaming it (it
+	# may still be active). Finish that first, with the same content check.
+	if [[ "$has_parked" -eq 1 ]]; then
+		print_info "Found '$PM_SIEVE_PARKED' left by an interrupted copy-to-remove on $address"
+		_pm_copy_remove_one "$address" "$secret" "$PM_SIEVE_PARKED" "$confirm" || return 1
+	fi
+	if [[ "$has_main" -eq 1 ]]; then
+		_pm_copy_remove_one "$address" "$secret" "$PM_SIEVE_SCRIPT" "$confirm" || return 1
+	fi
+	return 0
+}
+
+_pm_copy_remove_one() {
+	local address="$1"
+	local secret_name="$2"
+	local name="$3"
+	local confirm="$4"
+	local current target
+	current=$(_pm_sieve "$address" "$secret_name" get "$name") || return 1
 	if ! target=$(_pm_sieve_copy_target "$current"); then
-		print_error "The '$PM_SIEVE_SCRIPT' script on $address is not the helper's copy script; change it in webmail instead"
+		print_error "The '$name' script on $address is not the helper's copy script; change it in webmail instead"
 		return 1
 	fi
 	if [[ "$confirm" != "--yes" ]]; then
@@ -1002,8 +1024,8 @@ cmd_copy_to_remove() {
 		return 0
 	fi
 	# Pass the checked contents: the client deletes only that exact script.
-	if ! _pm_sieve "$address" "$secret" remove "$PM_SIEVE_SCRIPT" "$current"; then
-		print_error "Could not remove the Sieve script on $address"
+	if ! _pm_sieve "$address" "$secret_name" remove "$name" "$current"; then
+		print_error "Could not remove the Sieve script '$name' on $address"
 		return 1
 	fi
 	print_success "Removed the copy to $target from $address"

@@ -26,6 +26,7 @@ import base64
 import contextlib
 import os
 import re
+import select
 import socket
 import ssl
 import sys
@@ -34,6 +35,9 @@ HOST = os.environ.get("PURELYMAIL_SIEVE_HOST", "mailserver.purelymail.com")
 PORT = int(os.environ.get("PURELYMAIL_SIEVE_PORT", "4190"))
 TIMEOUT = 30
 PRE_TLS_WAIT = 1.0
+# copy-to-remove parks a script under NAME + PARK_SUFFIX while checking it;
+# must match PM_SIEVE_PARKED in purelymail-helper.sh.
+PARK_SUFFIX = ".aidevops-remove"
 # One response token: quoted string, trailing literal size, response code, atom.
 TOKEN_RE = re.compile(rb'"((?:\\.|[^"\\])*)"|\{(\d+)\+?\}$|(\([^)]*\))|(\S+)')
 
@@ -95,22 +99,12 @@ class Conn:
             if status == "NO" or not items:
                 return
 
-    def _data_within(self, seconds):
-        """Return True when data is buffered or arrives within SECONDS."""
-        if self.buf:
-            return True
-        self.sock.settimeout(seconds)
-        try:
-            self._fill()
-            return True
-        except socket.timeout:
-            return False
-        finally:
-            self.sock.settimeout(TIMEOUT)
-
     def _drain_pre_tls(self):
-        """Discard a plaintext capability listing sent before TLS, if any."""
-        if not self._data_within(PRE_TLS_WAIT):
+        """Discard a plaintext capability listing sent before TLS, if any.
+
+        The socket is still plain here, so select() readability means data.
+        """
+        if not (self.buf or select.select([self.sock], [], [], PRE_TLS_WAIT)[0]):
             return
         self.response()
         if self.buf:
@@ -229,17 +223,25 @@ def op_remove(conn, name, expected):
     """Delete NAME only if it still holds EXPECTED.
 
     Renaming first moves the script out of reach of webmail saves (which write
-    to NAME), so the contents checked are exactly the contents deleted.
+    to NAME), so the contents checked are exactly the contents deleted. A NAME
+    that is already parked (an interrupted earlier run) is finished in place.
     """
-    parked = name + ".aidevops-remove"
-    conn.command(b"RENAMESCRIPT " + quote(name) + b" " + quote(parked))
+    parked, original = park(conn, name)
     stored = first_string(conn.command(b"GETSCRIPT " + quote(parked)))
     if normalize(stored) != normalize(expected):
-        raise SieveError("script changed since it was checked; " + restore_parked(conn, parked, name))
+        raise SieveError("script changed since it was checked; " + restore_parked(conn, parked, original))
     if (parked, True) in listing(conn):
         conn.command(b'SETACTIVE ""')
     conn.command(b"DELETESCRIPT " + quote(parked))
     return 0
+
+
+def park(conn, name):
+    """Return (parked, original), renaming NAME aside unless already parked."""
+    if name.endswith(PARK_SUFFIX):
+        return name, name[: -len(PARK_SUFFIX)]
+    conn.command(b"RENAMESCRIPT " + quote(name) + b" " + quote(name + PARK_SUFFIX))
+    return name + PARK_SUFFIX, name
 
 
 def restore_parked(conn, parked, name):
