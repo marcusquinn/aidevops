@@ -457,38 +457,34 @@ test_positional_quote_case() {
 
 test_positional_params_quoting() {
 	local content
-	content=$(cat <<'FIXTURE'
+	read -r -d '' content <<'FIXTURE' || true
 awk '
   $1 ~ /value/ { print $2 }
   # an apostrophe is not shell comment syntax here
 ' input
 FIXTURE
-)
 	test_positional_quote_case multiline_awk 0 "$content"
-	content=$(cat <<'FIXTURE'
+	read -r -d '' content <<'FIXTURE' || true
 # don't let this comment swallow shell code
 echo $1
 echo ok # don't let inline comments swallow code either
 echo $2
 FIXTURE
-)
 	test_positional_quote_case comment_apostrophes 2 "$content"
-	content=$(cat <<'FIXTURE'
+	read -r -d '' content <<'FIXTURE' || true
 echo "it's $1"
 echo $2
 echo \'
 echo $3
 FIXTURE
-)
 	test_positional_quote_case literal_apostrophes 3 "$content"
-	content=$(cat <<'FIXTURE'
+	read -r -d '' content <<'FIXTURE' || true
 awk 'print "it'"'"'s", $1
 print $2'
 echo $3
 FIXTURE
-)
 	test_positional_quote_case close_literal_reopen 1 "$content"
-	content=$(cat <<'FIXTURE'
+	read -r -d '' content <<'FIXTURE' || true
 cat <<TEXT
 don't open a shell quote here
 expanded $1
@@ -503,9 +499,8 @@ cat <<-TABS
 	TABS
 echo $5
 FIXTURE
-)
 	test_positional_quote_case heredoc_apostrophes 4 "$content"
-	content=$(cat <<'FIXTURE'
+	read -r -d '' content <<'FIXTURE' || true
 cat <<"FIRST" <<\SECOND
 it's $1
 FIRST
@@ -513,24 +508,21 @@ it's $2
 SECOND
 echo $3
 FIXTURE
-)
 	test_positional_quote_case queued_quoted_heredocs 1 "$content"
-	content=$(cat <<'FIXTURE'
+	read -r -d '' content <<'FIXTURE' || true
 echo 'unterminated
 echo $1
 echo $2
 FIXTURE
-)
 	test_positional_quote_case unterminated_fails_safe 2 "$content"
-	content=$(cat <<'FIXTURE'
+	read -r -d '' content <<'FIXTURE' || true
 awk '
 { print $1 }
 '
 echo $2
 FIXTURE
-)
 	test_positional_quote_case shell_after_multiline 1 "$content"
-	content=$(cat <<'FIXTURE'
+	read -r -d '' content <<'FIXTURE' || true
 version="$(printf value | awk '{print $2}')"
 escaped="${value//"'"/"''"}"
 echo $1
@@ -539,7 +531,6 @@ version="$(awk '
 ')"
 echo "it's $3"
 FIXTURE
-)
 	test_positional_quote_case expansion_contexts 2 "$content"
 	return 0
 }
