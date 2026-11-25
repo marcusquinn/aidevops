@@ -150,12 +150,16 @@ fi
 
 for arg in "$@"; do
 	case "$arg" in
+	*/commits/v1.2.3)
+		printf '%s\n' "$POSTFLIGHT_TEST_SHA"
+		exit 0
+		;;
 	*/check-runs\?per_page=100)
 		printf '%s\n' '[{"check_runs":[{"id":1,"name":"Framework Validation","status":"completed","conclusion":"success","app":{"slug":"github-actions"},"check_suite":{"id":501}}]}]'
 		exit 0
 		;;
-	*/actions/runs\?head_sha=release-sha\&per_page=100)
-		printf '%s\n' '[{"workflow_runs":[{"id":10,"name":"Release","head_sha":"release-sha","event":"push","status":"completed","conclusion":"success","check_suite_id":501},{"id":11,"name":"Publish v1.2.3 [release-sha.release-sha]","head_sha":"release-sha","head_branch":"v1.2.3","event":"push","path":".github/workflows/publish-packages.yml","status":"completed","conclusion":"success","check_suite_id":502}]}]'
+	*/actions/runs\?head_sha=*\&per_page=100)
+		printf '%s\n' '[{"workflow_runs":[{"id":10,"name":"Release","head_sha":"release-sha","event":"push","status":"completed","conclusion":"success","check_suite_id":501},{"id":11,"name":"Publish v1.2.3 [release-sha.release-sha]","head_sha":"release-sha","head_branch":"v1.2.3","event":"push","path":".github/workflows/publish-packages.yml","status":"completed","conclusion":"success","check_suite_id":502}]}]' | sed "s/release-sha/$POSTFLIGHT_TEST_SHA/g"
 		exit 0
 		;;
 	*/actions/workflows/publish-packages.yml/runs\?event=workflow_dispatch\&per_page=100)
@@ -174,8 +178,8 @@ if [[ -e "${DEPLOYED_ROOT}/.github" ]]; then
 	exit 1
 fi
 
-DEPLOYED_OUTPUT=$(PATH="${MOCK_BIN}:$PATH" \
-	"${DEPLOYED_SCRIPTS}/postflight-check.sh" --ci-only --sha release-sha --tag v1.2.3 2>&1)
+DEPLOYED_OUTPUT=$(PATH="${MOCK_BIN}:$PATH" POSTFLIGHT_TEST_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)" \
+	"${DEPLOYED_SCRIPTS}/postflight-check.sh" --ci-only --sha HEAD --tag v1.2.3 2>&1)
 grep -Fq '2 required release-owned check(s) passed' <<<"$DEPLOYED_OUTPUT"
 
 printf 'PASS: deployed postflight loads colocated check-run filters without repository .github\n'

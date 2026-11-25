@@ -27,7 +27,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-PLUGIN_SRC="${REPO_ROOT}/.agents/plugins/opencode-aidevops/provider-auth-request.mjs"
+PLUGIN_SRC="${REPO_ROOT}/.agents/plugins/opencode-aidevops/provider-auth-stream.mjs"
 DRIVER_FIXTURE="${SCRIPT_DIR}/fixtures/t2121/driver.mjs"
 
 readonly TEST_RED='\033[0;31m'
@@ -65,11 +65,11 @@ build_standalone_driver() {
 	mv "$TEST_TMP_DRIVER" "$tmp_mjs"
 	TEST_TMP_DRIVER="$tmp_mjs"
 
+	printf 'import { TOOL_NAME_REVERSE } from "file://%s/.agents/plugins/opencode-aidevops/provider-auth-tool-names.mjs";\n' "$REPO_ROOT" >"$TEST_TMP_DRIVER"
 	awk '
-		/^export const TOOL_PREFIX/ { print; next }
 		/^function stripMcpPrefix/,/^}$/ { print; next }
 		/^function makeStreamPullHandler/,/^}$/ { print; next }
-	' "$PLUGIN_SRC" | sed 's/^export const /const /' >"$TEST_TMP_DRIVER"
+	' "$PLUGIN_SRC" >>"$TEST_TMP_DRIVER"
 
 	cat "$DRIVER_FIXTURE" >>"$TEST_TMP_DRIVER"
 	return 0

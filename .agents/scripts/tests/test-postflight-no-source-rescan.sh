@@ -48,7 +48,8 @@ main() {
 	fi
 	assert_absent 'bun install -g snyk|bunx --no-install secretlint|name: Security Scan with Snyk|name: Check for Secrets' "$WORKFLOW" \
 		'automated postflight must not reinstall scanners or rescan source'
-	grep -Fq "release_sha=\"\${POSTFLIGHT_COMMIT_SHA:-" "$POSTFLIGHT" &&
+	grep -Fq "resolve_release_commit \"\$repo\" || return 1" "$POSTFLIGHT" &&
+	grep -Fq "release_sha=\"\$POSTFLIGHT_COMMIT_SHA\"" "$POSTFLIGHT" &&
 	grep -Fq "load_release_owned_checks \"\$repo\" \"\$release_sha\"" "$POSTFLIGHT" ||
 		fail 'local postflight must query exact-SHA workflow evidence'
 	grep -Fq 'steps.release_commit.outputs.sha' "$WORKFLOW" ||
