@@ -865,6 +865,60 @@ _footprint_coordinator_log() {
 }
 
 #######################################
+# Load the open-PR list (number, branch, body, changed files) for a repo into
+# _FOOTPRINT_OPEN_PRS_RESULT. GH#38055: during a cache rebuild the list is
+# memoised so one read serves every consumer; a failed read is reused as "[]"
+# for that rebuild only. Called in the current shell (never via command
+# substitution) so memo writes persist.
+# Args: $1 = repo_slug
+#######################################
+_FOOTPRINT_OPEN_PRS_RESULT=""
+# jq definition shared by every "PR linked to issue" test: branch name with a
+# gh<N> boundary, or a closing keyword referencing #<N> in the body.
+# shellcheck disable=SC2016 # jq source, not shell expansion.
+_FOOTPRINT_PR_LINK_JQ='def pr_links_issue($n):
+	((.headRefName // "") | test("gh" + $n + "([^0-9]|$)")) or
+	((.body // "") | test("(close[sd]?|fix(e[sd])?|resolve[sd]?)[ \t]*#" + $n + "([^0-9]|$)"; "i"));
+'
+_footprint_load_open_prs() {
+	local repo_slug="$1"
+	local prs=""
+	if [[ -n "$_FOOTPRINT_OPEN_PRS_REPO" && "$_FOOTPRINT_OPEN_PRS_REPO" == "$repo_slug" ]]; then
+		prs="$_FOOTPRINT_OPEN_PRS_JSON"
+	else
+		prs=$(gh pr list --repo "$repo_slug" --state open \
+			--json number,headRefName,body,files --limit 100 2>/dev/null) || prs=""
+		[[ -n "$prs" ]] || prs="[]"
+		if [[ "${_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE:-0}" == "1" ]]; then
+			_FOOTPRINT_OPEN_PRS_REPO="$repo_slug"
+			_FOOTPRINT_OPEN_PRS_JSON="$prs"
+		fi
+	fi
+	[[ -n "$prs" ]] || prs="[]"
+	_FOOTPRINT_OPEN_PRS_RESULT="$prs"
+	return 0
+}
+
+#######################################
+# For an in-review issue, print the files changed by its linked open PRs:
+# first line "<pr numbers comma-joined>", then one path per line. Prints
+# nothing (caller keeps brief paths) when no linked PR has a usable file
+# list, or any linked PR's list may be truncated (100 files).
+# Args: $1 = issue_number; reads _FOOTPRINT_OPEN_PRS_RESULT
+#######################################
+_footprint_pr_scoped_paths() {
+	local issue_number="$1"
+	printf '%s' "$_FOOTPRINT_OPEN_PRS_RESULT" | jq -r --arg n "$issue_number" "${_FOOTPRINT_PR_LINK_JQ}"'
+		[.[] | select(pr_links_issue($n))] as $linked
+		| if ($linked | length) == 0 or any($linked[]; ((.files // []) | length) == 0 or ((.files // []) | length) >= 100)
+		  then empty
+		  else ([$linked[] | .number | tostring] | join(",")),
+			([$linked[] | (.files // [])[] | .path // empty] | unique[])
+		  end' 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # GH#33293/GH#36817: determine whether any claimed
 # issue has evidence of active implementation. Without evidence, such an
 # issue is a coordination container — like `parent-task` — and must not
@@ -941,23 +995,10 @@ _footprint_claimed_coordinator_has_evidence() {
 	# as "no PR evidence" (the existing failure semantics) for that rebuild
 	# only, so a failing API is not retried once per claimed issue.
 	local prs="" pr_hit="0"
-	if [[ -n "$_FOOTPRINT_OPEN_PRS_REPO" && "$_FOOTPRINT_OPEN_PRS_REPO" == "$repo_slug" ]]; then
-		prs="$_FOOTPRINT_OPEN_PRS_JSON"
-	else
-		prs=$(gh pr list --repo "$repo_slug" --state open \
-			--json number,headRefName,body --limit 100 2>/dev/null) || prs=""
-		[[ -n "$prs" ]] || prs="[]"
-		if [[ "${_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE:-0}" == "1" ]]; then
-			_FOOTPRINT_OPEN_PRS_REPO="$repo_slug"
-			_FOOTPRINT_OPEN_PRS_JSON="$prs"
-		fi
-	fi
-	[[ -n "$prs" ]] || prs="[]"
-	pr_hit=$(printf '%s' "$prs" | jq -r --arg n "$issue_number" '
-		[.[] | select(
-			((.headRefName // "") | test("gh" + $n + "([^0-9]|$)")) or
-			((.body // "") | test("(close[sd]?|fix(e[sd])?|resolve[sd]?)[ \t]*#" + $n + "([^0-9]|$)"; "i"))
-		)] | length' 2>/dev/null) || pr_hit="0"
+	_footprint_load_open_prs "$repo_slug"
+	prs="$_FOOTPRINT_OPEN_PRS_RESULT"
+	pr_hit=$(printf '%s' "$prs" | jq -r --arg n "$issue_number" "${_FOOTPRINT_PR_LINK_JQ}"'
+		[.[] | select(pr_links_issue($n))] | length' 2>/dev/null) || pr_hit="0"
 	[[ "$pr_hit" =~ ^[1-9][0-9]*$ ]] && return 0
 
 	return 1
@@ -1010,20 +1051,24 @@ _footprint_refresh_inflight_cache() {
 	# nothing before and are filtered here; tab is IFS whitespace, so every
 	# emitted field must be non-empty except the trailing body.
 	local issue_rows=""
-	issue_rows=$(printf '%s' "$all_inflight" | jq -r '
+	local status_prefix="status:"
+	local review_label="${status_prefix}in-review"
+	issue_rows=$(printf '%s' "$all_inflight" | jq -r --arg review_label "$review_label" '
 		.[]? | select(.number != null)
 		| [(.number | tostring),
 			(any((.labels // [])[]?; .name == "parent-task") | tostring),
 			(any((.labels // [])[]?; .name == "status:claimed") | tostring),
+			(any((.labels // [])[]?; .name == $review_label) | tostring),
 			((.body // "") | tostring | @base64)]
 		| @tsv' 2>/dev/null) || issue_rows=""
 
 	local cache_data=""
-	local num="" is_parent_task="" is_claimed="" body_b64="" body="" paths="" p=""
+	local num="" is_parent_task="" is_claimed="" is_in_review="" body_b64="" body="" paths="" p=""
+	local scoped="" scoped_prs=""
 	_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=1
 	_FOOTPRINT_OPEN_PRS_REPO=""
 	_FOOTPRINT_OPEN_PRS_JSON=""
-	while IFS=$'\t' read -r num is_parent_task is_claimed body_b64; do
+	while IFS=$'\t' read -r num is_parent_task is_claimed is_in_review body_b64; do
 		[[ -n "$num" ]] || continue
 		[[ "$is_parent_task" == "true" ]] && continue
 
@@ -1040,6 +1085,23 @@ _footprint_refresh_inflight_cache() {
 		body=$(printf '%s' "$body_b64" | base64 -d 2>/dev/null) || body=""
 		[[ -n "$body" ]] || continue
 		paths=$(_footprint_extract_paths "$body")
+
+		# An in-review issue with a linked open PR reserves the files that PR
+		# changes; any uncertainty keeps the declared brief paths. Other
+		# statuses are unchanged: a worker may edit beyond its PR's diff.
+		if [[ "$is_in_review" == true && "$is_claimed" != true ]]; then
+			_footprint_load_open_prs "$repo_slug"
+			scoped=$(_footprint_pr_scoped_paths "$num")
+			if [[ -n "$scoped" ]]; then
+				scoped_prs=$(printf '%s\n' "$scoped" | sed -n '1p')
+				paths=$(printf '%s\n' "$scoped" | sed '1d')
+				if [[ -n "$paths" ]]; then
+					_footprint_coordinator_log "event=footprint_pr_scoped issue=#${num} repo=${repo_slug} pr=#${scoped_prs//,/,#} files=$(printf '%s\n' "$paths" | grep -c .)"
+				else
+					paths=$(_footprint_extract_paths "$body")
+				fi
+			fi
+		fi
 		if [[ -n "$paths" ]]; then
 			while IFS= read -r p; do
 				[[ -n "$p" ]] || continue

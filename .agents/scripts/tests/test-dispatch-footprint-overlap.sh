@@ -538,6 +538,58 @@ unset PR_LIST_COUNT_FILE AIDEVOPS_DISPATCH_LEDGER_DIR
 PATH="$OLD_PATH"
 
 # =============================================================================
+# Test 11e — t19393: status:in-review blockers reserve their linked open PR's
+# changed files; uncertainty and other statuses keep the brief paths.
+# =============================================================================
+cat >"${COORD_BIN}/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+	if [[ "${MOCK_PR_FAIL:-0}" == "1" ]]; then
+		exit 1
+	fi
+	printf '%s\n' "${MOCK_SCOPE_PRS:-[]}"
+elif [[ "$*" == *"--label ${MOCK_SCOPE_LABEL:-status:in-review}"* ]]; then
+	printf '%s\n' '[{"number":420,"body":"### Files Scope\n- `scripts/a.sh`\n- `scripts/b.sh`","labels":[{"name":"'"${MOCK_SCOPE_LABEL:-status:in-review}"'"}]}]'
+else
+	printf '[]\n'
+fi
+MOCK_GH
+chmod +x "${COORD_BIN}/gh"
+PATH="${COORD_BIN}:$PATH"
+export AIDEVOPS_DISPATCH_LEDGER_DIR="${TEST_ROOT}/scope-ledger"
+mkdir -p "$AIDEVOPS_DISPATCH_LEDGER_DIR"
+LINKED_PR='[{"number":950,"headRefName":"feature/auto-gh420","body":"","files":[{"path":"scripts/a.sh"}]}]'
+scope_case() {
+	local name="$1" prs="$2" label="$3" fail="$4" want_a="$5" want_b="$6"
+	local data=""
+	export MOCK_SCOPE_PRS="$prs" MOCK_SCOPE_LABEL="$label" MOCK_PR_FAIL="$fail"
+	_FOOTPRINT_CACHE_REPO=""
+	_FOOTPRINT_CACHE_DATA=""
+	_FOOTPRINT_CACHE_EPOCH=0
+	_footprint_get_inflight "test/repo" "999" data
+	local got_a="no" got_b="no"
+	[[ "$data" == *"scripts/a.sh|420"* ]] && got_a="yes"
+	[[ "$data" == *"scripts/b.sh|420"* ]] && got_b="yes"
+	if [[ "$got_a" == "$want_a" && "$got_b" == "$want_b" ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "(a=${got_a} b=${got_b}, got: ${data})"
+	fi
+	return 0
+}
+scope_case "in-review: linked PR narrows reservation to changed files" "$LINKED_PR" "status:in-review" 0 yes no
+scope_case "in-review: no linked PR keeps brief paths" '[]' "status:in-review" 0 yes yes
+scope_case "in-review: failed PR read keeps brief paths" "$LINKED_PR" "status:in-review" 1 yes yes
+scope_case "in-progress: linked PR keeps brief paths" "$LINKED_PR" "status:in-progress" 0 yes yes
+if grep -q 'event=footprint_pr_scoped issue=#420 repo=test/repo pr=#950 files=1' "$LOGFILE"; then
+	print_result "in-review: narrowing is logged" 0
+else
+	print_result "in-review: narrowing is logged" 1
+fi
+unset MOCK_SCOPE_PRS MOCK_SCOPE_LABEL MOCK_PR_FAIL AIDEVOPS_DISPATCH_LEDGER_DIR
+PATH="$OLD_PATH"
+
+# =============================================================================
 # Test 12 — durable defer suppresses unchanged overlap across cycles
 # =============================================================================
 _FOOTPRINT_DEFER_STATE_DIR="${TEST_ROOT}/footprint-defers"
