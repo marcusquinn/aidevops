@@ -101,7 +101,15 @@ if [[ "${1:-}" == "api" && "${2:-}" == "--method" && "${3:-}" == "PUT" && "${4:-
 	fi
 	exit "${GH_UB_EXIT:-0}"
 fi
+if [[ "${1:-}" == "api" && "${2:-}" == repos/*/git/ref/heads/* ]]; then
+	printf '%s\n' "${GH_BRANCH_SHA:-}"
+	exit 0
+fi
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
+	if [[ "$*" == *"isCrossRepository"* ]]; then
+		printf '%s\n' "${GH_CROSS_REPO:-false}"
+		exit 0
+	fi
 	if [[ "$*" == *"--json labels"* ]]; then
 		printf '%s\n' "${GH_PR_LABELS:-}"
 		exit 0
@@ -134,6 +142,7 @@ define_helper_under_test() {
 		/^_pmp_update_branch_conflict_cooldown_active\(\) \{/,/^}$/ { print }
 		/^_pmp_record_update_branch_conflict_cooldown\(\) \{/,/^}$/ { print }
 		/^_attempt_pr_update_branch\(\) \{/,/^}$/ { print }
+		/^_pmp_resync_desynced_pr_head\(\) \{/,/^}$/ { print }
 		/^_resolve_pr_mergeable_status\(\) \{/,/^}$/ { print }
 	' "$PROCESS_SCRIPT")
 	if [[ -z "$helper_src" || "$helper_src" != *"_pmp_record_update_branch_conflict_cooldown"* || "$helper_src" != *"_attempt_pr_update_branch"* || "$helper_src" != *"_resolve_pr_mergeable_status"* ]] \
@@ -391,6 +400,94 @@ test_resolve_mergeable_retries_empty_and_logs_empty() {
 	fi
 
 	print_result "empty mergeable retry logs original empty state" 0
+	return 0
+}
+
+# Desync resync (t19392). Worker-route gate stub: allow only origin:worker.
+_feedback_route_labels_allow_worker_route() {
+	[[ ",${1:-}," == *",origin:worker,"* ]]
+	return $?
+}
+
+_run_desync_case() {
+	local labels="$1"
+	local branch_sha="$2"
+	local rc=0
+	: >"$LAST_GH_ARGS_FILE"
+	GH_VIEW_MERGEABLE=UNKNOWN GH_BRANCH_SHA="$branch_sha" \
+		_resolve_pr_mergeable_status "40371" "marcusquinn/aidevops" "UNKNOWN" \
+		"cf15197000000000000000000000000000000000" "$labels" "feature/auto-x" || rc=$?
+	return "$rc"
+}
+
+test_desync_resync_worker_once_per_branch_sha() {
+	install_gh_stub
+	local sha="1569a09000000000000000000000000000000000"
+	export AIDEVOPS_PULSE_DESYNC_STATE_DIR="${TEST_ROOT}/desync-state"
+	: >"$LOGFILE"
+	local rc=0
+	_run_desync_case "origin:worker" "$sha" || rc=$?
+	local calls
+	calls=$(grep -c "update-branch -f expected_head_sha=${sha}$" "$LAST_GH_ARGS_FILE" || true)
+	if [[ $rc -ne 1 || "$calls" != "1" ]] || ! grep -q "desynced from branch ref 1569a0900000; update-branch resync rc=0" "$LOGFILE"; then
+		print_result "desync: worker PR resynced with branch SHA, returns 1" 1 "rc=${rc} calls=${calls} log=$(cat "$LOGFILE")"
+		return 0
+	fi
+	print_result "desync: worker PR resynced with branch SHA, returns 1" 0
+
+	: >"$LOGFILE"
+	rc=0
+	_run_desync_case "origin:worker" "$sha" || rc=$?
+	calls=$(grep -c "update-branch" "$LAST_GH_ARGS_FILE" || true)
+	if [[ $rc -eq 1 && "$calls" == "0" ]] && grep -q "ATTENTION: PR #40371.*cf15197.*1569a09" "$LOGFILE"; then
+		print_result "desync: second pass for same branch SHA only logs ATTENTION" 0
+	else
+		print_result "desync: second pass for same branch SHA only logs ATTENTION" 1 "rc=${rc} calls=${calls} log=$(cat "$LOGFILE")"
+	fi
+	return 0
+}
+
+test_desync_equal_sha_no_update() {
+	install_gh_stub
+	export AIDEVOPS_PULSE_DESYNC_STATE_DIR="${TEST_ROOT}/desync-state-eq"
+	: >"$LOGFILE"
+	local rc=0
+	_run_desync_case "origin:worker" "cf15197000000000000000000000000000000000" || rc=$?
+	if [[ $rc -eq 1 ]] && ! grep -q "update-branch" "$LAST_GH_ARGS_FILE" && ! grep -q "ATTENTION" "$LOGFILE"; then
+		print_result "desync: equal branch SHA makes no update-branch call" 0
+	else
+		print_result "desync: equal branch SHA makes no update-branch call" 1 "rc=${rc} log=$(cat "$LOGFILE")"
+	fi
+	return 0
+}
+
+test_desync_interactive_attention_only() {
+	install_gh_stub
+	export AIDEVOPS_PULSE_DESYNC_STATE_DIR="${TEST_ROOT}/desync-state-int"
+	: >"$LOGFILE"
+	local rc=0
+	_run_desync_case "origin:interactive" "1569a09000000000000000000000000000000000" || rc=$?
+	if [[ $rc -eq 1 ]] && ! grep -q "update-branch" "$LAST_GH_ARGS_FILE" && grep -q "ATTENTION" "$LOGFILE"; then
+		print_result "desync: non-worker labels log ATTENTION only" 0
+	else
+		print_result "desync: non-worker labels log ATTENTION only" 1 "rc=${rc} log=$(cat "$LOGFILE")"
+	fi
+	return 0
+}
+
+test_desync_three_arg_call_unchanged() {
+	install_gh_stub
+	export AIDEVOPS_PULSE_DESYNC_STATE_DIR="${TEST_ROOT}/desync-state-3"
+	: >"$LOGFILE"
+	: >"$LAST_GH_ARGS_FILE"
+	local rc=0
+	GH_VIEW_MERGEABLE=UNKNOWN GH_BRANCH_SHA="1569a09000000000000000000000000000000000" \
+		_resolve_pr_mergeable_status "40371" "marcusquinn/aidevops" "UNKNOWN" || rc=$?
+	if [[ $rc -eq 1 ]] && ! grep -qE 'update-branch|git/ref' "$LAST_GH_ARGS_FILE" && ! grep -q "ATTENTION" "$LOGFILE"; then
+		print_result "desync: three-argument call keeps old behaviour" 0
+	else
+		print_result "desync: three-argument call keeps old behaviour" 1 "rc=${rc} log=$(cat "$LOGFILE")"
+	fi
 	return 0
 }
 
@@ -723,6 +820,10 @@ main() {
 	test_resolve_mergeable_accepts_boolean_true
 	test_resolve_mergeable_retries_boolean_true
 	test_resolve_mergeable_retries_empty_and_logs_empty
+	test_desync_resync_worker_once_per_branch_sha
+	test_desync_equal_sha_no_update
+	test_desync_interactive_attention_only
+	test_desync_three_arg_call_unchanged
 	test_refresh_unknown_mergeable_surfaces_conflicting
 	test_nmr_guard_exists_before_close
 	test_stale_route_runs_before_protected_precheck

@@ -101,6 +101,8 @@ pw-merged|pulse-wrapper.sh|1380|Deterministic merge: merged PR #|Deterministic m
 pw-merge-failed|pulse-wrapper.sh|1398|Deterministic merge: FAILED PR #|Deterministic merge attempt failed
 pw-merge-skip-mergeable|pulse-wrapper.sh|715|Merge pass: skipping PR #.*mergeable=|Merge pass skipped — PR not in MERGEABLE state
 pw-merge-skip-unknown-retry|pulse-wrapper.sh|710|Merge pass: skipping PR #.*was UNKNOWN, still not MERGEABLE|Merge pass skipped — mergeable UNKNOWN, still not MERGEABLE after retry
+pw-merge-head-desync-resync|pulse-merge-process.sh|0|Merge pass: PR #.*desynced from branch ref.*update-branch resync rc=|PR head desynced from branch ref — update-branch resync attempted (GitHub missed the latest push)
+pw-merge-head-desync-attention|pulse-merge-process.sh|0|\[pulse-merge\] ATTENTION: PR #.*desynced from branch ref|PR head desynced from branch ref (GitHub missed the latest push); push to the branch or close/reopen the PR
 pw-merge-resolved-retry|pulse-wrapper.sh|708|Merge pass: PR #.*mergeable resolved to MERGEABLE after retry|Merge pass resolved UNKNOWN to MERGEABLE after retry
 pw-merge-skip-checks|pulse-wrapper.sh|820|Merge pass: skipping PR #.*required status check|Merge pass skipped — required status checks failing
 pw-merge-skip-checks-fetch|pulse-wrapper.sh|814|Merge pass: skipping PR #.*required checks fetch failed|Merge pass skipped — could not fetch required checks
