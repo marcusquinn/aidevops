@@ -10,6 +10,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.279] - 2026-11-25
+
+### Added
+
+- keep prompt cache warm during long tool calls; require repeated failure before Opus escalation
+
+### Changed
+
+- Documentation: clarify macOS keychain recovery safety (GH#40250) (#40252)
+- Tests: repair residual runtime suite drift (GH#40235)
+- Maintenance: sync GitHub issue refs to TODO.md (#40228)
+- Maintenance: sync GitHub issue refs to TODO.md (#40222)
+
+### Fixed
+
+- report configured interval and live worker cap (GH#40198) (#40258)
+- recover hermetic no-node fixture repair
+- avoid early-exit grep pipelines (GH#40246) (#40249)
+- fix purelymail-helper auth-results missing the newest message
+- avoid early-exit pipe in dashboard maintenance assertion (#40240)
+- repair setup, install and release suite drift (#40238)
+- classify feature-auto worktree sessions as headless workers (#40245)
+- require closed \<secret> wrapper for hidden-tag HIGH match (GH#40247) (#40248)
+- trust scoped services-sync worker briefs at the worker-briefed gate (GH#40239) (#40242)
+- repair residual GitHub mock and gate suite drift (GH#40233) (#40237)
+- stale-assignment sweep discovers dead-worker claims with one search every normalize run
+- point migration setup-call assertions at setup-execution module (GH#40041)
+- recover orphaned self-device claims when exit-path CLAIM_RELEASED fails (GH#40204)
+- capacity halving counts only host/provider pressure failures
+- isolate portability PATH and interactive signing context (GH#40041) (#40053)
+- throughput report counts running and unlogged workers, adds ps census
+- block shared-metadata git worktree repair/move/prune/lock from linked worktrees (#40214)
+
 ## [3.39.278] - 2026-11-24
 
 ### Added
