@@ -46,9 +46,14 @@ body_before="$body"
 cmd_refresh_body 123 "$root/brief"
 [[ "$body" == "$body_before" ]]
 state=CLOSED
-if cmd_refresh_body 123 "$root/brief"; then exit 1; fi
+if cmd_refresh_body 123 "$root/brief" 2>"$root/stderr"; then exit 1; else [[ $? -eq 1 ]]; fi
+rg -q -F 'Refresh refused: issue #123 is CLOSED' "$root/stderr"
 state=OPEN label=status:queued
-if cmd_refresh_body 123 "$root/brief"; then exit 1; fi
+if cmd_refresh_body 123 "$root/brief" 2>"$root/stderr"; then exit 1; else [[ $? -eq 1 ]]; fi
+rg -q -F 'Refresh refused: issue #123 has status:queued (a worker may be reading the body); retry after the label clears' "$root/stderr"
+label=status:in-review DRY_RUN=true
+if cmd_refresh_body 123 "$root/brief" 2>"$root/stderr"; then exit 1; else [[ $? -eq 1 ]]; fi
+rg -q -F 'Refresh refused: issue #123 has status:in-review (a worker may be reading the body); retry after the label clears' "$root/stderr"
 label=""
 printf '%s\n' 'Different content' >"$root/brief"
 DRY_RUN=true
