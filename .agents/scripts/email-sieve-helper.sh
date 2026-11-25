@@ -1082,7 +1082,7 @@ main() {
 		_cmd_generate "$@"
 		;;
 	deploy | list-scripts | show-script | delete-script | copy-to | copy-to-remove)
-		_cmd_remote "$command" "$@"
+		_cmd_remote "$command" "$@" || return $?
 		;;
 	validate)
 		local sieve_file="$DEFAULT_OUTPUT_FILE"
