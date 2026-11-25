@@ -530,6 +530,17 @@ echo $2
 FIXTURE
 )
 	test_positional_quote_case shell_after_multiline 1 "$content"
+	content=$(cat <<'FIXTURE'
+version="$(printf value | awk '{print $2}')"
+escaped="${value//"'"/"''"}"
+echo $1
+version="$(awk '
+{ print $2 }
+')"
+echo "it's $3"
+FIXTURE
+)
+	test_positional_quote_case expansion_contexts 2 "$content"
 	return 0
 }
 

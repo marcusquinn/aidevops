@@ -291,6 +291,20 @@ _scan_positional_parameters() {
 				i++
 				continue
 			}
+			# Expansions have their own quoting context, even inside double quotes.
+			pair = substr($0, i, 2)
+			if (pair == "$(" || pair == "${") {
+				depth++; saved_dq[depth] = in_dq; in_dq = 0
+				end_char[depth] = (pair == "$(" ? ")" : "}")
+				line = line pair; i++; continue
+			}
+			if (depth && !in_dq && c == end_char[depth]) {
+				in_dq = saved_dq[depth]; depth--
+				line = line c; continue
+			}
+			if (depth && !in_dq && c == "(" && end_char[depth] == ")") {
+				depth++; saved_dq[depth] = 0; end_char[depth] = ")"
+			}
 			if (c == "\042") in_dq = !in_dq
 			if (!in_dq && c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[[:space:];]/)) break
 			if (!in_dq && c == "\047") {
