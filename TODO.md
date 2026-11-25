@@ -2506,7 +2506,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19349 fix(pulse): throughput report counts still-running workers so windows ending now are not under-reported #bug #priority:high ref:GH#40220 -> [todo/tasks/t19349-brief.md] logged:2026-11-24 pr:#40221 completed:2026-11-24
 
-- [ ] t19350 perf(pulse): split-lock cycle entry wakes a detached refill instead of leaving free slots until after preflight #feat #priority:high ref:GH#40224 -> [todo/tasks/t19350-brief.md] logged:2026-11-24
+- [x] t19350 perf(pulse): split-lock cycle entry wakes a detached refill instead of leaving free slots until after preflight #feat #priority:high ref:GH#40224 -> [todo/tasks/t19350-brief.md] logged:2026-11-24 pr:#40225 completed:2026-11-25
 
 ## In Progress
 
@@ -6138,3 +6138,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t19150 feat(ci): scheduled main shell-suite health run files deduped red-main issues #auto-dispatch #enhancement #framework ref:GH#39222 pr:#39307 completed:2026-11-19
 
 - [x] t19202 fix(headless): worker DB init fails exit 86 when shared OpenCode DB is briefly locked #bug ref:GH#39417 pr:#39462 completed:2026-11-20
+
+- [ ] t19347 fix(pulse): report the configured interval and live worker cap in pulse start #bug ref:GH#40198
+
+- [ ] t19346 fix(pulse): break early in stats quarantine scan and prune the backlog #bug ref:GH#40197
