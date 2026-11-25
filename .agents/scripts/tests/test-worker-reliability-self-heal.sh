@@ -128,6 +128,17 @@ define_drift_helper() {
 	fi
 	# shellcheck disable=SC1090
 	eval "$helper_src"
+	# check_launchd_plist_drift is macOS-only (returns early unless
+	# `uname -s` is Darwin). Report Darwin so the drift logic is exercised
+	# on Linux CI runners too.
+	uname() {
+		if [[ "${1:-}" == "-s" ]]; then
+			printf 'Darwin\n'
+			return 0
+		fi
+		command uname "$@" || return $?
+		return 0
+	}
 	return 0
 }
 
@@ -166,8 +177,10 @@ test_drift_bootstrap_triggers_setup() {
 	check_launchd_plist_drift
 
 	if ! grep -q "FAKE_SETUP_INVOKED" "$TEST_SETUP_LOG"; then
+		local log_tail=""
+		log_tail=$(tail -n 5 "$LOG_FILE") || log_tail=""
 		print_result "drift: bootstrap (no stored hash) runs setup.sh" 1 \
-			"Expected setup.sh invocation; LOG_FILE: $(cat "$LOG_FILE" | tail -5)"
+			"Expected setup.sh invocation; LOG_FILE: ${log_tail}"
 		return 0
 	fi
 	print_result "drift: bootstrap (no stored hash) runs setup.sh" 0

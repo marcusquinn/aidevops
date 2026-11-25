@@ -218,11 +218,23 @@ test_live_concurrent_owner() {
 	local fake_script="${TEST_ROOT}/pulse-wrapper.sh"
 	cat >"$fake_script" <<'FAKEOF'
 #!/usr/bin/env bash
-exec sleep 60
+sleep 60 &
+child=$!
+trap 'kill "$child" 2>/dev/null; exit 0' TERM
+: >"$1"
+wait "$child"
 FAKEOF
 	chmod +x "$fake_script"
-	"$fake_script" &
+	local ready_file="${TEST_ROOT}/pulse-wrapper.ready"
+	rm -f "${ready_file}"
+	"$fake_script" "${ready_file}" &
 	local fake_pid=$!
+	# Wait (bounded) for the fixture to install its trap and signal readiness.
+	local waited=0
+	while [[ ! -e "${ready_file}" && "${waited}" -lt 50 ]]; do
+		sleep 0.1
+		waited=$((waited + 1))
+	done
 
 	# Manually create a lock dir owned by the fake pulse-wrapper PID
 	mkdir -p "$LOCKDIR"
