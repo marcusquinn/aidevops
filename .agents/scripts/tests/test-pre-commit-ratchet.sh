@@ -530,8 +530,10 @@ version="$(awk '
 { print $2 }
 ')"
 echo "it's $3"
+echo "${value:-it's $4}"
+echo "that's $5"
 FIXTURE
-	test_positional_quote_case expansion_contexts 2 "$content"
+	test_positional_quote_case expansion_contexts 4 "$content"
 	return 0
 }
 
