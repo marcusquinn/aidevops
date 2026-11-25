@@ -1736,6 +1736,41 @@ _dlw_preclaim_zero_attempt_backoff() {
 #   $9  - model_override (may be empty)
 #   $10 - issue_meta_json
 #######################################
+# GH#40389: normal workers read the body themselves; clean-room workers embed
+# it in _dlw_prepare_prompt_for_launch. Filter both the prepared seed and a fresh
+# body snapshot here, before headless-runtime-launch writes seed-prompt.md.
+_dlw_filter_merged_feedback() {
+	local issue_number="$1" repo_slug="$2" prompt="$3"
+	local body_json="" numbers="" fields="" number="" states="" merged="" filtered=""
+	body_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.body // "" | tojson' 2>/dev/null) || {
+		printf '%s' "$prompt"
+		return 0
+	}
+	numbers=$(jq -nr --arg prompt "$prompt" --argjson body "$body_json" '
+		[$prompt, $body] | join("\n") | [scan("<!-- feedback-route:start:[^:<>\\r\\n]+:PR([0-9]+):")[0]] | unique | .[]') || return 1
+	[[ -n "$numbers" ]] || { printf '%s' "$prompt"; return 0; }
+	while IFS= read -r number; do
+		fields+="p${number}:pullRequest(number:${number}){number merged} "
+	done <<<"$numbers"
+	# One state read for all distinct referenced PRs. On any API uncertainty keep
+	# all feedback, including CLOSED-unmerged and missing PRs.
+	states=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%/*}\",name:\"${repo_slug#*/}\") { ${fields} } }" 2>/dev/null) || {
+		printf '%s' "$prompt"
+		return 0
+	}
+	merged=$(printf '%s' "$states" | jq -c '[.data.repository[]? | select(.merged == true) | .number | tostring]') || return 1
+	[[ "$merged" != '[]' ]] || { printf '%s' "$prompt"; return 0; }
+	filtered=$(jq -ncr --arg prompt "$prompt" --argjson body "$body_json" --argjson merged "$merged" '
+		def clean: gsub("(?<block><!-- feedback-route:start:(?<route>[^<>\\r\\n]+) -->[\\s\\S]*?<!-- feedback-route:complete:\\k<route> -->)";
+			if (.route | capture(":PR(?<pr>[0-9]+):").pr) as $pr | $merged | index($pr) != null then "" else .block end);
+		{prompt: ($prompt | clean), body: ($body | clean), merged: $merged}
+	') || return 1
+	printf '%s' "$filtered" | jq -jr '.prompt, "\n\n## Dispatch issue snapshot (merged feedback removed)\n", .body,
+		"\n\nUse this issue-body snapshot for initial implementation instead of fetching the unfiltered body. Feedback routes for confirmed merged PRs ", (.merged | join(", ")),
+		" are obsolete, not the remaining task. Work the remaining authorized scope. Required live blocker re-reads still apply; ignore routes for these merged PRs on those reads.\n"'
+	return 0
+}
+
 _dispatch_launch_worker() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1805,6 +1840,7 @@ _dispatch_launch_worker() {
 
 	local launch_prompt=""
 	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")
+	launch_prompt=$(_dlw_filter_merged_feedback "$issue_number" "$repo_slug" "$launch_prompt") || return 1
 
 	# Freeze the worker-readable instruction surface before queued ownership is
 	# published. A lock failure must not create assignment/status notifications.

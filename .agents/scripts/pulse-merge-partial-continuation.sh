@@ -634,7 +634,31 @@ _pm_restore_partial_continuation() {
 	if [[ "$scope" == "parent" ]] && _pmpc_issue_has_label "$issue_json" "auto-dispatch"; then
 		parent_has_dispatch=1
 	fi
-	_pmpc_project_available "$repo_slug" "$target" "$scope" "$assignees" "$pr_number" "$parent_has_dispatch" || true
+	if _pmpc_project_available "$repo_slug" "$target" "$scope" "$assignees" "$pr_number" "$parent_has_dispatch"; then
+		_pmpc_remove_merged_feedback "$repo_slug" "$target" "$pr_number" || true
+	fi
+	return 0
+}
+
+# Read again after the transition so the earlier ownership snapshot cannot
+# overwrite a newer brief. Only complete, exactly paired routes are removable.
+_pmpc_remove_merged_feedback() {
+	local repo_slug="$1" issue_num="$2" pr_number="$3"
+	local issue_json="" updated="" cleanup_body="" issue_api=""
+	issue_api=$(_pm_issue_api "$repo_slug" "$issue_num")
+	issue_json=$(_pmpc_gh_read api "$issue_api" 2>/dev/null) || return 1
+	updated=$(printf '%s' "$issue_json" | jq -c --arg pr "$pr_number" '
+		.body // "" | gsub("(?<block><!-- feedback-route:start:(?<route>[^<>\\r\\n]+) -->[\\s\\S]*?<!-- feedback-route:complete:\\k<route> -->)";
+			if (.route | contains(":PR" + $pr + ":")) then "" else .block end)
+	') || return 1
+	[[ "$updated" != "$(printf '%s' "$issue_json" | jq -c '.body // ""')" ]] || return 0
+	# Sentinel preserves every trailing newline outside the removed markers.
+	cleanup_body=$(printf '%s' "$updated" | jq -jr '., "."') || return 1
+	cleanup_body="${cleanup_body%.}"
+	if ! gh_issue_edit_safe "$issue_num" --repo "$repo_slug" --body "$cleanup_body" >/dev/null 2>&1; then
+		printf '[pulse-wrapper] Partial continuation: feedback cleanup failed for #%s PR #%s; dispatch guard remains active\n' "$issue_num" "$pr_number" >>"$LOGFILE"
+		return 1
+	fi
 	return 0
 }
 
