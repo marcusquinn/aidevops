@@ -38,11 +38,17 @@ setup_test_env() {
 	python3 - "$WORKFLOW_FILE" "${TEST_ROOT}/job.sh" <<'PY'
 import pathlib
 import sys
-import yaml
 
-workflow = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())
+try:
+    import yaml
+except ModuleNotFoundError:
+    import json
+    import subprocess
+    workflow = json.loads(subprocess.check_output(["yq", "-o=json", ".", sys.argv[1]]))
+else:
+    workflow = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())
 steps = workflow["jobs"]["check-pr"]["steps"]
-run = next(step["run"] for step in steps if "run" in step)
+run = next(step["run"] for step in steps if step.get("id") == "check")
 pathlib.Path(sys.argv[2]).write_text(run)
 PY
 

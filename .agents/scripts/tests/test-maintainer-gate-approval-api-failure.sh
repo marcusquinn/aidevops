@@ -41,9 +41,16 @@ setup_test_env() {
 	python3 - "$WORKFLOW_FILE" "$TEST_ROOT" <<'PY'
 import pathlib
 import sys
-import yaml
 
-workflow = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())
+try:
+    import yaml
+except ModuleNotFoundError:
+    # Nix runners expose YAML parsing through yq rather than Python's site path.
+    import json
+    import subprocess
+    workflow = json.loads(subprocess.check_output(["yq", "-o=json", ".", sys.argv[1]]))
+else:
+    workflow = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())
 root = pathlib.Path(sys.argv[2])
 for job_name, output_name in (
     ("check-pr", "check-pr-job.sh"),
@@ -51,7 +58,8 @@ for job_name, output_name in (
     ("protect-pr-labels", "pr-job.sh"),
 ):
     steps = workflow["jobs"][job_name]["steps"]
-    run = next(step["run"] for step in steps if "run" in step)
+    run = next(step["run"] for step in steps
+               if "run" in step and (job_name != "check-pr" or step.get("id") == "check"))
     (root / output_name).write_text(run)
 PY
 	_write_gh_stub

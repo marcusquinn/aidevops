@@ -242,6 +242,9 @@ append_fake_git_reconciliation_stub() {
 	cat >>"${TEST_ROOT}/bin/git" <<'GIT_STUB'
 if [[ "${1:-}" == "-C" && "${3:-}" == "rev-parse" && "${4:-}" == "--absolute-git-dir" && -d "${2}/.git-admin" ]]; then
 	printf '%s\n' "${2}/.git-admin"
+	if [[ "${5:-}" == "--path-format=absolute" && "${6:-}" == "--git-common-dir" ]]; then
+		printf '%s\n' "${GIT_CANONICAL_REPO_PATH}/.git"
+	fi
 	exit 0
 fi
 if [[ "${1:-}" == "-C" && "${3:-}" == "rev-parse" && "${4:-}" == "--path-format=absolute" && -d "${2}/.git-admin" ]]; then

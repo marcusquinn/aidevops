@@ -290,7 +290,7 @@ rm -f "$todo_k"
 # ─── (l–q) GH#34149: stale pending publication repair ───────────────────────
 # Repair writes todo/tasks/ beside TODO.md, so each case uses its own root.
 
-READY_BRIEF=$'## Task\nDo it.\n## Why\nBecause.\n## How\nEdit x.sh.\n## Acceptance\n- [ ] done\n'
+READY_BRIEF=$'## Task\nDo it.\n## Why\nBecause.\n## How\nEdit x.sh.\n### Files Scope\n- `x.sh`\n## Acceptance\n- [ ] done\n'
 REPAIR_AUTHOR_ASSOCIATION="MEMBER"
 REPAIR_BRIEF_BODY="$READY_BRIEF"
 gh() {
