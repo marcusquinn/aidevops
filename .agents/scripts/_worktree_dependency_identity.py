@@ -161,6 +161,13 @@ def matching_lock(source, dest):
 
 def identity(repo, worktree, relative):
     repo, worktree = repository_identity(repo, worktree)
+    if (repo / "pnpm-workspace.yaml").is_file() and (repo / "pnpm-lock.yaml").is_file():
+        members, (inventory, expected) = workspace_identity(repo, worktree)
+        if relative not in members:
+            raise Rejected("not-workspace-member")
+        source, dest = package_directories(repo, worktree, relative)
+        matching_package(source, dest)
+        return contained_path(source / "node_modules"), ("workspace", inventory, repo, source / "node_modules", expected)
     source, dest = package_directories(repo, worktree, relative)
     parsed = matching_package(source, dest)
     name, lock = matching_lock(source, dest)
@@ -173,6 +180,53 @@ def identity(repo, worktree, relative):
     else:
         inventory = ("npm", npm_inventory(source, modules, lock, parsed))
     return modules, inventory
+
+
+def workspace_identity(repo, worktree):
+    """Accept block-list workspace globs, failing closed on unsupported YAML."""
+    config = regular_bytes(repo / "pnpm-workspace.yaml")
+    if config != regular_bytes(worktree / "pnpm-workspace.yaml"):
+        raise Rejected("stale-workspace-identity")
+    name, lock = matching_lock(repo, worktree)
+    if name != "pnpm-lock.yaml" or regular_bytes(repo / "node_modules/.pnpm/lock.yaml") != lock:
+        raise Rejected("stale-installed-lock")
+    expected = pnpm_inventory(lock)
+    inventory = set(expected)
+    patterns = []
+    section = False
+    for line in config.decode("utf-8").splitlines():
+        if line == "packages:":
+            section = True
+            continue
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if section and not line.startswith(" "):
+            section = False
+        if section:
+            match = re.fullmatch(r"\s+-\s+(['\"]?)(!?[a-zA-Z0-9_./*?@-]+)\1\s*(?:#.*)?", line)
+            if not match:
+                raise Rejected("unsupported-workspace-pattern")
+            pattern = match[2]
+            if pattern.lstrip("!").startswith("/") or ".." in Path(pattern).parts:
+                raise Rejected("invalid-workspace-pattern")
+            patterns.append(pattern)
+    if not patterns:
+        raise Rejected("unsupported-workspace-pattern")
+    members = {Path(".")}
+    excluded = set()
+    for pattern in patterns:
+        for path in worktree.glob(pattern.lstrip("!")):
+            relative = path.relative_to(worktree)
+            if "node_modules" in relative.parts or ".git" in relative.parts:
+                continue
+            if (path / "package.json").is_file():
+                (excluded if pattern.startswith("!") else members).add(relative)
+    members -= excluded
+    for relative in members:
+        source, dest = package_directories(repo, worktree, relative)
+        manifest = matching_package(source, dest)
+        inventory.add(f"{manifest.get('name')}@{manifest.get('version')}")
+    return sorted(members), (inventory, expected)
 
 
 def npm_inventory(source, modules, lock, parsed):

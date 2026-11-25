@@ -271,6 +271,54 @@ _dlw_restore_worktree_deps "$2" "$3"
         self.assertTrue(copied.resolve().is_relative_to(self.wt))
         self.assertEqual(copied.read_text(), "export const fixture = 1;\n")
 
+    def make_workspace(self):
+        self.make_pnpm()
+        for parent in (self.repo, self.wt):
+            (parent / "pnpm-workspace.yaml").write_text("packages:\n  - 'packages/*'\n  - 'apps/*'\n")
+            for relative in ("packages/one", "packages/two", "apps/web"):
+                self.write(parent / relative / "package.json", {"name": relative.split("/")[-1], "version": "1.0.0"})
+        for relative in ("packages/one", "packages/two", "apps/web"):
+            modules = self.repo / relative / "node_modules"
+            modules.mkdir()
+            (modules / "example").symlink_to("../../../node_modules/example")
+            (modules / "one").symlink_to("../../../packages/one")
+        (self.modules / "one").symlink_to("../packages/one")
+
+    def test_workspace_restores_all_members_and_isolates_writes(self):
+        self.make_workspace()
+        self.run_restore()
+        for relative in ("packages/one", "packages/two", "apps/web"):
+            copied = self.wt / relative / "node_modules/example/index.js"
+            self.assertEqual(copied.read_text(), "export const fixture = 1;\n")
+            self.assertTrue(copied.resolve().is_relative_to(self.wt))
+            self.assertEqual((self.wt / relative / "node_modules/one").resolve(), self.wt / "packages/one")
+        copied.write_text("changed only in worktree")
+        self.assertEqual((self.modules / "example/index.js").read_text(), "export const fixture = 1;\n")
+        log = (self.root / "restore.log").read_text()
+        self.assertEqual(log.count("outcome=provisioned elapsed_seconds="), 4)
+
+    def test_workspace_lock_mismatch_and_escape(self):
+        self.make_workspace()
+        (self.wt / "pnpm-lock.yaml").write_text("different")
+        self.run_restore()
+        self.assertIn("stale-lock-identity", (self.root / "restore.log").read_text())
+        self.assertFalse((self.wt / "node_modules").exists())
+        (self.wt / "pnpm-lock.yaml").write_bytes((self.repo / "pnpm-lock.yaml").read_bytes())
+        (self.modules / "example/escape").symlink_to(self.root)
+        self.run_restore()
+        self.assertFalse((self.wt / "node_modules").exists())
+
+    def test_workspace_unsupported_clone_keeps_byte_budget(self):
+        from unittest.mock import patch
+        import errno
+        self.make_workspace()
+        modules, inventory = self.validate()
+        stage = self.wt / "stage"
+        stage.mkdir(mode=0o700)
+        with patch("_worktree_dependency_snapshot.fcntl.ioctl", side_effect=OSError(errno.ENOTSUP, "fixture")):
+            with self.assertRaisesRegex(provision.Rejected, "byte-budget-exceeded"):
+                provision.snapshot(modules, 10, 20000, stage, inventory)
+
     def test_extra_unrecorded_package(self):
         self.write(self.modules / "extra" / "package.json", {"name": "extra", "version": "1.0.0"})
         self.run_restore()

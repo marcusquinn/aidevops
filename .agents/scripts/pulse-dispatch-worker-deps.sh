@@ -122,6 +122,10 @@ _dlw_restore_worktree_deps() {
 		fi
 	fi
 	[[ "$_max_dirs" =~ ^[0-9]+$ ]] || _max_dirs=2
+	if _restore_worktree_pnpm_workspace "$worktree_path" "$repo_path" >>"$LOGFILE" 2>&1; then
+		_dlw_node_modules_restore_release_lock "$_lock_dir"
+		return 0
+	fi
 	while IFS= read -r _pkg_dir; do
 		if ((_attempted >= _max_dirs)); then
 			break

@@ -16,7 +16,8 @@ import re
 from subprocess import SubprocessError  # nosec B404 -- exception type only, no process execution.
 import sys
 
-from _worktree_dependency_identity import Rejected, contained_path, identity, open_directory, trusted
+from _worktree_dependency_identity import (Rejected, contained_path, identity, open_directory,
+                                          repository_identity, trusted, workspace_identity)
 from _worktree_dependency_snapshot import snapshot
 
 
@@ -57,6 +58,7 @@ def parse_args():
     parser.add_argument("--publish", help="Validate and atomically promote a private staged copy without replacement")
     parser.add_argument("--max-bytes", type=int, default=64 * 1024 * 1024)
     parser.add_argument("--max-entries", type=int, default=20000)
+    parser.add_argument("--workspace-list", action="store_true", help="Validate root identity and list pnpm members")
     return parser.parse_args()
 
 
@@ -82,6 +84,10 @@ def copy_destination(args):
 def run(args):
     if not 0 < args.max_bytes <= 64 * 1024 * 1024 or not 0 < args.max_entries <= 20000:
         raise Rejected("invalid-budget")
+    if args.workspace_list:
+        repo, worktree = repository_identity(args.repo, args.worktree)
+        members, _ = workspace_identity(repo, worktree)
+        return "\n".join(str(member) for member in members)
     modules, inventory = identity(args.repo, args.worktree, Path(args.relative))
     root = staging_root(args, modules)
     result = snapshot(root, args.max_bytes, args.max_entries, copy_destination(args), inventory)
