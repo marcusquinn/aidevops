@@ -32,6 +32,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=portable-stat.sh
 source "${SCRIPT_DIR}/portable-stat.sh"
 # shellcheck source=audit-worktree-removal-helper.sh

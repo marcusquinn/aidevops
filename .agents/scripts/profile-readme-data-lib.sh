@@ -295,6 +295,33 @@ _model_usage_undercuts_reference() {
 	return $?
 }
 
+# --- Bounded read-only SQLite query for profile statistics ---
+# Usage: _profile_sqlite_read <db_file> <sql>
+# The hourly routine runs as a launchd Background process, so its I/O is
+# throttled on a busy host. The observability queries take about 25 s at
+# normal priority, but one read of llm-requests.db ran for 7 h under
+# contention. A reader keeps its WAL snapshot for the whole query, so no
+# checkpoint could pass it and the WAL grew to 11 GB (t19374). Callers keep
+# their fail-soft contract: on timeout or error this prints nothing useful and
+# returns non-zero, and the caller falls back to its next source.
+_profile_sqlite_read() {
+	local db_file="$1"
+	local sql="$2"
+	local timeout_s="${PROFILE_README_SQLITE_TIMEOUT_S:-300}"
+	[[ "$timeout_s" =~ ^[1-9][0-9]*$ ]] || timeout_s=300
+	local rc=0
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		timeout_sec "$timeout_s" sqlite3 -readonly -cmd '.timeout 5000' "$db_file" "$sql" 2>/dev/null || rc=$?
+	else
+		sqlite3 -readonly -cmd '.timeout 5000' "$db_file" "$sql" 2>/dev/null || rc=$?
+	fi
+	if [[ "$rc" -eq 124 ]]; then
+		printf '[profile-readme] WARN: SQLite read of %s exceeded %ss; using the next stats source\n' \
+			"${db_file##*/}" "$timeout_s" >&2
+	fi
+	return "$rc"
+}
+
 # --- Project one OpenCode message table to small assistant usage rows ---
 # Usage: _opencode_assistant_rows_sql <table>
 # The projection must happen inside each source branch. A CTE over raw
@@ -349,7 +376,7 @@ _get_model_usage_from_opencode() {
 UNION ALL
 $(_opencode_assistant_rows_sql archive.message)"
 	fi
-	raw_json=$(sqlite3 "$OPENCODE_DB_FILE" "
+	raw_json=$(_profile_sqlite_read "$OPENCODE_DB_FILE" "
 		${attach_clause}
 		WITH assistant_messages_raw AS (
 			${assistant_rows_sql}
@@ -405,7 +432,7 @@ $(_opencode_assistant_rows_sql archive.message)"
 			GROUP BY model
 			ORDER BY requests DESC
 		);
-	" 2>/dev/null || true)
+	" || true)
 
 	if [[ -z "$raw_json" ]] || [[ "$raw_json" == "[]" ]]; then
 		echo ""
@@ -428,7 +455,7 @@ _get_model_usage_from_obs_db() {
 	fi
 
 	local sqlite_json
-	sqlite_json=$(sqlite3 "$OBS_DB_FILE" "
+	sqlite_json=$(_profile_sqlite_read "$OBS_DB_FILE" "
 		SELECT COALESCE(
 			json_group_array(
 				json_object(
@@ -473,7 +500,7 @@ _get_model_usage_from_obs_db() {
 			GROUP BY model_id
 			ORDER BY requests DESC
 		);
-	" 2>/dev/null || true)
+	" || true)
 
 	if [[ -n "$sqlite_json" ]]; then
 		echo "$sqlite_json" | jq -c '.' 2>/dev/null || echo "[]"
@@ -670,7 +697,7 @@ _token_totals_from_opencode_db() {
 	fi
 
 	local oc_stats total_input total_output total_cache_read total_cache_write
-	oc_stats=$(sqlite3 "$OPENCODE_DB_FILE" "
+	oc_stats=$(_profile_sqlite_read "$OPENCODE_DB_FILE" "
 		${_totals_attach}
 		SELECT
 			COALESCE(SUM(tokens_input), 0) || '|' ||
@@ -686,7 +713,7 @@ _token_totals_from_opencode_db() {
 			WHERE json_extract(data, '\$.role') = 'assistant'
 			${_totals_union}
 		);
-	" 2>/dev/null || true)
+	" || true)
 
 	if [[ -n "$oc_stats" ]]; then
 		local IFS='|'
@@ -719,7 +746,7 @@ _token_totals_from_obs_db() {
 	fi
 
 	local sqlite_totals
-	sqlite_totals=$(sqlite3 "$OBS_DB_FILE" "
+	sqlite_totals=$(_profile_sqlite_read "$OBS_DB_FILE" "
 		SELECT json_object(
 			'total_input', COALESCE(SUM(tokens_input), 0),
 			'total_output', COALESCE(SUM(tokens_output), 0),
@@ -728,7 +755,7 @@ _token_totals_from_obs_db() {
 		)
 		FROM llm_requests
 		${date_filter};
-	" 2>/dev/null || true)
+	" || true)
 
 	if [[ -n "$sqlite_totals" ]]; then
 		echo "$sqlite_totals"
