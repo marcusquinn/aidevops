@@ -658,10 +658,11 @@ test("queued sqliteExec writes land on normal process exit (GH#39202)", {
   ].join("\n");
   try {
     execFileSync(process.execPath, ["--input-type=module", "-e", driver], { timeout: 20000 });
-    // The in-flight write finishes in the sqlite3 child after stdin EOF.
+    // The in-flight write finishes in the sqlite3 child after stdin EOF, so
+    // the read waits for its lock like sqlite-process.mjs does (GH#40305).
     let count = "";
     for (let attempt = 0; attempt < 30; attempt += 1) {
-      count = execFileSync("sqlite3", [dbPath, "SELECT count(*) || '|' || count(DISTINCT n) FROM t;"], { encoding: "utf8" }).trim();
+      count = execFileSync("sqlite3", ["-cmd", ".timeout 5000", dbPath, "SELECT count(*) || '|' || count(DISTINCT n) FROM t;"], { encoding: "utf8" }).trim();
       if (count === "20|20") break;
       execFileSync("sleep", ["0.1"]);
     }
