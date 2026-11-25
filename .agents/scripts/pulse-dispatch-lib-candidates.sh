@@ -698,6 +698,19 @@ _dispatch_with_timeout() {
 	return "$dispatch_rc"
 }
 
+# t19365: the observed reserve scans the stages log, so callers re-read the
+# fixed cycle clock after that lookup; a second boundary must not pass between
+# the two reads. Stdout: remaining seconds. Returns 1 when no fixed clock
+# applies (missing helper, elastic lease, or a non-integer value).
+_dispatch_fresh_cycle_remaining() {
+	local remaining=""
+	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 1
+	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 1
+	[[ "$remaining" =~ ^-?[0-9]+$ ]] || return 1
+	printf '%s\n' "$remaining"
+	return 0
+}
+
 #######################################
 # GH#34428: re-check the per-candidate floor where the dispatch stage starts.
 # _dispatch_graphql_budget_allows_next runs before the candidate's pre-stage
@@ -716,8 +729,10 @@ _dispatch_cycle_budget_defers_candidate() {
 	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 1
 	[[ "$remaining" =~ ^-?[0-9]+$ ]] || return 1
 	# t19365: the observed reserve scans the stages log; read it only when a
-	# fixed cycle clock applies (an elastic lease returns no remainder).
+	# fixed cycle clock applies (an elastic lease returns no remainder), then
+	# compare against a clock read taken after the scan.
 	floor_seconds=$(_dispatch_ceremony_reserve_seconds)
+	remaining=$(_dispatch_fresh_cycle_remaining) || return 1
 	((remaining < floor_seconds)) || return 1
 	echo "[pulse-wrapper] Dispatch_max: deferring #${issue_number} (${repo_slug}) — cycle budget ${remaining}s below per-candidate floor ${floor_seconds}s; stage not started, retry next cycle (GH#34428)" >>"$LOGFILE"
 	_dispatch_stats_increment "dispatch_candidate_deferred_cycle_budget"
@@ -918,6 +933,11 @@ _dispatch_round_budget_plan() {
 	margin=$(_dispatch_prestage_margin_seconds)
 	[[ "$stage" != "before" ]] || is_before=1
 	((is_before == 0)) || enumeration=$(_dispatch_enumeration_expected_seconds)
+	# t19365: compare against a clock read taken after the reserve lookups.
+	if ! remaining=$(_dispatch_fresh_cycle_remaining); then
+		printf 'full 0\n'
+		return 0
+	fi
 	if ((remaining >= floor + margin + enumeration)); then
 		mode=full
 	elif ((is_before == 1)) && budget=$(_dispatch_bounded_enumeration_budget_seconds "$remaining" "$floor" "$margin"); then
@@ -1082,7 +1102,9 @@ _dispatch_graphql_budget_allows_next() {
 		# t19365: read the observed reserve only when a fixed clock applies.
 		floor_seconds=$(_dispatch_ceremony_reserve_seconds)
 		margin=$(_dispatch_prestage_margin_seconds)
-		if [[ "$cycle_remaining" -lt $((floor_seconds + margin)) ]]; then
+		# Compare against a clock read taken after the reserve lookup.
+		if cycle_remaining=$(_dispatch_fresh_cycle_remaining) &&
+			[[ "$cycle_remaining" -lt $((floor_seconds + margin)) ]]; then
 			echo "[pulse-wrapper] Dispatch_max stopping early: cycle wall-clock budget below candidate admission reserve (remaining=${cycle_remaining}s floor=${floor_seconds}s prestage_margin=${margin}s)" >>"$LOGFILE"
 			return 1
 		fi
