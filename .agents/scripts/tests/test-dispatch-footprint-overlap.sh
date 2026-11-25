@@ -447,9 +447,18 @@ for claim_case in absent unknown missing live dead-owner live-owner reused-pid c
 		claim_pid="$$"
 		claim_hash=""
 		case "$claim_case" in
-		dead-owner) claim_pid="999999999"; expected_rc=1 ;;
-		reused-pid) claim_hash="not-the-owner-argv-hash"; expected_rc=1 ;;
-		cross-host) claim_host="other-${claim_host}"; claim_pid="999999999" ;;
+		dead-owner)
+			claim_pid="999999999"
+			expected_rc=1
+			;;
+		reused-pid)
+			claim_hash="not-the-owner-argv-hash"
+			expected_rc=1
+			;;
+		cross-host)
+			claim_host="other-${claim_host}"
+			claim_pid="999999999"
+			;;
 		missing-pid) claim_pid="" ;;
 		invalid-pid) claim_pid="not-a-pid" ;;
 		esac

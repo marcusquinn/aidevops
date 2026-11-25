@@ -911,7 +911,11 @@ _footprint_claimed_coordinator_has_evidence() {
 			select(type == "object" and .slug == $slug and .issue == $issue) |
 			.worktree_path | select(type == "string" and length > 0)
 		' "$stamp_file" 2>/dev/null) || return 0
-		local stamp_owner="" stamp_host="" stamp_pid="" owner_argv_hash="" local_host=""
+		local stamp_owner=""
+		local stamp_host=""
+		local stamp_pid=""
+		local owner_argv_hash=""
+		local local_host=""
 		stamp_owner=$(jq -er '
 			select((.hostname | type == "string" and length > 0) and
 				((.pid | type) == "number" or (.pid | type) == "string") and
