@@ -2530,7 +2530,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19368 perf(sandbox): share one macOS process-table read across concurrent worker wait loops #feat #priority:high #interactive tier:standard ref:GH#40332 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19368-brief.md] pr:#40341 completed:2026-11-25
 
-- [ ] t19374 perf(profile): bound profile README SQLite reads so the hourly routine cannot pin the llm-requests WAL #bug #performance #interactive tier:standard ref:GH#40353 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19374-brief.md]
+- [x] t19374 perf(profile): bound profile README SQLite reads so the hourly routine cannot pin the llm-requests WAL #bug #performance #interactive tier:standard ref:GH#40353 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19374-brief.md] pr:#40357 completed:2026-11-25
 
 ## In Progress
 
