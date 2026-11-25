@@ -385,6 +385,74 @@ _rest_should_fallback_write() {
 	return $?
 }
 
+# Creation failures must not retry auth/validation errors through another API.
+# Rate-limit errors are deliberately left to the existing quota classifier.
+_rest_create_failure_is_fatal() {
+	local diagnostics="$1"
+	if grep -Eiq 'authentication|bad credentials|validation|could not resolve|not authorized|resource not accessible' <<<"$diagnostics"; then
+		return 0
+	fi
+	# Preserve the established quota-exhaustion path, including HTTP 403/429.
+	if grep -Eiq 'rate limit|rate_limit' <<<"$diagnostics"; then
+		return 1
+	fi
+	if grep -Eiq 'HTTP[^[:space:]]*[[:space:]]+4[0-9]{2}|forbidden' <<<"$diagnostics"; then
+		return 0
+	fi
+	return 1
+}
+
+# These failures may follow a successful mutation. Callers must reconcile via
+# REST before issuing another create, even with healthy GraphQL quota.
+_rest_create_failure_is_transient() {
+	local diagnostics="$1"
+	_rest_create_failure_is_fatal "$diagnostics" && return 1
+	if grep -Eiq 'GraphQL: Something went wrong while executing your query|HTTP[^[:space:]]*[[:space:]]+50[234]|GraphQL:.*(timeout|timed out)' <<<"$diagnostics"; then
+		return 0
+	fi
+	return 1
+}
+
+# Return a recent exact-title issue URL, empty on a successful negative lookup.
+# A failed lookup is not proof of absence: refuse a potentially duplicate write.
+_rest_recover_recent_issue() {
+	local repo="$1" title="$2" since=""
+	[[ -n "$repo" && -n "$title" ]] || return 1
+	since=$(jq -nr 'now - 300 | strftime("%Y-%m-%dT%H:%M:%SZ")') || return 1
+	local issues=""
+	issues=$(gh api --method GET "repos/$repo/issues" -f state=open \
+		-f since="$since" -f sort=created -f direction=desc -f per_page=100 \
+		--paginate --slurp) || return 1
+	printf '%s\n' "$issues" | jq -er --arg title "$title" --arg since "$since" \
+		'flatten | map(select(.title == $title and .created_at >= $since and (has("pull_request") | not))) | .[0].html_url // ""'
+	return $?
+}
+
+# Resolve an omitted native --head from the branch's push destination. Unknown
+# destinations fail closed: guessing the base owner can adopt an unrelated PR.
+_rest_pr_push_head() {
+	local branch="" remote="" remote_ref="" remote_url=""
+	branch=$(git symbolic-ref --quiet HEAD) || return 1
+	remote=$(git for-each-ref --format='%(push:remotename)' "$branch") || return 1
+	remote_ref=$(git for-each-ref --format='%(push:remoteref)' "$branch") || return 1
+	[[ -n "$remote" && "$remote_ref" == refs/heads/* ]] || return 1
+	remote_url=$(git remote get-url --push "$remote") || return 1
+	remote_url="${remote_url%.git}"
+	[[ "$remote_url" =~ [:/]([^/:]+)/([^/]+)$ ]] || return 1
+	printf '%s:%s\n' "${BASH_REMATCH[1]}" "${remote_ref#refs/heads/}"
+	return 0
+}
+
+# Head lookup stays on REST when GraphQL itself is unavailable.
+_rest_recover_created_pr() {
+	local repo="$1" head_ref="$2"
+	[[ -n "$repo" && -n "$head_ref" ]] || return 1
+	[[ "$head_ref" == *:* ]] || head_ref="${repo%%/*}:$head_ref"
+	gh api --method GET "repos/$repo/pulls" -f state=open -f head="$head_ref" \
+		-f per_page=100 --jq '.[0].html_url // empty'
+	return $?
+}
+
 #######################################
 # Return 0 when argv contains --search or --search=... .
 # Args: gh-style argv
@@ -504,17 +572,17 @@ _rest_issue_create() {
 		case "$_arg" in
 		--repo | -R) [[ $# -ge 2 ]] || return 2; repo="${2:-}"; shift 2 ;;
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--title) title="${2:-}"; shift 2 ;;
+		--title | -t) title="${2:-}"; shift 2 ;;
 		--title=*) title="${_arg#--title=}"; shift ;;
-		--body) body="${2:-}"; has_body=1; shift 2 ;;
+		--body | -b) body="${2:-}"; has_body=1; shift 2 ;;
 		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
-		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
+		--body-file | -F) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
-		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--label | -l) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
 		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${_arg#--label=}"); shift ;;
-		--assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--assignee | -a) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
 		--assignee=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_rest_split_csv "${_arg#--assignee=}"); shift ;;
-		--milestone) milestone="${2:-}"; shift 2 ;;
+		--milestone | -m) milestone="${2:-}"; shift 2 ;;
 		--milestone=*) milestone="${_arg#--milestone=}"; shift ;;
 		*) shift ;;
 		esac
