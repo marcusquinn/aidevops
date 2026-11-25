@@ -290,6 +290,9 @@ owner = owners[0] if len(owners) == 1 and owners[0] in input_owners else ''
 # permission, and everything else stays unclassified.
 login_match = re.fullmatch(r'@?([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))', owners[0].strip()) if len(owners) == 1 and not owner else None
 login = login_match.group(1) if login_match else ''
+# A malformed role word (for example trailing whitespace) is not a login.
+if login.lower() in input_owners:
+    login = ''
 
 if reason == 'verification_environment_missing_prerequisites':
     # GH#35037: exact legacy spelling, not a prose/substring classifier.
