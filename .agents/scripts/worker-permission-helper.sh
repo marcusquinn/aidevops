@@ -345,6 +345,8 @@ permission_approval_text() {
 
 This signs only the listed capabilities for this issue. It does not approve the issue scope, clear needs-maintainer-review, or authorize merge/release.
 
+Stale-session policy: a request does not become approved when its worker exits. Keep broad home, private-temp and /proc requests held; do not auto-withdraw or consume retries on an unsigned replacement session. Surface the request for a signed withdrawal after preserving its branch/PR checkpoint.
+
 To decline instead (for example, the requesting session has ended), sign a withdrawal that grants nothing and lets dispatch resume without this capability:
 
     ${approve_cli} approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID --withdraw"

@@ -9,6 +9,100 @@ import { tmpdir } from "os";
 
 import { createPermissionBroker, sanitizePermissionText } from "../permission-broker.mjs";
 
+test("worker runtime reads allow bounded plumbing but keep broad and proc requests gated", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-runtime-read-")));
+  const previous = preserveWorkerEnvironment();
+  t.after(() => { restoreWorkerEnvironment(previous); rmSync(root, { recursive: true, force: true }); });
+  const requestFile = join(root, "request.json");
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = requestFile;
+  const temp = join(root, ".aidevops/.agent-workspace/tmp");
+  mkdirSync(temp, { recursive: true });
+  writeFileSync(join(temp, "output.txt"), "worker output");
+  symlinkSync(root, join(temp, "escape"));
+  const replies = [];
+  const broker = createPermissionBroker({ isHeadless: () => true, home: root,
+    blockerLogPath: join(root, "blockers.jsonl"),
+    client: { postSessionIdPermissionsPermissionId: async (value) => replies.push(value) } });
+  for (const [id, target, pattern, tool, allowed] of [
+    ["null", "/dev/null", "/dev/*", "read", true],
+    ["stdin", "/dev/stdin", "/dev/*", "read", true],
+    ["stdout", "/dev/stdout", "/dev/*", "read", true],
+    ["stderr", "/dev/stderr", "/dev/*", "read", true],
+    ["fd", "/dev/fd/1", "/dev/fd/*", "read", true],
+    ["temp", join(temp, "output.txt"), `${temp}/*`, "read", true],
+    ["broad-dev", "", "/dev/*", "read", false],
+    ["broad-home", join(temp, "output.txt"), `${root}/*`, "read", false],
+    ["proc", "/proc/meminfo", "/proc/*", "read", false],
+    ["proc-self", "/proc/self/status", "/proc/self/*", "read", false],
+    ["write", "/dev/null", "/dev/*", "edit", false],
+    ["symlink", join(temp, "escape/request.json"), `${temp}/escape/*`, "read", false],
+    ["secret", join(temp, ".env"), `${temp}/*`, "read", false],
+  ]) {
+    broker.recordToolCall({ tool, callID: id }, { args: { filePath: target } });
+    const raw = { id, sessionID: "runtime", permission: "external_directory", patterns: [pattern], callID: id };
+    const output = { status: "ask" };
+    broker.permissionAsk(raw, output);
+    assert.equal(output.status, allowed ? "allow" : "deny", id);
+    await broker.handleEvent({ event: { type: "permission.asked", properties: raw } });
+    assert.equal(replies.at(-1).body.response, allowed ? "once" : "reject", id);
+    if (allowed) assert.equal(existsSync(requestFile), false, id);
+  }
+  const capture = JSON.parse(readFileSync(requestFile, "utf8"));
+  assert.ok(capture.requests.some((request) => request.patterns.includes("/dev/*")));
+});
+
+test("only a simple recorded bash device redirection bypasses its directory ask", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-runtime-shell-")));
+  const previous = preserveWorkerEnvironment();
+  t.after(() => { restoreWorkerEnvironment(previous); rmSync(root, { recursive: true, force: true }); });
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = join(root, "request.json");
+  const broker = createPermissionBroker({ isHeadless: () => true, home: root,
+    blockerLogPath: join(root, "blockers.jsonl") });
+  for (const [command, permission, patterns, allowed] of [
+    ["git status 2>/dev/null", "external_directory", ["/dev/*"], true],
+    ["cat </dev/stdin", "external_directory", ["/dev/*"], true],
+    ["git status 1>/dev/fd/1", "external_directory", ["/dev/fd/*"], true],
+    ["cat /dev/sda 2>/dev/null", "external_directory", ["/dev/*"], false],
+    ["git status 2>/dev/null; cat /dev/sda", "external_directory", ["/dev/*"], false],
+    ["git status 2>/dev/null", "external_directory", ["/dev/*", `${root}/*`], false],
+    ["git status 2>/dev/null", "bash", ["git *"], false],
+    ["git status 2>$DEVICE", "external_directory", ["/dev/*"], false],
+    ["ls /dev", "external_directory", ["/dev/*"], false],
+  ]) {
+    broker.recordToolCall({ tool: "bash", callID: "shell" }, { args: { command } });
+    const output = { status: "ask" };
+    broker.permissionAsk({ permission, patterns, callID: "shell" }, output);
+    assert.equal(output.status, allowed ? "allow" : "deny", command);
+  }
+});
+
+test("runtime scratch exception rejects a symlinked root or managed ancestor", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-runtime-root-")));
+  const previous = preserveWorkerEnvironment();
+  t.after(() => { restoreWorkerEnvironment(previous); rmSync(root, { recursive: true, force: true }); });
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = join(root, "request.json");
+  const outside = join(root, "outside");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "output.txt"), "outside");
+  for (const ancestor of [false, true]) {
+    const home = join(root, ancestor ? "ancestor-home" : "root-home");
+    const workspace = join(home, ".aidevops/.agent-workspace");
+    mkdirSync(ancestor ? home : workspace, { recursive: true });
+    if (ancestor) {
+      mkdirSync(join(outside, ".agent-workspace/tmp"), { recursive: true });
+      writeFileSync(join(outside, ".agent-workspace/tmp/output.txt"), "outside");
+      symlinkSync(outside, join(home, ".aidevops"));
+    } else symlinkSync(outside, join(workspace, "tmp"));
+    const target = join(workspace, "tmp/output.txt");
+    const broker = createPermissionBroker({ isHeadless: () => true, home,
+      blockerLogPath: join(root, "blockers.jsonl") });
+    broker.recordToolCall({ tool: "read", callID: "linked" }, { args: { filePath: target } });
+    const output = { status: "ask" };
+    broker.permissionAsk({ permission: "external_directory", patterns: [`${dirname(target)}/*`], callID: "linked" }, output);
+    assert.equal(output.status, "deny");
+  }
+});
+
 test("missing exact external reads fail without a permission handoff; existing and sensitive paths retain gates", async (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-impossible-read-")));
   const previous = preserveWorkerEnvironment();

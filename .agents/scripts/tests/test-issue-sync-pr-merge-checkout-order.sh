@@ -101,9 +101,11 @@ JOB_BODY=$(sed -n "${JOB_START},${JOB_END}p" "${WORKFLOW_FILE}")
 # ============================================================
 # Test 2: PATH shims survive caller-repo workspace cleanup.
 # ============================================================
+# Feed early-exit grep assertions directly: printf pipelines can SIGPIPE under
+# pipefail when the workflow body exceeds the pipe buffer, making checks flaky.
 # shellcheck disable=SC2016 # Assert literal workflow expressions, not test-shell expansion.
-if printf '%s\n' "${JOB_BODY}" | grep -qE 'SHIM_DIR[[:space:]]*=[[:space:]]*"?\$\{?RUNNER_TEMP\}?/[^"]+"?' &&
-	printf '%s\n' "${JOB_BODY}" | grep -qE 'echo[[:space:]]+"?\$\{?SHIM_DIR\}?"?[[:space:]]*>>[[:space:]]*"?\$\{?GITHUB_PATH\}?"?'; then
+if grep -qE 'SHIM_DIR[[:space:]]*=[[:space:]]*"?\$\{?RUNNER_TEMP\}?/[^"]+"?' <<<"${JOB_BODY}" &&
+	grep -qE 'echo[[:space:]]+"?\$\{?SHIM_DIR\}?"?[[:space:]]*>>[[:space:]]*"?\$\{?GITHUB_PATH\}?"?' <<<"${JOB_BODY}"; then
 	check 1 "sync-on-pr-merge stages PATH shims outside GITHUB_WORKSPACE" ""
 else
 	check 0 "sync-on-pr-merge stages PATH shims outside GITHUB_WORKSPACE" \
@@ -140,7 +142,7 @@ fi
 
 if [[ -n "${PLANS_REL_LINE}" && -n "${PARK_CLEANUP_REL_LINE}" &&
 	"${PLANS_REL_LINE}" -lt "${PARK_CLEANUP_REL_LINE}" ]] &&
-	printf '%s\n' "${JOB_BODY}" | grep -A1 -E 'name:[[:space:]]+Park canonical Git guard before action cleanup' | grep -qE 'if:[[:space:]]+always\(\)'; then
+	grep -A1 -E 'name:[[:space:]]+Park canonical Git guard before action cleanup' <<<"${JOB_BODY}" | grep -E 'if:[[:space:]]+always\(\)' >/dev/null; then
 	check 1 "canonical Git guard is always parked before action cleanup" ""
 else
 	check 0 "canonical Git guard is always parked before action cleanup" "final guard parking must follow every guarded shell mutation and run even after failures"
@@ -199,7 +201,7 @@ trap - EXIT
 # Test 4: job has merged == true guard (defends against #22607
 #         which falsely claimed the guard was missing)
 # ============================================================
-if printf '%s\n' "${JOB_BODY}" | grep -qE 'github\.event\.pull_request\.merged[[:space:]]*==[[:space:]]*true'; then
+if grep -qE 'github\.event\.pull_request\.merged[[:space:]]*==[[:space:]]*true' <<<"${JOB_BODY}"; then
 	check 1 "sync-on-pr-merge has merged == true guard" ""
 else
 	check 0 "sync-on-pr-merge has merged == true guard" "job-level if guard missing — premature completion-marking risk on non-merge events"
@@ -228,9 +230,9 @@ fi
 # TODO.md from the trusted PR base branch rather than a hard-coded default
 # branch or untrusted fork head code.
 # shellcheck disable=SC2016 # Assert the literal GitHub Actions expression.
-if printf '%s\n' "${CALLER_CHECKOUT_BODY}" | grep -qE 'ref:[[:space:]]+\$\{\{[[:space:]]*github\.event\.pull_request\.base\.ref[[:space:]]*\}\}' &&
-	! printf '%s\n' "${CALLER_CHECKOUT_BODY}" | grep -qE 'ref:[[:space:]]+main([[:space:]]|$)' &&
-	! printf '%s\n' "${CALLER_CHECKOUT_BODY}" | grep -qE 'github\.event\.pull_request\.head'; then
+if grep -qE 'ref:[[:space:]]+\$\{\{[[:space:]]*github\.event\.pull_request\.base\.ref[[:space:]]*\}\}' <<<"${CALLER_CHECKOUT_BODY}" &&
+	! grep -qE 'ref:[[:space:]]+main([[:space:]]|$)' <<<"${CALLER_CHECKOUT_BODY}" &&
+	! grep -qE 'github\.event\.pull_request\.head' <<<"${CALLER_CHECKOUT_BODY}"; then
 	check 1 "closing-hygiene checkout uses trusted PR base ref" ""
 else
 	check 0 "closing-hygiene checkout uses trusted PR base ref" \
@@ -267,12 +269,12 @@ PLANS_BODY=$(printf '%s\n' "${JOB_BODY}" | awk '
 	capture { print }
 ')
 # shellcheck disable=SC2016 # Assert the literal workflow variable reference.
-if printf '%s\n' "${JOB_BODY}" | grep -qE 'AIDEVOPS_PLANNING_GIT_BIN=.*RUNNER_GIT' &&
-	printf '%s\n' "${PROOF_BODY}" | grep -qE 'issue-sync-git-push-helper\.sh"?[[:space:]]+publish-todo[[:space:]]+"\$ISSUE_SYNC_TARGET_BRANCH"' &&
-	! printf '%s\n' "${PROOF_BODY}" | grep -qE 'planning_publish[[:space:]]' &&
-	! printf '%s\n' "${PROOF_BODY}" | grep -qE '^[[:space:]]+git[[:space:]]+(config|add|commit|pull|push)' &&
-	printf '%s\n' "${PLANS_BODY}" | grep -qE 'planning_publish[[:space:]]' &&
-	! printf '%s\n' "${PLANS_BODY}" | grep -qE '^[[:space:]]+git[[:space:]]+(config|add|commit|pull|push)'; then
+if grep -qE 'AIDEVOPS_PLANNING_GIT_BIN=.*RUNNER_GIT' <<<"${JOB_BODY}" &&
+	grep -qE 'issue-sync-git-push-helper\.sh"?[[:space:]]+publish-todo[[:space:]]+"\$ISSUE_SYNC_TARGET_BRANCH"' <<<"${PROOF_BODY}" &&
+	! grep -qE 'planning_publish[[:space:]]' <<<"${PROOF_BODY}" &&
+	! grep -qE '^[[:space:]]+git[[:space:]]+(config|add|commit|pull|push)' <<<"${PROOF_BODY}" &&
+	grep -qE 'planning_publish[[:space:]]' <<<"${PLANS_BODY}" &&
+	! grep -qE '^[[:space:]]+git[[:space:]]+(config|add|commit|pull|push)' <<<"${PLANS_BODY}"; then
 	check 1 "task proof uses PR-safe publication and plan status uses capability-scoped publication" ""
 else
 	check 0 "task proof uses PR-safe publication and plan status uses capability-scoped publication" \
