@@ -23,6 +23,7 @@ PURELYMAIL_SIEVE_PORT override them (for a local test server).
 
 import base64
 import os
+import re
 import socket
 import ssl
 import sys
@@ -32,6 +33,8 @@ PORT = int(os.environ.get("PURELYMAIL_SIEVE_PORT", "4190"))
 TIMEOUT = 30
 PRE_TLS_WAIT = 1.0
 CAPABILITY_WAIT = 2.0
+# One response token: quoted string, trailing literal size, response code, atom.
+TOKEN_RE = re.compile(rb'"((?:\\.|[^"\\])*)"|\{(\d+)\+?\}$|(\([^)]*\))|(\S+)')
 
 
 class SieveError(Exception):
@@ -47,54 +50,59 @@ def quote(text):
     return b'"' + escaped.encode("utf-8") + b'"'
 
 
+def decode(data):
+    return data.decode("utf-8", "replace")
+
+
 class Conn:
     """One authenticated ManageSieve session over STARTTLS."""
 
     def __init__(self, user, password):
-        raw = socket.create_connection((HOST, PORT), timeout=TIMEOUT)
-        self.sock = raw
+        self.sock = socket.create_connection((HOST, PORT), timeout=TIMEOUT)
         self.buf = b""
         status, _rest, items = self.response()
         if status != "OK":
             raise SieveError("greeting was " + status)
         if "STARTTLS" not in [str(i[0]).upper() for i in items if i]:
             raise SieveError("server does not offer STARTTLS")
+        self._starttls()
+        token = base64.b64encode(("\0" + user + "\0" + password).encode("utf-8"))
+        self.command(b'AUTHENTICATE "PLAIN" ' + quote(token.decode("ascii")))
+
+    def _starttls(self):
         self.command(b"STARTTLS")
         # Purelymail quirk: after "OK" to STARTTLS it re-sends its capability
         # list in plaintext, before the TLS handshake. Drain and discard that
         # unauthenticated listing, or its bytes corrupt the handshake.
-        plaintext_caps = self._drain_pre_tls(raw)
-        self.sock = ssl.create_default_context().wrap_socket(raw, server_hostname=HOST)
+        plaintext_caps = self._drain_pre_tls()
+        self.sock = ssl.create_default_context().wrap_socket(self.sock, server_hostname=HOST)
         # RFC 5804 section 2.2: the server re-sends capabilities over TLS.
-        # Purelymail sends none there, so ask. Wait for application data, not
-        # socket readability: TLS 1.3 session tickets make the socket readable
-        # without any ManageSieve response.
-        if plaintext_caps:
+        # Purelymail sends none there, so ask when none arrive. Wait for
+        # application data, not socket readability: TLS 1.3 session tickets
+        # make the socket readable without any ManageSieve response.
+        if plaintext_caps or not self._data_within(CAPABILITY_WAIT):
             self.sock.sendall(b"CAPABILITY\r\n")
-        else:
-            self.sock.settimeout(CAPABILITY_WAIT)
-            try:
-                self._fill()
-            except socket.timeout:
-                self.sock.sendall(b"CAPABILITY\r\n")
-            finally:
-                self.sock.settimeout(TIMEOUT)
         status, _rest, _items = self.response()
         if status != "OK":
             raise SieveError("CAPABILITY after STARTTLS was " + status)
-        token = base64.b64encode(("\0" + user + "\0" + password).encode("utf-8"))
-        self.command(b'AUTHENTICATE "PLAIN" ' + quote(token.decode("ascii")))
 
-    def _drain_pre_tls(self, raw):
+    def _data_within(self, seconds):
+        """Return True when data is buffered or arrives within SECONDS."""
+        if self.buf:
+            return True
+        self.sock.settimeout(seconds)
+        try:
+            self._fill()
+            return True
+        except socket.timeout:
+            return False
+        finally:
+            self.sock.settimeout(TIMEOUT)
+
+    def _drain_pre_tls(self):
         """Discard a plaintext capability listing sent before TLS, if any."""
-        if not self.buf:
-            raw.settimeout(PRE_TLS_WAIT)
-            try:
-                self._fill()
-            except socket.timeout:
-                return False
-            finally:
-                raw.settimeout(TIMEOUT)
+        if not self._data_within(PRE_TLS_WAIT):
+            return False
         self.response()
         if self.buf:
             raise SieveError("unexpected plaintext data before TLS handshake")
@@ -122,40 +130,20 @@ class Conn:
         """Parse one response line into atoms and strings (with literals)."""
         out = []
         line = self.readline()
-        i = 0
-        while i < len(line):
-            char = line[i:i + 1]
-            if char == b" ":
-                i += 1
-            elif char == b'"':
-                i += 1
-                buf = bytearray()
-                while i < len(line) and line[i:i + 1] != b'"':
-                    if line[i:i + 1] == b"\\":
-                        i += 1
-                    buf += line[i:i + 1]
-                    i += 1
-                i += 1
-                out.append(buf.decode("utf-8", "replace"))
-            elif char == b"{":
-                end = line.find(b"}", i)
-                if end < 0:
-                    raise SieveError("malformed literal")
-                size = int(line[i + 1:end].rstrip(b"+"))
-                out.append(self.read(size).decode("utf-8", "replace"))
-                line = self.readline()
-                i = 0
-            elif char == b"(":
-                end = line.find(b")", i)
-                end = len(line) - 1 if end < 0 else end
-                out.append(Atom(line[i:end + 1].decode("utf-8", "replace")))
-                i = end + 1
-            else:
-                end = line.find(b" ", i)
-                end = len(line) if end < 0 else end
-                out.append(Atom(line[i:end].decode("utf-8", "replace")))
-                i = end
-        return out
+        while True:
+            size = None
+            for match in TOKEN_RE.finditer(line):
+                quoted, literal, code, atom = match.groups()
+                if quoted is not None:
+                    out.append(decode(re.sub(rb"\\(.)", rb"\1", quoted)))
+                elif literal is not None:
+                    size = int(literal)
+                else:
+                    out.append(Atom(decode(code or atom)))
+            if size is None:
+                return out
+            out.append(decode(self.read(size)))
+            line = self.readline()
 
     def response(self):
         """Read data lines up to OK/NO/BYE; return (status, rest, items)."""
@@ -187,51 +175,61 @@ def normalize(text):
     return text.replace("\r\n", "\n").rstrip()
 
 
-def active_names(conn):
-    return [str(i[0]) for i in conn.command(b"LISTSCRIPTS")
-            if len(i) > 1 and str(i[1]).upper() == "ACTIVE"]
+def listing(conn):
+    """Return [(name, active)] from LISTSCRIPTS."""
+    return [(str(i[0]), len(i) > 1 and str(i[1]).upper() == "ACTIVE")
+            for i in conn.command(b"LISTSCRIPTS") if i]
 
 
-def run(conn, op, args):
-    if op == "list":
-        for item in conn.command(b"LISTSCRIPTS"):
-            if item:
-                active = len(item) > 1 and str(item[1]).upper() == "ACTIVE"
-                print("%s\t%s" % (item[0], "active" if active else "inactive"))
-    elif op == "get" and len(args) == 1:
-        try:
-            items = conn.command(b"GETSCRIPT " + quote(args[0]))
-        except SieveError as err:
-            if "NONEXISTENT" in str(err).upper():
-                return 4
-            raise
-        sys.stdout.write(items[0][0] if items and items[0] else "")
-    elif op == "install" and len(args) == 2:
-        name, content = args
-        payload = content.encode("utf-8")
-        conn.command(b"CHECKSCRIPT", payload)
-        conn.command(b"PUTSCRIPT " + quote(name), payload)
-        conn.command(b"SETACTIVE " + quote(name))
-        items = conn.command(b"GETSCRIPT " + quote(name))
-        stored = items[0][0] if items and items[0] else ""
-        if normalize(stored) != normalize(content):
-            raise SieveError("read-back differs from the script sent")
-        if name not in active_names(conn):
-            raise SieveError("script stored but not active")
-    elif op == "remove" and len(args) == 1:
-        name = args[0]
-        if name in active_names(conn):
-            conn.command(b'SETACTIVE ""')
-        conn.command(b"DELETESCRIPT " + quote(name))
-    else:
-        sys.stderr.write("sieve: unknown operation or arguments\n")
-        return 2
+def first_string(items):
+    return items[0][0] if items and items[0] else ""
+
+
+def op_list(conn):
+    for name, active in listing(conn):
+        print("%s\t%s" % (name, "active" if active else "inactive"))
     return 0
 
 
+def op_get(conn, name):
+    try:
+        items = conn.command(b"GETSCRIPT " + quote(name))
+    except SieveError as err:
+        if "NONEXISTENT" in str(err).upper():
+            return 4
+        raise
+    sys.stdout.write(first_string(items))
+    return 0
+
+
+def op_install(conn, name, content):
+    payload = content.encode("utf-8")
+    conn.command(b"CHECKSCRIPT", payload)
+    conn.command(b"PUTSCRIPT " + quote(name), payload)
+    conn.command(b"SETACTIVE " + quote(name))
+    stored = first_string(conn.command(b"GETSCRIPT " + quote(name)))
+    if normalize(stored) != normalize(content):
+        raise SieveError("read-back differs from the script sent")
+    if (name, True) not in listing(conn):
+        raise SieveError("script stored but not active")
+    return 0
+
+
+def op_remove(conn, name):
+    if (name, True) in listing(conn):
+        conn.command(b'SETACTIVE ""')
+    conn.command(b"DELETESCRIPT " + quote(name))
+    return 0
+
+
+# Operation name -> (handler, argument count).
+OPS = {"list": (op_list, 0), "get": (op_get, 1), "install": (op_install, 2), "remove": (op_remove, 1)}
+
+
 def main(argv):
-    if len(argv) < 4:
-        sys.stderr.write("usage: purelymail_sieve.py PASSWORD_VAR USER OP [ARGS]\n")
+    entry = OPS.get(argv[3]) if len(argv) >= 4 else None
+    if entry is None or len(argv) - 4 != entry[1]:
+        sys.stderr.write("usage: purelymail_sieve.py PASSWORD_VAR USER list|get NAME|install NAME SCRIPT|remove NAME\n")
         return 2
     password = os.environ.get(argv[1], "").rstrip("\r\n")
     if not password:
@@ -240,7 +238,7 @@ def main(argv):
     conn = None
     try:
         conn = Conn(argv[2], password)
-        rc = run(conn, argv[3], argv[4:])
+        rc = entry[0](conn, *argv[4:])
         try:
             conn.command(b"LOGOUT")
         except (SieveError, OSError):
