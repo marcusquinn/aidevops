@@ -1742,10 +1742,11 @@ _dlw_preclaim_zero_attempt_backoff() {
 _dlw_filter_merged_feedback() {
 	local issue_number="$1" repo_slug="$2" prompt="$3"
 	local body_json="" numbers="" fields="" number="" states="" merged="" filtered=""
-	body_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.body // "" | tojson' 2>/dev/null) || {
+	body_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || {
 		printf '%s' "$prompt"
 		return 0
 	}
+	body_json=$(printf '%s' "$body_json" | jq -c '.body // "" | select(type == "string")') || return 1
 	numbers=$(jq -nr --arg prompt "$prompt" --argjson body "$body_json" '
 		[$prompt, $body] | join("\n") | [scan("<!-- feedback-route:start:[^:<>\\r\\n]+:PR([0-9]+):")[0]] | unique | .[]') || return 1
 	[[ -n "$numbers" ]] || { printf '%s' "$prompt"; return 0; }
