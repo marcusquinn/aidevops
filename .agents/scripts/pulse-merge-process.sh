@@ -537,14 +537,71 @@ _attempt_pr_update_branch() {
 }
 
 #######################################
+# Resync a PR whose GitHub head (headRefOid) fell behind its head branch ref.
+# GitHub never processed the latest push, so mergeability is never computed.
+# update-branch bound to the branch-ref SHA recovers it; attempted at most once
+# per (PR, branch SHA). Always returns 0; the caller still skips the PR this pass.
+# Args: $1=pr_number, $2=repo_slug, $3=PR head SHA, $4=PR labels (csv), $5=head ref name
+#######################################
+_pmp_resync_desynced_pr_head() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_head_sha="${3:-}"
+	local pr_labels="${4:-}"
+	local head_ref_name="${5:-}"
+	[[ -n "$pr_head_sha" && -n "$head_ref_name" ]] || return 0
+
+	local cross_repo=""
+	cross_repo=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json isCrossRepository --jq '.isCrossRepository' 2>/dev/null) || return 0
+	[[ "$cross_repo" == false ]] || return 0
+
+	local encoded_ref="" branch_sha=""
+	encoded_ref=$(printf '%s' "$head_ref_name" | jq -sRr '@uri' 2>/dev/null) || return 0
+	[[ -n "$encoded_ref" ]] || return 0
+	branch_sha=$(gh api "repos/${repo_slug}/git/ref/heads/${encoded_ref}" --jq .object.sha 2>/dev/null) || return 0
+	[[ "$branch_sha" =~ ^[0-9a-f]{40}$ ]] || return 0
+	[[ "$branch_sha" != "$pr_head_sha" ]] || return 0
+
+	local state_dir="${AIDEVOPS_PULSE_DESYNC_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse-desynced-pr-heads}"
+	local state_file="" safe_slug=""
+	safe_slug=$(printf '%s' "$repo_slug" | tr -c '[:alnum:]._-' '_')
+	state_file="${state_dir}/${safe_slug}-${pr_number}"
+	local attempted=0
+	if mkdir -p "$state_dir" 2>/dev/null; then
+		find "$state_dir" -type f -mtime +7 -delete 2>/dev/null || true
+		[[ -f "$state_file" ]] && grep -qxF "$branch_sha" "$state_file" 2>/dev/null && attempted=1
+	else
+		attempted=1 # fail closed: cannot record the attempt, so never write
+	fi
+
+	# #aidevops:trust-boundary — only worker-routable PRs are resynced.
+	if [[ "$attempted" -eq 0 ]] && declare -F _feedback_route_labels_allow_worker_route >/dev/null 2>&1 &&
+		_feedback_route_labels_allow_worker_route "$pr_labels" 1; then
+		printf '%s\n' "$branch_sha" >>"$state_file" 2>/dev/null || true
+		local ub_rc=0
+		_pmp_update_branch_rest "$pr_number" "$repo_slug" "$branch_sha" >/dev/null 2>&1 || ub_rc=$?
+		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — PR head ${pr_head_sha:0:12} desynced from branch ref ${branch_sha:0:12}; update-branch resync rc=${ub_rc}" >>"$LOGFILE"
+		[[ "$ub_rc" -ne 0 ]] || return 0
+	fi
+	echo "[pulse-merge] ATTENTION: PR #${pr_number} in ${repo_slug} head ${pr_head_sha:0:12} is desynced from branch ref ${branch_sha:0:12} (GitHub did not process the latest push); push to the branch or close/reopen the PR to resync" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Resolve PR mergeable status, retrying once for UNKNOWN state.
 # Returns 0 if MERGEABLE, 1 if not (caller should skip this PR).
 # Args: $1=pr_number, $2=repo_slug, $3=current_mergeable_state
+#       $4=PR head SHA, $5=PR labels (csv), $6=head ref name (all optional;
+#       absent → no desync check)
 #######################################
 _resolve_pr_mergeable_status() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local pr_mergeable="$3"
+	local pr_head_sha="${4:-}"
+	local pr_labels="${5:-}"
+	local head_ref_name="${6:-}"
 	local original_mergeable="$pr_mergeable"
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 
@@ -562,6 +619,9 @@ _resolve_pr_mergeable_status() {
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — mergeable resolved to MERGEABLE after retry" >>"$LOGFILE"
 		else
 			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — mergeable=${pr_mergeable} (was ${_was_label}, still not MERGEABLE after retry)" >>"$LOGFILE"
+			if [[ "$pr_mergeable" == UNKNOWN ]]; then
+				_pmp_resync_desynced_pr_head "$pr_number" "$repo_slug" "$pr_head_sha" "$pr_labels" "$head_ref_name"
+			fi
 			return 1
 		fi
 	fi

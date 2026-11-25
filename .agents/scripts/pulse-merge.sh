@@ -1374,7 +1374,7 @@ _pmp_stage_review_and_gates() {
 		_pmp_record_negative_verdict "$repo_slug" "$pr_obj" review_unknown
 		return 1
 	fi
-	if ! _resolve_pr_mergeable_status "$pr_number" "$repo_slug" "$pr_mergeable"; then
+	if ! _resolve_pr_mergeable_status "$pr_number" "$repo_slug" "$pr_mergeable" "$pr_head_ref_oid" "$pr_labels" "$pr_head_ref_name"; then
 		[[ "$pr_mergeable" != UNKNOWN ]] || _pmp_record_negative_verdict "$repo_slug" "$pr_obj" mergeable_unknown
 		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
 		return 1
