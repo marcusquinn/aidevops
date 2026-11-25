@@ -134,7 +134,7 @@ def identity(repo, worktree, relative):
         if relative not in members:
             raise Rejected("not-workspace-member")
         source, dest = package_directories(repo, worktree, relative)
-        manifest = matching_package(source, dest, require_name=relative == Path("."))
+        manifest = matching_package(source, dest, require_name=relative != Path("."))
         required = required_dependencies(manifest)
         return contained_path(source / "node_modules"), (
             "workspace", inventory, repo, source / "node_modules", required, worktree)
