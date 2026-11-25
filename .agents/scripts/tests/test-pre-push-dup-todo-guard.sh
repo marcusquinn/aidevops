@@ -66,8 +66,9 @@ _setup_git_repo() {
 	# available in headless test runs.
 	git config commit.gpgsign false
 	git config tag.gpgsign false
-	# Initial commit required before git show works
-	touch TODO.md
+	# Model the existing task-bearing baseline this regression suite compares.
+	# Empty-baseline detector behaviour is separate from incremental drift.
+	printf '%s\n' '- [ ] t1 Existing baseline task ref:GH#1' >TODO.md
 	git add TODO.md
 	git commit -q -m "init"
 	_BASE_SHA=$(git rev-parse HEAD)
@@ -374,12 +375,8 @@ test_hierarchical_id_duplicate() {
 	_sha=$(_commit_todo "$_content")
 
 	local _stdout _stderr
-	_stdout=$(bash "$HOOK" origin "https://github.com/test/repo" \
-		<<<"refs/heads/test ${_sha} refs/heads/main 0000000000000000000000000000000000000000" \
-		2>/dev/null)
-	_stderr=$(bash "$HOOK" origin "https://github.com/test/repo" \
-		<<<"refs/heads/test ${_sha} refs/heads/main 0000000000000000000000000000000000000000" \
-		2>&1 1>/dev/null)
+	_stdout=$(_run_hook "$_sha" 2>/dev/null)
+	_stderr=$(_run_hook "$_sha" 2>&1 1>/dev/null)
 	local _rc=$?
 
 	_teardown_git_repo
@@ -415,9 +412,7 @@ test_indented_subtask_duplicate() {
 	_sha=$(_commit_todo "$_content")
 
 	local _stderr
-	_stderr=$(bash "$HOOK" origin "https://github.com/test/repo" \
-		<<<"refs/heads/test ${_sha} refs/heads/main 0000000000000000000000000000000000000000" \
-		2>&1 1>/dev/null)
+	_stderr=$(_run_hook "$_sha" 2>&1 1>/dev/null)
 	local _rc=$?
 
 	_teardown_git_repo

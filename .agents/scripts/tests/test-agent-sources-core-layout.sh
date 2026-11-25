@@ -38,13 +38,14 @@ setup() {
 
 	local agents_dir="$TEST_HOME/.aidevops/agents"
 	local source_dir="$TEST_HOME/private-core/.agents"
+	export AIDEVOPS_AGENTS_DIR="$agents_dir"
+	export AIDEVOPS_AGENT_SOURCES_CONFIG="$agents_dir/configs/agent-sources.json"
 	mkdir -p "$agents_dir/scripts" "$agents_dir/configs" "$source_dir/client-ops" \
 		"$source_dir/tools" "$source_dir/services" "$source_dir/workflows" \
 		"$source_dir/reference" "$source_dir/scripts/commands"
-	cp "$REPO_ROOT/.agents/scripts/agent-sources-helper.sh" "$agents_dir/scripts/"
-	cp "$REPO_ROOT/.agents/scripts/subagent-index-helper.sh" "$agents_dir/scripts/"
-	cp "$REPO_ROOT/.agents/scripts/portable-stat.sh" "$agents_dir/scripts/"
-	cp "$REPO_ROOT"/.agents/scripts/shared-*.sh "$agents_dir/scripts/"
+	# Deploy the dependency closure, not a stale hand-maintained subset of shared
+	# modules. The disposable HOME still owns all generated state and symlinks.
+	cp -R "$REPO_ROOT/.agents/scripts/." "$agents_dir/scripts/"
 	chmod +x "$agents_dir/scripts/agent-sources-helper.sh" "$agents_dir/scripts/subagent-index-helper.sh"
 
 	cat >"$agents_dir/configs/agent-sources.json" <<JSON
@@ -116,8 +117,8 @@ assert_path() {
 
 test_sync_preserves_core_layout() {
 	local output=""
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1)
-	local status=$?
+	local status=0
+	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1) || status=$?
 	if [[ "$status" -ne 0 ]]; then
 		print_result "sync core layout" 1 "$output"
 		return 0
@@ -149,8 +150,8 @@ test_sync_preserves_core_layout() {
 
 test_index_discovers_core_layout() {
 	local output=""
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1)
-	local status=$?
+	local status=0
+	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1) || status=$?
 	if [[ "$status" -ne 0 ]]; then
 		print_result "generate subagent index" 1 "$output"
 		return 0

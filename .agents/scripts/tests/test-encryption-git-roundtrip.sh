@@ -30,7 +30,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 HELPER_DIR="${SCRIPT_DIR}/.."
-TEST_DIR="/tmp/t004.42-encryption-test-$$"
+TEST_DIR=$(mktemp -d -t aidevops-encryption-test.XXXXXX)
 PASS=0
 FAIL=0
 SKIP=0
@@ -101,9 +101,9 @@ command -v gpg &>/dev/null && HAS_GPG=true
 # Source sub-libraries
 # =============================================================================
 
-# shellcheck source=../test-encryption-git-roundtrip-secret.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $HELPER_DIR
-source "${HELPER_DIR}/test-encryption-git-roundtrip-secret.sh"
+# The secret sub-library named by the original split was never committed.
+# Use the maintained production-path suite below rather than restoring its
+# obsolete copies of parsing, redaction and credential-update implementations.
 
 # shellcheck source=../test-encryption-git-roundtrip-sops.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $HELPER_DIR
@@ -139,12 +139,11 @@ echo ""
 
 # Section 1: secret-helper.sh
 echo "--- Section 1: secret-helper.sh ---"
-test_credentials_fallback_roundtrip
-test_redaction_filter
-test_multi_tenant_resolution
-test_secret_helper_dispatch
-test_gopass_roundtrip
-test_credential_update
+if bash "${SCRIPT_DIR}/test-secret-helper.sh"; then
+	pass "secret-helper production paths (isolated credentials, gopass, redaction and tenant fixtures)"
+else
+	fail "secret-helper production-path regression suite"
+fi
 
 # Section 2: sops-helper.sh
 echo ""

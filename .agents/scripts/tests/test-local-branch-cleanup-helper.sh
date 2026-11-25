@@ -24,6 +24,11 @@ mkdir -p "$HOME/.aidevops/logs"
 ln -s "$(cd "${TEST_DIR}/../.." && pwd)" "$HOME/.aidevops/agents"
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
+# The fixture has no service manager and owns its own lifecycle state.
+export AIDEVOPS_WORKTREE_MANAGER=legacy-guards
+export AIDEVOPS_LIFECYCLE_STATE_DIR="$ROOT/lifecycle"
+export AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT"
+unset AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; return 1; }
 assert_has() {
@@ -152,6 +157,9 @@ content="$ROOT/transport/repo-remote-branch-cleanup-${dead_pid}"
 git -C "$REPO" worktree add -q --detach "$content" HEAD
 printf 'work\n' >"$content/untracked"
 reclaimed=$(bash -c 'source "$1/shared-constants.sh"; source "$1/audit-worktree-removal-helper.sh"
+	# Fixture creators and content are checked below; unrelated login daemons
+	# must not turn this deterministic census into degraded host visibility.
+	capture_worktree_process_cwds() { printf "/\n"; return 0; }
 	reclaim_branch_cleanup_transports "$2" test' _ "$SCRIPTS" "$REPO") || fail 'reclaim pass failed'
 [[ "$reclaimed" == 1 ]] || fail "expected one reclaimed transport, got $reclaimed"
 [[ ! -e "$leaked" && "$(git -C "$REPO" worktree list --porcelain)" != *"$leaked"* ]] || fail 'leaked transport not reclaimed'

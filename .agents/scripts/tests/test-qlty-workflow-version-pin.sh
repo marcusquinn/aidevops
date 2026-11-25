@@ -14,13 +14,22 @@ WORKFLOWS=(
 	".github/workflows/ratchet-post-merge.yml"
 )
 
+installer="${ROOT}/.agents/scripts/qlty-install-pinned.sh"
+grep -Fq "version='${EXPECTED_VERSION}'" "$installer"
+grep -Eq "^digest='[0-9a-f]{64}'$" "$installer"
+grep -Fq 'sha256sum --check --status' "$installer"
+printf 'PASS repository installer pins the expected version and verifies its digest\n'
+
 for workflow in "${WORKFLOWS[@]}"; do
 	workflow_path="${ROOT}/${workflow}"
-	install_count=$(grep -c 'uses: qltysh/qlty-action/install@' "$workflow_path" || true)
+	install_count=$(grep -cF 'run: bash .agents/scripts/qlty-install-pinned.sh' "$workflow_path" || true)
 	[[ "$install_count" -gt 0 ]]
 	grep -Fq "QLTY_VERSION: \"${EXPECTED_VERSION}\"" "$workflow_path"
-	pinned_count=$(grep -cF 'uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0' "$workflow_path" || true)
-	[[ "$pinned_count" -eq "$install_count" ]]
+	# The repository installer verifies release checksums instead of an action pin.
+	if grep -q 'uses: qltysh/qlty-action/install@' "$workflow_path"; then
+		printf 'FAIL %s still uses the retired action installer\n' "$workflow" >&2
+		exit 1
+	fi
 	printf 'PASS %s pins %s Qlty installer step(s) to %s\n' "$workflow" "$install_count" "$EXPECTED_VERSION"
 done
 

@@ -115,12 +115,12 @@ test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment() {
 	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
 		post_body=$(<"${tmp_dir}/post_body.txt")
 	fi
-	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+	if grep -q 'reason=stale_worker_takeover' <<<"$post_body"; then
 		print_result "ops-wrapped stale worker takeover claim includes reason" 0
 	else
 		print_result "ops-wrapped stale worker takeover claim includes reason" 1 "body: ${post_body:-none}"
 	fi
-	if printf '%s' "$post_body" | grep -q '<!-- ops:start' && printf '%s' "$post_body" | grep -q '<!-- ops:end -->'; then
+	if grep -q '<!-- ops:start' <<<"$post_body" && grep -q '<!-- ops:end -->' <<<"$post_body"; then
 		print_result "claim comments are ops-wrapped" 0
 	else
 		print_result "claim comments are ops-wrapped" 1 "body: ${post_body:-none}"
@@ -238,6 +238,24 @@ test_claim_rereads_until_own_claim_visible() {
 	return 0
 }
 
+write_fallback_chmod_stub() {
+	local mock_path="$1"
+	cat >"${mock_path}/chmod" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${2:-}" != *"/.aidevops-claim-post-error."* ]]; then
+	command -p chmod "$@"
+	exit $?
+fi
+printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
+if [[ -e "${2:-}" ]]; then
+	python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "${2:-}" >>"${MOCK_CHMOD_LOG:?}.pre" || true
+fi
+command -p chmod "$@"
+EOF
+	chmod +x "${mock_path}/chmod"
+	return 0
+}
+
 #######################################
 # Test: claim POST stderr fallback avoids predictable /tmp paths when mktemp fails.
 #######################################
@@ -256,15 +274,7 @@ exit 1
 EOF
 	chmod +x "${mock_path}/mktemp"
 	chmod_log="${tmp_dir}/chmod.log"
-	cat >"${mock_path}/chmod" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
-if [[ -e "${2:-}" ]]; then
-	python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "${2:-}" >>"${MOCK_CHMOD_LOG:?}.pre" || true
-fi
-command -p chmod "$@"
-EOF
-	chmod +x "${mock_path}/chmod"
+	write_fallback_chmod_stub "$mock_path"
 	set +e
 	output=$(PATH="${mock_path}:$PATH" \
 		HOME="${test_home}/" \
@@ -369,7 +379,7 @@ test_help_exits_zero() {
 	run_helper "$CLAIM_HELPER" help
 	output=$("$CLAIM_HELPER" help 2>&1)
 	local has_usage=1
-	if printf '%s' "$output" | grep -q "dispatch-claim-helper.sh"; then
+	if grep -q "dispatch-claim-helper.sh" <<<"$output"; then
 		has_usage=0
 	fi
 	print_result "help exits 0" "$LAST_EXIT"
@@ -913,19 +923,19 @@ test_env_var_defaults() {
 	output=$(DISPATCH_CLAIM_WINDOW=15 DISPATCH_CLAIM_MAX_AGE=300 DISPATCH_CLAIM_SELF_RECLAIM_AGE=45 \
 		bash -c 'source "'"$CLAIM_HELPER"'" 2>/dev/null; echo "window=$DISPATCH_CLAIM_WINDOW max_age=$DISPATCH_CLAIM_MAX_AGE self_reclaim=$DISPATCH_CLAIM_SELF_RECLAIM_AGE"' 2>/dev/null || true)
 
-	if printf '%s' "$output" | grep -q "window=15"; then
+	if grep -q "window=15" <<<"$output"; then
 		print_result "DISPATCH_CLAIM_WINDOW env var respected" 0
 	else
 		print_result "DISPATCH_CLAIM_WINDOW env var respected" 1 "got: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "max_age=300"; then
+	if grep -q "max_age=300" <<<"$output"; then
 		print_result "DISPATCH_CLAIM_MAX_AGE env var respected" 0
 	else
 		print_result "DISPATCH_CLAIM_MAX_AGE env var respected" 1 "got: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "self_reclaim=45"; then
+	if grep -q "self_reclaim=45" <<<"$output"; then
 		print_result "DISPATCH_CLAIM_SELF_RECLAIM_AGE env var respected" 0
 	else
 		print_result "DISPATCH_CLAIM_SELF_RECLAIM_AGE env var respected" 1 "got: $output"
@@ -964,7 +974,7 @@ test_check_releases_claim_only_orphan() {
 	if [[ -f "${tmp_dir}/release_body.txt" ]]; then
 		release_body=$(<"${tmp_dir}/release_body.txt")
 	fi
-	if printf '%s' "$release_body" | grep -q 'CLAIM_RELEASED reason=claim_only_no_worker'; then
+	if grep -q 'CLAIM_RELEASED reason=claim_only_no_worker' <<<"$release_body"; then
 		print_result "claim-only orphan posts release marker" 0
 	else
 		print_result "claim-only orphan posts release marker" 1 "body=${release_body:-none}"
@@ -1159,7 +1169,7 @@ test_check_preserves_fresh_claim_only_marker() {
 	exit_code=$?
 	set -e
 
-	if [[ "$exit_code" -eq 0 ]] && printf '%s' "$output" | grep -q 'ACTIVE_CLAIM'; then
+	if [[ "$exit_code" -eq 0 ]] && grep -q 'ACTIVE_CLAIM' <<<"$output"; then
 		print_result "fresh claim-only marker remains active" 0
 	else
 		print_result "fresh claim-only marker remains active" 1 "exit=${exit_code} output=${output}"
@@ -1353,7 +1363,7 @@ test_claim_rejects_stale_same_runner_claim() {
 		print_result "stale same-runner claim exits 1 (rejected)" 1 "got exit $exit_code output: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+	if grep -q "CLAIM_STALE_SELF:" <<<"$output"; then
 		print_result "stale same-runner claim emits CLAIM_STALE_SELF" 0
 	else
 		print_result "stale same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
@@ -1410,7 +1420,7 @@ test_claim_rejects_fresh_same_runner_claim() {
 		print_result "fresh same-runner claim exits 1 (rejected)" 1 "got exit $exit_code output: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+	if grep -q "CLAIM_STALE_SELF:" <<<"$output"; then
 		print_result "fresh same-runner claim emits CLAIM_STALE_SELF" 0
 	else
 		print_result "fresh same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
@@ -1481,7 +1491,7 @@ test_claim_reads_paginated_comment_tail() {
 		print_result "paginated comments find prior same-runner claim" 1 "got exit $exit_code output: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+	if grep -q "CLAIM_STALE_SELF:" <<<"$output"; then
 		print_result "paginated prior claim emits CLAIM_STALE_SELF" 0
 	else
 		print_result "paginated prior claim emits CLAIM_STALE_SELF" 1 "output: $output"
@@ -1522,7 +1532,7 @@ test_claim_reads_lowercase_paginated_claim_marker() {
 		print_result "lowercase paginated claim marker is detected" 1 "got exit $exit_code output: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+	if grep -q "CLAIM_STALE_SELF:" <<<"$output"; then
 		print_result "lowercase claim marker remains authoritative" 0
 	else
 		print_result "lowercase claim marker remains authoritative" 1 "output: $output"
@@ -1564,7 +1574,7 @@ test_claim_ignore_filter_preserves_self_claim() {
 		print_result "legacy ignore filter preserves self claim" 1 "got exit $exit_code output: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+	if grep -q "CLAIM_STALE_SELF:" <<<"$output"; then
 		print_result "self-preserved ignored claim remains authoritative" 0
 	else
 		print_result "self-preserved ignored claim remains authoritative" 1 "output: $output"
@@ -1606,7 +1616,7 @@ test_claim_structured_override_preserves_self_claim() {
 		print_result "structured override preserves self claim" 1 "got exit $exit_code output: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+	if grep -q "CLAIM_STALE_SELF:" <<<"$output"; then
 		print_result "self-preserved structured claim remains authoritative" 0
 	else
 		print_result "self-preserved structured claim remains authoritative" 1 "output: $output"
@@ -1652,17 +1662,17 @@ test_claim_marks_stale_worker_takeover() {
 	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
 		post_body=$(<"${tmp_dir}/post_body.txt")
 	fi
-	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+	if grep -q 'reason=stale_worker_takeover' <<<"$post_body"; then
 		print_result "stale worker takeover claim includes reason" 0
 	else
 		print_result "stale worker takeover claim includes reason" 1 "body: ${post_body:-none}"
 	fi
-	if printf '%s' "$post_body" | grep -q 'version=[0-9][0-9.]*'; then
+	if grep -q 'version=[0-9][0-9.]*' <<<"$post_body"; then
 		print_result "claim includes aidevops version" 0
 	else
 		print_result "claim includes aidevops version" 1 "body: ${post_body:-none}"
 	fi
-	if printf '%s' "$post_body" | grep -q 'opencode_version=1.14.33'; then
+	if grep -q 'opencode_version=1.14.33' <<<"$post_body"; then
 		print_result "claim includes OpenCode version" 0
 	else
 		print_result "claim includes OpenCode version" 1 "body: ${post_body:-none}"
@@ -1708,7 +1718,7 @@ test_claim_marks_paginated_stale_worker_takeover() {
 	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
 		post_body=$(<"${tmp_dir}/post_body.txt")
 	fi
-	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+	if grep -q 'reason=stale_worker_takeover' <<<"$post_body"; then
 		print_result "paginated stale worker takeover includes reason" 0
 	else
 		print_result "paginated stale worker takeover includes reason" 1 "body: ${post_body:-none}"
@@ -1762,7 +1772,7 @@ CLAIM_RELEASED reason=worker_complete
 	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
 		post_body=$(<"${tmp_dir}/post_body.txt")
 	fi
-	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+	if grep -q 'reason=stale_worker_takeover' <<<"$post_body"; then
 		print_result "terminal worker claim omits takeover reason" 1 "body: $post_body"
 	else
 		print_result "terminal worker claim omits takeover reason" 0
@@ -1814,7 +1824,7 @@ claim_released reason=worker_complete
 	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
 		post_body=$(<"${tmp_dir}/post_body.txt")
 	fi
-	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+	if grep -q 'reason=stale_worker_takeover' <<<"$post_body"; then
 		print_result "lowercase terminal marker omits takeover reason" 1 "body: $post_body"
 	else
 		print_result "lowercase terminal marker omits takeover reason" 0

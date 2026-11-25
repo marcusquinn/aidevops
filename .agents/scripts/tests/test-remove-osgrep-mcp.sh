@@ -13,6 +13,13 @@ assert_only_compatibility_or_history_references_remain() {
 
 	while IFS= read -r relative_path; do
 		case "$relative_path" in
+		.agents/plugins/opencode-aidevops/intent-tracing.mjs)
+			# Keep historical telemetry classification, but reject any other use.
+			if git -C "$REPO_ROOT" grep -i osgrep -- "$relative_path" | grep -vF '["osgrep", "search"],'; then
+				unexpected=1
+			fi
+			continue
+			;;
 		.agents/scripts/lib/mcp_config.py | \
 			.agents/scripts/setup/modules/migrations.sh | \
 			.agents/scripts/tests/test-remove-osgrep-mcp.sh | \
@@ -52,6 +59,7 @@ import sys
 repo_root = pathlib.Path(sys.argv[1])
 config_path = pathlib.Path(sys.argv[2])
 module_path = repo_root / ".agents/scripts/lib/mcp_config.py"
+sys.path.insert(0, str(module_path.parent))
 spec = importlib.util.spec_from_file_location("mcp_config", module_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

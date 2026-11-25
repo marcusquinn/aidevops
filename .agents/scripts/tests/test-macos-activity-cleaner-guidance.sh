@@ -98,7 +98,8 @@ assert_file_contains "agent preserves active listeners" "$agent_file" 'Never kil
 
 assert_file_contains "Automate can delegate cleaner" ".agents/automate.md" '^  - macos-activity-cleaner$'
 assert_file_contains "domain routing includes cleaner" ".agents/reference/domain-index.md" 'tools/automation/macos-activity-cleaner\.md'
-assert_file_contains "README documents cleaner" "README.md" '@macos-activity-cleaner'
+# The compact README delegates the detailed specialist catalogue to the index.
+assert_file_contains "domain catalogue documents cleaner" ".agents/reference/domain-index.md" 'scripts/commands/macos-activity-cleaner\.md'
 assert_file_contains "subagent index includes cleaner" ".agents/subagent-index.toon" '^tools/automation/.*macos-activity-cleaner'
 assert_file_contains "subagent index preserves public relations" ".agents/subagent-index.toon" '^public-relations/'
 assert_file_contains "behavioral suite invokes deployed command" ".agents/tests/macos-activity-cleaner.json" '"command": "aidevops-macos-activity-cleaner"'

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-worker-output-discovery.sh — Regression tests for the worktree-discovery
-# logic added to `_worker_produced_output` by t2982 (GH#21354).
+# test-worker-output-discovery.sh — Worktree-local output classification.
+# Historical t2982 discovery must not redirect the current classifier away from
+# its explicitly supplied work_dir, even when a sibling branch names the issue.
 #
 # Background (Mode B/C worker misclassification)
 # -----------------------------------------------
@@ -18,16 +19,16 @@
 #   Mode C: worker merges its PR and exits back on the default branch. Same
 #           symptom: branch_name = "main" → noop.
 #
-# The fix: before reading HEAD, scan `git worktree list --porcelain` for a
-# worktree whose branch ref contains `gh-?<WORKER_ISSUE_NUMBER>`. If found,
-# use that path (actual_dir) for the branch_name read.
+# Current contract: classify only work_dir. Dispatch/recovery chooses its exact
+# worktree before calling this function; branch-name discovery here would let a
+# sibling attempt's output satisfy the wrong worker's completion contract.
 #
 # Cases tested here
 # -----------------
 #   1. Work done in a separate worktree (Mode B simulation):
 #      WORKER_ISSUE_NUMBER=99999, work_dir on main, feature worktree on
-#      bugfix/gh-99999-fix → branch_name should be "bugfix/gh-99999-fix",
-#      not "main". Expected: pr_exists (PR count stub = 1).
+#      bugfix/gh-99999-fix must not redirect classification away from main.
+#      Expected: noop in the supplied main tree.
 #
 #   2. WORKER_ISSUE_NUMBER unset (non-issue worker / backward compat):
 #      work_dir on main with no feature worktree → falls back to work_dir.
@@ -38,7 +39,7 @@
 #      Expected: noop (no commits, no pushed branch in work_dir).
 #
 #   4. gh-hyphen variant: worktree branch uses gh-99999 (with hyphen).
-#      Expected: discovery succeeds, pr_exists (PR count stub = 1).
+#      Expected: noop; spelling the sibling branch differently changes nothing.
 
 set -uo pipefail
 
@@ -178,13 +179,13 @@ add_feature_worktree() {
 
 test_mode_b_discovery_finds_feature_worktree() {
 	make_repo_pair "modeb" || {
-		print_result "case 1 (Mode B): work_dir=main, feature worktree matches issue → pr_exists" \
+		print_result "case 1: matching sibling does not redirect main → noop" \
 			1 "fixture setup failed"
 		return 0
 	}
 	local feature_wt="${TEST_ROOT}/feature-modeb"
 	add_feature_worktree "$MAIN_WORK_DIR" "$feature_wt" "bugfix/gh99999-mode-b" || {
-		print_result "case 1 (Mode B): work_dir=main, feature worktree matches issue → pr_exists" \
+		print_result "case 1: matching sibling does not redirect main → noop" \
 			1 "feature worktree setup failed"
 		return 0
 	}
@@ -193,11 +194,11 @@ test_mode_b_discovery_finds_feature_worktree() {
 	local got
 	got=$(_worker_produced_output "issue-99999" "$MAIN_WORK_DIR")
 	unset WORKER_ISSUE_NUMBER
-	if [[ "$got" == "pr_exists" ]]; then
-		print_result "case 1 (Mode B): work_dir=main, feature worktree matches issue → pr_exists" 0
+	if [[ "$got" == "noop" ]]; then
+		print_result "case 1: matching sibling does not redirect main → noop" 0
 	else
-		print_result "case 1 (Mode B): work_dir=main, feature worktree matches issue → pr_exists" \
-			1 "got: $got (expected pr_exists — discovery should find bugfix/gh99999-mode-b)"
+		print_result "case 1: matching sibling does not redirect main → noop" \
+			1 "got: $got (expected noop in the supplied main worktree)"
 	fi
 	return 0
 }
@@ -250,13 +251,13 @@ test_no_matching_worktree_falls_back_to_work_dir() {
 
 test_hyphen_variant_discovery() {
 	make_repo_pair "hyphen" || {
-		print_result "case 4 (hyphen): branch uses gh-99999 (with hyphen) → pr_exists" \
+		print_result "case 4: hyphenated sibling does not redirect main → noop" \
 			1 "fixture setup failed"
 		return 0
 	}
 	local feature_wt="${TEST_ROOT}/feature-hyphen"
 	add_feature_worktree "$MAIN_WORK_DIR" "$feature_wt" "feature/auto-gh-99999-some-fix" || {
-		print_result "case 4 (hyphen): branch uses gh-99999 (with hyphen) → pr_exists" \
+		print_result "case 4: hyphenated sibling does not redirect main → noop" \
 			1 "feature worktree setup failed"
 		return 0
 	}
@@ -265,11 +266,11 @@ test_hyphen_variant_discovery() {
 	local got
 	got=$(_worker_produced_output "issue-99999" "$MAIN_WORK_DIR")
 	unset WORKER_ISSUE_NUMBER
-	if [[ "$got" == "pr_exists" ]]; then
-		print_result "case 4 (hyphen): branch uses gh-99999 (with hyphen) → pr_exists" 0
+	if [[ "$got" == "noop" ]]; then
+		print_result "case 4: hyphenated sibling does not redirect main → noop" 0
 	else
-		print_result "case 4 (hyphen): branch uses gh-99999 (with hyphen) → pr_exists" \
-			1 "got: $got (expected pr_exists — discovery should find feature/auto-gh-99999-some-fix)"
+		print_result "case 4: hyphenated sibling does not redirect main → noop" \
+			1 "got: $got (expected noop in the supplied main worktree)"
 	fi
 	return 0
 }

@@ -197,9 +197,10 @@ assert_contains "postflight PAT access has an explicit trust-boundary marker" \
 assert_contains "postflight rejects non-main workflow dispatches" \
 	'[[ "$GITHUB_REF" == "refs/heads/main" ]]' "$POSTFLIGHT_WORKFLOW"
 # shellcheck disable=SC2016 # Match literal workflow content and expressions.
-assert_order "postflight verifies reviewed main before exposing the PAT fallback" \
+assert_order "postflight verifies reviewed main before using the read-only job token" \
 	'[[ "$GITHUB_REF" == "refs/heads/main" ]]' \
-	'GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}' "$POSTFLIGHT_WORKFLOW"
+	'GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}' "$POSTFLIGHT_WORKFLOW"
+assert_absent "read-only postflight never exposes the write PAT" 'secrets.SYNC_PAT' "$POSTFLIGHT_WORKFLOW"
 # shellcheck disable=SC2016 # Match the literal verifier command.
 assert_order "release provenance precedes release creation" \
 	'bash "$VERIFIER" verify' "github-release-helper.sh create" "$PACKAGE_WORKFLOW"
@@ -251,12 +252,12 @@ printf 'PASS postflight uses exactly two bounded dispatch attempts\n'
 
 # shellcheck disable=SC2016 # Match the literal workflow expression.
 postflight_token_fallback_count=$(grep -cF \
-	'GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}' "$POSTFLIGHT_WORKFLOW" || true)
+	'GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}' "$POSTFLIGHT_WORKFLOW" || true)
 if [[ "$postflight_token_fallback_count" -ne 2 ]]; then
-	printf 'FAIL postflight must use the protected token fallback for both API polling steps\n'
+	printf 'FAIL postflight must use the read-only job token for both API polling steps\n'
 	exit 1
 fi
-printf 'PASS postflight uses the protected token fallback for both API polling steps\n'
+printf 'PASS postflight uses the read-only job token for both API polling steps\n'
 
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT

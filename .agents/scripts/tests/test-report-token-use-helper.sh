@@ -219,6 +219,24 @@ SQL
 	return 0
 }
 
+test_report_classifies_auto_worktree_workers() {
+	create_fixture_dbs
+	sqlite3 "${TEST_ROOT}/opencode.db" <<'SQL'
+INSERT INTO session VALUES ('ses_auto_wt', NULL, 'Issue #1: auto', '{"id":"gpt-5.5","providerID":"openai"}', 10, 2, 1, 4, 1, 0.05, 1699999900000, 1699999950000, NULL, '/worktrees/aidevops-feature-auto-20261125-015818-gh40241', '/worktrees/aidevops-feature-auto-20261125-015818-gh40241', 'Build+');
+INSERT INTO session VALUES ('ses_manual_wt', NULL, 'Manual worktree', '{"id":"gpt-5.5","providerID":"openai"}', 10, 2, 1, 4, 1, 0.05, 1699999800000, 1699999850000, NULL, '/worktrees/aidevops-feature-my-change', '/worktrees/aidevops-feature-my-change', 'Build+');
+SQL
+	local _json_path="${TEST_ROOT}/data-auto-wt.json"
+	AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB="${TEST_ROOT}/opencode.db" \
+		AIDEVOPS_REPORT_TOKEN_USE_OBS_DB="${TEST_ROOT}/llm-requests.db" \
+		AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_CONFIG="${TEST_ROOT}/opencode.json" \
+		"$HELPER_SH" data --full --limit 10 --daily-days 2000 --json >"$_json_path"
+	assert_json_field "$_json_path" "sessions[1].session_kind" "headless_worker" "Report classifies feature-auto worktree session as headless worker"
+	assert_json_field "$_json_path" "sessions[1].session_kind_provenance" "directory: pulse feature-auto worktree" "Report records worktree provenance"
+	assert_json_field "$_json_path" "sessions[2].session_kind" "interactive" "Report keeps non-auto worktree interactive"
+	assert_json_field "$_json_path" "sessions[0].session_kind" "interactive" "Report keeps canonical repo session interactive"
+	return 0
+}
+
 test_report_uses_observability_cost_and_lineage() {
 	create_fixture_dbs
 	sqlite3 "${TEST_ROOT}/opencode.db" <<'SQL'
@@ -345,6 +363,7 @@ main() {
 	trap teardown_test_env EXIT
 	test_report_aggregates_compacted_sessions
 	test_report_summarizes_headless_workers
+	test_report_classifies_auto_worktree_workers
 	test_report_uses_observability_cost_and_lineage
 	test_session_report_defaults_source_ids
 	test_data_defaults_to_compact_schema

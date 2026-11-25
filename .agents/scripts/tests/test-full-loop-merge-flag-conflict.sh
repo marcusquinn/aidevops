@@ -57,6 +57,9 @@ setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	# Declare only the mocked target as managed; retain the real write guard.
+	export AIDEVOPS_REPOS_JSON="${TEST_ROOT}/repos.json"
+	printf '%s\n' '{"initialized_repos":[{"slug":"testorg/testrepo","role":"maintainer"}]}' >"$AIDEVOPS_REPOS_JSON"
 
 	# Stub gh — logs every invocation, returns success for `pr merge`,
 	# returns canned values for the few read-only calls cmd_merge makes.

@@ -77,22 +77,24 @@ run_stale_status_test() (
 	print_error() { :; }
 	git() {
 		case "$*" in
-		*'rel^{tree}') printf 'release-tree\n' ;;
-		*'active^{tree}') printf 'active-tree\n' ;;
-		*'fetch origin main'*) return 0 ;;
-		*'origin/main^{commit}') printf 'protected-main\n' ;;
-		*'merge-base --is-ancestor active protected-main'*) return 0 ;;
+		*'merge-base --is-ancestor rel active') return 0 ;;
 		*) return 1 ;;
 		esac
 	}
 	local rc=0
 	_verify_release_descendant_active_source repo rel active >/dev/null 2>&1 || rc=$?
-	[[ "$rc" -eq 76 ]]
+	# A validated descendant containing the exact release is now preserved even
+	# when protected main has advanced; unrelated ancestry must still fail.
+	[[ "$rc" -eq 0 ]] || return 1
+	if _verify_release_descendant_active_source repo rel unrelated; then
+		return 1
+	fi
+	return 0
 )
 
 check 'exact stale-runtime attempt defers through lane CAS' run_exact_attempt_test
 check 'revision mismatch performs no lane write' run_refusal_test
 check 'owner mismatch performs no lane write' run_owner_refusal_test
-check 'proven stale descendant propagates dedicated status' run_stale_status_test
+check 'exact-release descendant is preserved and unrelated ancestry is rejected' run_stale_status_test
 printf '\nFailures: %s\n' "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]

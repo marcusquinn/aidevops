@@ -308,7 +308,7 @@ test_dashboard_freshness_precedes_maintenance() {
 		in_production && /^}$/ { exit }
 	' "$dashboard_script")
 	update_line=$(printf '%s\n' "$production_snippet" | grep -nE '^[[:space:]]*_update_health_issue_body_or_fail ' | head -1 | cut -d: -f1)
-	maintenance_line=$(printf '%s\n' "$production_snippet" | grep -nE '^[[:space:]]*(_periodic_health_issue_dedup|_normalize_health_issue_labels|_ensure_health_issue_pinned)' | head -1 | cut -d: -f1)
+	maintenance_line=$(awk '/^[[:space:]]*_run_health_issue_maintenance / { print NR; exit }' <<<"$production_snippet")
 	if [[ -n "$update_line" && -n "$maintenance_line" && "$update_line" -lt "$maintenance_line" ]]; then
 		print_result "dashboard freshness publishes before lifecycle maintenance" 0
 		return 0
