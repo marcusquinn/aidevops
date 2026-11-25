@@ -102,8 +102,9 @@ privacy_redact() {
 # Redact a single path value in full, including spaces in the path.
 privacy_redact_path() {
 	local value="$1"
+	local tilde='~'
 	case "$value" in
-	/Users/* | /home/* | /private/var/* | /var/folders/* | /var/tmp/* | /tmp/* | \~/Git/*)
+	/Users/* | /home/* | /private/var/* | /var/folders/* | /var/tmp/* | /tmp/* | "$tilde"/*)
 		printf '%s' "[local-path]"
 		return 0
 		;;
