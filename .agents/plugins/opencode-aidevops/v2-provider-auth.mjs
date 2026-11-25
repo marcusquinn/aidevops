@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import {
+  ensureValidToken,
   getAccounts,
   markRejectedTokenFailure,
   patchAccount,
@@ -21,6 +22,7 @@ import {
   transformOpenAIRequestBody,
 } from "./openai-provider-auth.mjs";
 import { usageUpdateFromHeaders } from "./oauth-pool-ordering.mjs";
+import { createCacheKeepalive } from "./cache-keepalive.mjs";
 
 const SUPPORTED_PROVIDERS = new Set(["anthropic", "openai"]);
 const DEFAULT_COOLDOWN_MS = 300_000;
@@ -39,11 +41,11 @@ function requestBodyAllowed(request) {
   return !["GET", "HEAD"].includes(request.method.toUpperCase());
 }
 
-async function transformedBody(request, provider, sessionID) {
+async function transformedBody(request, provider, sessionID, rawBody) {
   if (!requestBodyAllowed(request)) return undefined;
   // The V2 HTTP hook receives already-encoded bytes; decoding them as text is lossy.
   if (request.headers.get("content-encoding")) return undefined;
-  const body = await request.clone().text().catch(() => null);
+  const body = rawBody ?? await request.clone().text().catch(() => null);
   if (body === null) return undefined;
   return provider === "anthropic"
     ? transformRequestBody(body, { sessionID })
@@ -110,11 +112,20 @@ function createHttpRequestHook(runtime) {
     const account = await runtime.selectAccount(provider, skipKey);
     if (!account?.access) return;
     runtime.activateProvider(provider);
-    const body = await transformedBody(event.request, provider, event.sessionID);
+    const original = event.request;
+    const rawBody = provider === "anthropic" && requestBodyAllowed(original)
+      && !original.headers.get("content-encoding")
+      ? await original.clone().text().catch(() => null) : null;
+    const body = await transformedBody(original, provider, event.sessionID, rawBody);
     event.request = provider === "anthropic"
       ? anthropicRequest(event.request, account.access, body)
       : openAIRequest(event.request, account, body);
     runtime.requestAccounts.set(event.request, account);
+    if (rawBody !== null) runtime.requestContexts.set(event.request, {
+      rawBody, url: original.url, method: original.method,
+      headers: new Headers(original.headers), seat: poolAccountKey(account),
+      sessionID: event.sessionID,
+    });
     runtime.retryState.delete(key);
     runtime.updateAccount(provider, poolAccountKey(account), {
       lastUsed: new Date().toISOString(),
@@ -146,6 +157,11 @@ function createHttpResponseHook(runtime) {
     const account = runtime.requestAccounts.get(event.request);
     if (!account) return;
     runtime.requestAccounts.delete(event.request);
+    const context = runtime.requestContexts.get(event.request);
+    runtime.requestContexts.delete(event.request);
+    if (provider === "anthropic" && context) {
+      runtime.cacheKeepalive.recordRequest(event.sessionID, context, context.rawBody, event.response.status);
+    }
     if (provider === "anthropic") recordAnthropicUsage(runtime, account, event.response);
     const usageLimited = provider === "openai"
       ? await isOpenAIUsageLimitResponse(event.response)
@@ -187,15 +203,35 @@ export function createV2ProviderAuthRuntime(dependencies = {}) {
     updateAccount: dependencies.patchAccount || patchAccount,
     rejectAccount: dependencies.markRejectedTokenFailure || markRejectedTokenFailure,
     activateProvider: dependencies.ensureProviderActivation || ensureProviderActivation,
+    validateToken: dependencies.ensureValidToken || ensureValidToken,
+    fetch: dependencies.fetch || globalThis.fetch,
     requestAccounts: new WeakMap(),
+    requestContexts: new WeakMap(),
     retryState: new Map(),
   };
+  runtime.cacheKeepalive = createCacheKeepalive({
+    ...dependencies.cacheKeepaliveOptions,
+    send: async (context, rawBody) => {
+      // Refresh the original seat, not whichever seat pool ordering picks next.
+      const account = runtime.listAccounts("anthropic").find((candidate) => poolAccountKey(candidate) === context.seat);
+      if (!account || !await runtime.validateToken("anthropic", account)) throw new Error("Keep-alive seat unavailable");
+      const headers = new Headers(context.headers);
+      headers.set("accept", "application/json");
+      const request = new Request(context.url, {
+        method: context.method, headers, body: rawBody,
+        signal: AbortSignal.timeout(60_000),
+      });
+      const body = await transformedBody(request, "anthropic", context.sessionID);
+      return runtime.fetch(anthropicRequest(request, account.access, body));
+    },
+  });
 
   for (const provider of SUPPORTED_PROVIDERS) {
     if (runtime.listAccounts(provider).length > 0) runtime.activateProvider(provider);
   }
 
   return {
+    cacheKeepalive: runtime.cacheKeepalive,
     httpRequest: createHttpRequestHook(runtime),
     httpResponse: createHttpResponseHook(runtime),
     retry: createRetryHook(runtime),

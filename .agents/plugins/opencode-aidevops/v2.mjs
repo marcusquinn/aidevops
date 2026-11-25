@@ -491,8 +491,10 @@ export async function setupAidevopsV2(ctx) {
       event.input = output.args;
       // t18905: after the gates, so only tools that will run are published.
       sessionBus.toolBefore(event);
+      providerAuth.cacheKeepalive.toolStarted(event.sessionID, event.id);
     }));
     await register(registrations, ctx.tool.hook("execute.after", async (event) => {
+      providerAuth.cacheKeepalive.toolFinished(event.sessionID, event.id);
       const output = legacyToolOutput(event.result || {});
       // t18888: before quality hooks, so output scrubbing also covers peer messages.
       sessionBus.toolAfter(event, output);
