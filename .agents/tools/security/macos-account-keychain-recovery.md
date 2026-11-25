@@ -83,7 +83,8 @@ uninstaller. Ask the user first.
 - Keychain password: copy the file into its own new folder, named exactly
   `login.keychain-db`. Before **each** candidate password test, run
   `security lock-keychain "/absolute/path/to/recovery/login.keychain-db"`.
-  Confirm the copy is locked (see the lock-state check below), then have the
+  Require that command to succeed; if it reports an error, stop the test.
+  Keep other callers paused so they cannot unlock the copy, then have the
   user run `security unlock-keychain "/absolute/path/to/recovery/login.keychain-db"`.
   No output = unlocked, not permission to read every item. An already-unlocked
   copy does not verify a candidate password. Keep the copy until recovery is
@@ -136,7 +137,11 @@ prefer Keychain Access's **Show password** route:
    command arguments or logs. Clear the clipboard after use. If GUI access also
    fails, treat access as unknown and perform step 3 before stopping; do not
    weaken the item's ACL.
-3. On success **or failure**, restore the recorded search list exactly with
+3. On success **or failure**, re-read `security list-keychains -d user` before
+   restoring. Expect the recorded entries plus only the copy if this procedure
+   added it. If other entries or ordering changed, lock the copy and reconcile
+   those changes with the user before writing the list; do not overwrite them.
+   Otherwise, restore the recorded search list exactly with
    `security list-keychains -d user -s` followed by the original absolute paths
    in their original order. This removes the copy only if this procedure added
    it; a copy already in the recorded list must remain there.
