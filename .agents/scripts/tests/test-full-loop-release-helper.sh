@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
 # Explicit platform tools keep the fixture isolated on non-FHS hosts such as NixOS.
-FIXTURE_PATH="$ROOT/bin:${AIDEVOPS_TEST_PATH:-/usr/bin:/bin}"
+FIXTURE_PATH="$ROOT/bin:${AIDEVOPS_TEST_PATH:-$PATH}"
 mkdir -p "$ROOT/bin" "$ROOT/repo/linked-branch" "$ROOT/repo/.agents/scripts" \
 	"$ROOT/repo/.git" "$ROOT/worktrees" "$ROOT/cleanup" "$ROOT/state"
 export AIDEVOPS_STATE_DIR="$ROOT/state"

@@ -32,6 +32,14 @@ TEST_RESET=$'\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 
+# These disposable canonical repos are fixtures, not operator checkouts. Keep
+# their setup independent of the installed canonical-mutation Git shim.
+TEST_NATIVE_GIT=$(PATH=$(command -p getconf PATH) command -v git) || exit 1
+git() {
+	"$TEST_NATIVE_GIT" "$@"
+	return $?
+}
+
 print_result() {
 	local name="$1" rc="$2" extra="${3:-}"
 	TESTS_RUN=$((TESTS_RUN + 1))
@@ -210,8 +218,8 @@ test_canonical_ff_single_skip_no_origin_head() {
 	clone_dir=$(_setup_repo_with_branch "main" "0")  # skip set-head
 
 	true >"$LOGFILE"
-	_canonical_ff_single_repo "$clone_dir" "0"
-	local rc=$?
+	local rc=0
+	_canonical_ff_single_repo "$clone_dir" "0" || rc=$?
 
 	# Should return 1 (skip/failure) with a log message about no origin/HEAD
 	if [[ "$rc" -eq 1 ]] && grep -q "no origin/HEAD set" "$LOGFILE"; then
@@ -256,6 +264,8 @@ EOF
 test_canonical_ff_master_branch() {
 	local clone_dir
 	clone_dir=$(_setup_repo_with_branch "master" "1")
+	local original_head
+	original_head=$(git -C "$clone_dir" rev-parse HEAD)
 
 	# Push a new commit to origin
 	_push_new_commit "master" "$clone_dir"
@@ -273,10 +283,13 @@ EOF
 	true >"$LOGFILE"
 	_canonical_fast_forward "0"
 
-	if grep -q "Fast-forwarded" "$LOGFILE"; then
+	# Canonical maintenance now diagnoses remote drift without mutating the
+	# human checkout; verify both the selected branch and the safety guarantee.
+	if grep -q 'differs from origin/master; human checkout left unchanged' "$LOGFILE" &&
+		[[ "$(git -C "$clone_dir" rev-parse HEAD)" == "$original_head" ]]; then
 		print_result "canonical-ff-master-branch" 0
 	else
-		print_result "canonical-ff-master-branch" 1 "(expected 'Fast-forwarded' in log, got: $(cat "$LOGFILE"))"
+		print_result "canonical-ff-master-branch" 1 "(expected diagnostic-only master drift, got: $(cat "$LOGFILE"))"
 	fi
 	return 0
 }

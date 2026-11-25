@@ -24,6 +24,11 @@ mkdir -p "$HOME/.aidevops/logs"
 ln -s "$(cd "${TEST_DIR}/../.." && pwd)" "$HOME/.aidevops/agents"
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
+# The fixture has no service manager and owns its own lifecycle state.
+export AIDEVOPS_WORKTREE_MANAGER=legacy-guards
+export AIDEVOPS_LIFECYCLE_STATE_DIR="$ROOT/lifecycle"
+export AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT"
+unset AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; return 1; }
 assert_has() {

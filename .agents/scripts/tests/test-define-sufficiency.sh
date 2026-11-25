@@ -56,7 +56,7 @@ thinking = (root / ".agents/workflows/brief/tier-thinking.md").read_text()
 template = (root / ".agents/templates/brief-template.md").read_text()
 plans = (root / ".agents/workflows/plans.md").read_text()
 new_task = (root / ".agents/workflows/new-task.md").read_text()
-assert "no unresolved design" in simple
+assert "no unresolved semantic, design" in simple
 assert "implementation-ready" in standard and "false precision" in standard
 assert "Decisions to Make" in thinking and "No speculative scaffolding" in thinking
 assert "tier:standard (sonnet)" not in template

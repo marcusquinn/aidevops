@@ -23,6 +23,11 @@ export TEST_NATIVE_GIT
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 
+# Planning publication models an interactive operator, not this test runner's
+# dispatched implementation issue. Keep worker identity out of mock PR bodies.
+unset AIDEVOPS_HEADLESS FULL_LOOP_HEADLESS OPENCODE_HEADLESS WORKER_ISSUE_NUMBER
+export AIDEVOPS_SESSION_ORIGIN=interactive
+
 # Fixture setup uses disposable repositories; helper subprocesses still resolve
 # the guarded Git shim from PATH because shell functions are not exported.
 # Allow runners without native Git to select their system Git for fixtures.

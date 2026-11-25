@@ -205,10 +205,11 @@ queue_prompt_job() {
 
 file_mode() {
 	local file_path="$1"
-	local mode=""
-	mode=$(stat -f '%Lp' "$file_path" 2>/dev/null || true)
-	[[ -n "$mode" ]] || mode=$(stat -c '%a' "$file_path" 2>/dev/null || true)
-	printf '%s\n' "$mode"
+	# GNU stat -f may emit filesystem details before failing; do not treat that
+	# nonempty stdout as a successful BSD permission probe.
+	if ! stat -c '%a' "$file_path" 2>/dev/null; then
+		stat -f '%Lp' "$file_path" 2>/dev/null || return 1
+	fi
 	return 0
 }
 

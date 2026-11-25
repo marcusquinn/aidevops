@@ -163,6 +163,9 @@ test_cmd_run_finishes_confirmed_terminal_worker_before_continuation() {
 
 	_execute_run_attempt() {
 		execute_calls=$((execute_calls + 1))
+		# The mocked attempt actually ran; do not enter the prelaunch-failure path.
+		_WORKER_RUNTIME_LAUNCH_STARTED=1
+		_run_metric_session_id="fixture-runtime-session"
 		_run_result_label="signal_killed_continue"
 		_run_failure_reason="signal_killed_continue"
 		_run_activity_detected="1"

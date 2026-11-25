@@ -24,7 +24,18 @@ wait_for_file() {
 		sleep 0.1
 		attempt=$((attempt + 1))
 	done
-	[[ -f "$file_path" ]]
+	[[ -f "$file_path" ]] || return 1
+	return 0
+}
+
+wait_for_timeout_log() {
+	local attempt=0
+	while [[ "$attempt" -lt 50 ]]; do
+		grep -q 'status=failed rc=124 issue=4' "$AIDEVOPS_CODEGRAPH_LOG_FILE" && return 0
+		sleep 0.1
+		attempt=$((attempt + 1))
+	done
+	return 1
 }
 
 wait_for_count() {
@@ -135,9 +146,8 @@ export AIDEVOPS_CODEGRAPH_BIN="$FAKE_CODEGRAPH"
 export AIDEVOPS_CODEGRAPH_INIT_TIMEOUT_SECONDS=1
 export CODEGRAPH_FAKE_SLEEP=3
 "$HELPER" launch "$LINKED_FOUR" 4
-sleep 2
+wait_for_timeout_log || fail "timeout was not recorded as a bounded failure"
 [[ ! -e "${LINKED_FOUR}/.codegraph/codegraph.db" ]] || fail "timed-out CodeGraph init wrote a completed index"
-grep -q 'status=failed rc=124 issue=4' "$AIDEVOPS_CODEGRAPH_LOG_FILE" || fail "timeout was not recorded as a bounded failure"
 
 # A queued job must not run after closure, including at a reused public pathname.
 REGISTRY="${TEST_DIR}/../../worker-lifecycle/worker-registry.py"
