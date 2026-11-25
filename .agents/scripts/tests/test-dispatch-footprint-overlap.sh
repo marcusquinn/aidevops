@@ -46,7 +46,9 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor"
 
-# Source the footprint module directly
+# Source the production command-aware liveness check and footprint module.
+# shellcheck source=/dev/null
+source "${TEST_SCRIPTS_DIR}/shared-constants.sh"
 # shellcheck source=/dev/null
 source "${TEST_SCRIPTS_DIR}/dispatch-dedup-footprint.sh"
 
@@ -81,7 +83,7 @@ body_with_lines='- `EDIT: scripts/helper.sh:1477` — fix bug
 
 result=$(_footprint_extract_paths "$body_with_lines")
 # Should NOT contain :1477 or :221-253
-if printf '%s' "$result" | grep -q ":[0-9]"; then
+if grep -q ":[0-9]" <<<"$result"; then
 	print_result "extract_paths: strips line qualifiers" 1 "(line qualifiers still present: ${result})"
 else
 	print_result "extract_paths: strips line qualifiers" 0
@@ -217,7 +219,7 @@ candidate_body='## Files to Modify
 signal=""
 overlap_rc=1
 signal=$(_footprint_check_overlap "200" "test/repo" "$candidate_body") && overlap_rc=0 || overlap_rc=$?
-if [[ "$overlap_rc" -eq 0 ]] && printf '%s' "$signal" | grep -q "FOOTPRINT_OVERLAP"; then
+if [[ "$overlap_rc" -eq 0 ]] && grep -q "FOOTPRINT_OVERLAP" <<<"$signal"; then
 	print_result "check_overlap: detects overlapping files with in-flight issue" 0
 else
 	print_result "check_overlap: detects overlapping files with in-flight issue" 1 "(rc=${overlap_rc}, signal=${signal})"
@@ -260,7 +262,7 @@ normalise_body='## Files to Modify
 signal=""
 overlap_rc=1
 signal=$(_footprint_check_overlap "202" "test/repo" "$normalise_body") && overlap_rc=0 || overlap_rc=$?
-if [[ "$overlap_rc" -eq 0 ]] && printf '%s' "$signal" | grep -q "FOOTPRINT_OVERLAP"; then
+if [[ "$overlap_rc" -eq 0 ]] && grep -q "FOOTPRINT_OVERLAP" <<<"$signal"; then
 	print_result "check_overlap: handles .agents/ prefix normalisation" 0
 else
 	print_result "check_overlap: handles .agents/ prefix normalisation" 1 "(rc=${overlap_rc}, signal=${signal})"
@@ -340,8 +342,8 @@ _FOOTPRINT_CACHE_EPOCH=0
 
 result=$(_footprint_get_inflight "test/repo" "999")
 PATH="$OLD_PATH"
-if printf '%s' "$result" | grep -q "pulse-wrapper.sh|401" &&
-	! printf '%s' "$result" | grep -q "docs/gui/control-plane.md|400"; then
+if grep -q "pulse-wrapper.sh|401" <<<"$result" &&
+	! grep -q "docs/gui/control-plane.md|400" <<<"$result"; then
 	print_result "get_inflight: excludes parent-task coordination footprints" 0
 else
 	print_result "get_inflight: excludes parent-task coordination footprints" 1 "(got: ${result})"
@@ -395,8 +397,8 @@ _FOOTPRINT_CACHE_EPOCH=0
 
 result=$(_footprint_get_inflight "test/repo" "999")
 PATH="$OLD_PATH"
-if ! printf '%s' "$result" | grep -q "docs/runbook.md|402" &&
-	printf '%s' "$result" | grep -q "docs/other-runbook.md|403"; then
+if ! grep -q "docs/runbook.md|402" <<<"$result" &&
+	grep -q "docs/other-runbook.md|403" <<<"$result"; then
 	print_result "get_inflight: skips claimed no-auto-dispatch coordinator without evidence, keeps one with a linked PR" 0
 else
 	print_result "get_inflight: skips claimed no-auto-dispatch coordinator without evidence, keeps one with a linked PR" 1 "(got: ${result})"
@@ -426,7 +428,7 @@ mkdir -p "$AIDEVOPS_DISPATCH_LEDGER_DIR"
 # shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
 interactive_body='### Files Scope
 - `docs/interactive.md`'
-for claim_case in absent unknown missing live branch ledger malformed wrong-type wrong-identity unreadable; do
+for claim_case in absent unknown missing live dead-owner live-owner reused-pid cross-host missing-pid invalid-pid branch ledger malformed wrong-type wrong-identity unreadable; do
 	expected_rc=0
 	export MOCK_CLAIM_PRS='[]'
 	rm -f "$CLAIM_TEST_STAMP" "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl"
@@ -438,7 +440,33 @@ for claim_case in absent unknown missing live branch ledger malformed wrong-type
 		[[ "$claim_case" != "live" ]] || claim_worktree="${TEST_ROOT}/live worktree"
 		jq -n --arg worktree "$claim_worktree" \
 			'{slug:"test/repo",issue:404,worktree_path:$worktree}' >"$CLAIM_TEST_STAMP"
-		[[ "$claim_case" == "live" ]] || expected_rc=1
+		# Legacy stamps without owner metadata fail closed, even if the path vanished.
+		;;
+	dead-owner | live-owner | reused-pid | cross-host | missing-pid | invalid-pid)
+		claim_host=$(hostname)
+		claim_pid="$$"
+		claim_hash=""
+		case "$claim_case" in
+		dead-owner)
+			claim_pid="999999999"
+			expected_rc=1
+			;;
+		reused-pid)
+			claim_hash="not-the-owner-argv-hash"
+			expected_rc=1
+			;;
+		cross-host)
+			claim_host="other-${claim_host}"
+			claim_pid="999999999"
+			;;
+		missing-pid) claim_pid="" ;;
+		invalid-pid) claim_pid="not-a-pid" ;;
+		esac
+		# An existing canonical checkout is sufficient to reproduce the bug:
+		# directory existence alone must not count as a live implementation.
+		jq -n --arg worktree "$TEST_ROOT" --arg host "$claim_host" \
+			--arg pid "$claim_pid" --arg hash "$claim_hash" \
+			'{slug:"test/repo",issue:404,worktree_path:$worktree,hostname:$host,pid:$pid,owner_argv_hash:$hash}' >"$CLAIM_TEST_STAMP"
 		;;
 	branch) export MOCK_CLAIM_PRS='[{"number":901,"headRefName":"feature/auto-gh404","body":""}]' ;;
 	ledger) printf '%s\n' '{"session_key":"issue-404","status":"in-flight"}' >"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" ;;
@@ -451,7 +479,8 @@ for claim_case in absent unknown missing live branch ledger malformed wrong-type
 	_FOOTPRINT_CACHE_EPOCH=0
 	signal=""
 	overlap_rc=0
-	signal=$(_footprint_check_overlap "999" "test/repo" "$interactive_body") || overlap_rc=$?
+	# The fixture owner is this Bash test process, not an AI worker command.
+	signal=$(WORKER_PROCESS_PATTERN="bash" _footprint_check_overlap "999" "test/repo" "$interactive_body") || overlap_rc=$?
 	if [[ "$overlap_rc" -eq "$expected_rc" ]]; then
 		print_result "interactive claim: ${claim_case} evidence gives overlap rc=${expected_rc}" 0
 	else
