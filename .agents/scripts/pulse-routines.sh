@@ -610,8 +610,8 @@ _routine_save_output() {
 	output_log="${output_dir}/${routine_id}.log"
 	if [[ -n "$output_file" ]] && (
 		umask 077
-		mkdir -p -- "$output_dir" && chmod 700 -- "$output_dir" &&
-			chmod 600 -- "$output_file" && [[ ! -d "$output_log" ]] &&
+		mkdir -p -- "$output_dir" && chmod -- 700 "$output_dir" &&
+			chmod -- 600 "$output_file" && [[ ! -d "$output_log" ]] &&
 			mv -f -- "$output_file" "$output_log"
 	); then
 		output_bytes=$(wc -c <"$output_log" | tr -d '[:space:]')
