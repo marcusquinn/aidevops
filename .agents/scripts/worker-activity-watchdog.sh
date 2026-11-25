@@ -494,13 +494,16 @@ _watchdog_db_part_activity() {
 }
 
 #######################################
-# t19399 / GH#40441: find the latest bounded deadline of a tool still running
-# in the worker's isolated DB. OpenCode enforces each tool's declared
+# t19399 / GH#40441: find the bounded deadline of the newest tool still
+# running in the worker's isolated DB. OpenCode enforces each tool's declared
 # `state.input.timeout`, but a tool that prints nothing until it exits (lock
 # waits, CI waits, piped commands) leaves part.time_updated stale, so the
 # GH#40157 streamed-progress extension cannot see it. Only parts started in
 # this attempt with a numeric positive timeout count; parts left running by
-# an earlier attempt started before _MONITOR_START_EPOCH.
+# an earlier attempt started before _MONITOR_START_EPOCH. The newest start
+# wins over the latest deadline: an older part still marked running after a
+# newer tool started (an orphan of an aborted turn) must not defer the cap
+# once the newer tool's own deadline has passed.
 # Fails open: no DB, no sqlite3, an old schema or a locked DB return 1.
 # Sets _MONITOR_INFLIGHT_PART, _MONITOR_INFLIGHT_START and
 # _MONITOR_INFLIGHT_DEADLINE (epoch seconds, timeout bounded plus grace) on 0.
@@ -527,7 +530,7 @@ _watchdog_inflight_tool_deadline() {
 				AND json_type(data, '\$.state.time.start') IN ('integer', 'real')
 				AND json_type(data, '\$.state.input.timeout') IN ('integer', 'real'))
 		WHERE start_s >= ${started_after} AND timeout_s > 0
-		ORDER BY deadline DESC LIMIT 1;"
+		ORDER BY start_s DESC, id DESC LIMIT 1;"
 	row=$(sqlite3 -readonly -separator '|' -cmd ".timeout 2000" "$WORKER_DB" "$query" 2>/dev/null) || return 1
 	IFS='|' read -r part_id start_s deadline <<<"$row"
 	[[ -n "$part_id" && "$start_s" =~ ^[0-9]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
@@ -818,7 +821,7 @@ _monitor_init_state() {
 	_MONITOR_LAST_DEFER_REASON=""
 	_MONITOR_CAP_LIVENESS=""
 	_MONITOR_CAP_EXTENDED=0
-	_MONITOR_INFLIGHT_DEFERRED_PART=""
+	_MONITOR_INFLIGHT_LOGGED_PARTS=""
 	_MONITOR_START_EPOCH=$(date +%s)
 	_WATCHDOG_START_EPOCH="$_MONITOR_START_EPOCH"
 	return 0
@@ -907,7 +910,9 @@ _monitor_defer_stall() {
 # t19399 / GH#40441: at the elapsed cap, wait while a tool started in this
 # attempt is inside its bounded declared timeout. Each tool deadline is fixed
 # when the tool starts, so a new wait needs a new model turn; the sandbox
-# timeout remains the absolute backstop. Logs once per tool part.
+# timeout remains the absolute backstop. Logs once per tool part per attempt:
+# _MONITOR_INFLIGHT_LOGGED_PARTS is a space-delimited set (Bash 3.2 has no
+# associative arrays; OpenCode part IDs contain no spaces).
 #
 # Arguments:
 #   $1 - current epoch seconds
@@ -919,14 +924,14 @@ _monitor_cap_inflight_tool_wait() {
 	local now_epoch="$1" elapsed_total="$2"
 	_watchdog_inflight_tool_deadline || return 1
 	[[ "$now_epoch" -lt "$_MONITOR_INFLIGHT_DEADLINE" ]] || return 1
-	if [[ "$_MONITOR_INFLIGHT_PART" != "${_MONITOR_INFLIGHT_DEFERRED_PART:-}" ]]; then
+	if [[ " ${_MONITOR_INFLIGHT_LOGGED_PARTS:-} " != *" ${_MONITOR_INFLIGHT_PART} "* ]]; then
 		local lifecycle_event=""
 		printf -v lifecycle_event '[lifecycle] worker_cap_deferred_inflight_tool pid=%s tool_age=%ss deadline_in=%ss elapsed=%ss hard_kill=%ss ts=%s' \
 			"$WORKER_PID" "$((now_epoch - _MONITOR_INFLIGHT_START))" "$((_MONITOR_INFLIGHT_DEADLINE - now_epoch))" \
 			"$elapsed_total" "$HARD_KILL_SECONDS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		worker_attempt_observability_enrich lifecycle_event "$lifecycle_event"
 		_watchdog_record_event "$lifecycle_event"
-		_MONITOR_INFLIGHT_DEFERRED_PART="$_MONITOR_INFLIGHT_PART"
+		_MONITOR_INFLIGHT_LOGGED_PARTS="${_MONITOR_INFLIGHT_LOGGED_PARTS:+${_MONITOR_INFLIGHT_LOGGED_PARTS} }${_MONITOR_INFLIGHT_PART}"
 	fi
 	return 0
 }
