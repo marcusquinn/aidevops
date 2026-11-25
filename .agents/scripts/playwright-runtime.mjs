@@ -4,7 +4,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
@@ -288,14 +288,56 @@ export async function playwrightStatus() {
   };
 }
 
+// GH#40313: a pin bump needs new browser builds for every family the cache held
+// for the previous build. Compare the revisions the owned package expects
+// (browsers.json) with the cache root's directories: a family is stale when an
+// older build is present but the expected one is not. Returns install names.
+const BROWSER_CACHE_FAMILIES = [
+  { install: 'chromium', json: 'chromium', dir: 'chromium' },
+  { install: 'chromium', json: 'chromium-headless-shell', dir: 'chromium_headless_shell' },
+  { install: 'firefox', json: 'firefox', dir: 'firefox' },
+  { install: 'webkit', json: 'webkit', dir: 'webkit' },
+];
+
+function staleBrowserInstalls(runtimeDir, chromiumPath) {
+  const segments = String(chromiumPath || '').split(/[\\/]/);
+  const index = segments.findIndex((segment) => /^chromium-\d+$/.test(segment));
+  if (index <= 0) return [];
+  const cacheRoot = segments.slice(0, index).join('/') || '/';
+  let entries;
+  let browsers;
+  try {
+    entries = readdirSync(cacheRoot);
+    browsers = JSON.parse(readFileSync(join(runtimeDir, 'node_modules', 'playwright-core', 'browsers.json'), 'utf8')).browsers;
+  } catch {
+    return [];
+  }
+  const stale = new Set();
+  for (const family of BROWSER_CACHE_FAMILIES) {
+    const browser = browsers.find((candidate) => candidate.name === family.json);
+    if (!browser?.revision) continue;
+    // Platform-specific builds (revisionOverrides) install as <dir>_<platform>_special-<rev>.
+    const expected = new Set([`${family.dir}-${browser.revision}`]);
+    for (const [platform, revision] of Object.entries(browser.revisionOverrides || {})) {
+      expected.add(`${family.dir}_${platform}_special-${revision}`);
+    }
+    const isFamilyBuild = (entry) => entry.startsWith(`${family.dir}-`) || (entry.startsWith(`${family.dir}_`) && entry.includes('_special-'));
+    const olderBuilds = entries.some((entry) => isFamilyBuild(entry) && !expected.has(entry));
+    const currentBuild = [...expected].some((name) => existsSync(join(cacheRoot, name)));
+    if (olderBuilds && !currentBuild) stale.add(family.install);
+  }
+  return [...stale];
+}
+
 async function ownedRuntimeBrowser(runtimeDir) {
   const ownedModule = await validateModule(resolveFromAnchor(join(runtimeDir, 'package.json')));
-  if (!ownedModule) return { packageImportable: false, chromiumExecutable: null };
+  if (!ownedModule) return { packageImportable: false, chromiumExecutable: null, staleBrowsers: [] };
   try {
-    const chromiumExecutable = findExecutable((await loadPlaywright(ownedModule)).chromium.executablePath());
-    return { packageImportable: true, chromiumExecutable };
+    const chromiumPath = (await loadPlaywright(ownedModule)).chromium.executablePath();
+    const chromiumExecutable = findExecutable(chromiumPath);
+    return { packageImportable: true, chromiumExecutable, staleBrowsers: staleBrowserInstalls(runtimeDir, chromiumPath) };
   } catch {
-    return { packageImportable: true, chromiumExecutable: null };
+    return { packageImportable: true, chromiumExecutable: null, staleBrowsers: [] };
   }
 }
 
@@ -348,9 +390,11 @@ export async function ownedRuntimeStatus() {
   // A configured but invalid executable must not be masked by bundled Chromium:
   // launch paths use the configured value rather than falling back to the bundle.
   const selectedExecutable = configuredExecutableSetting() ? configuredExecutable : chromiumExecutable;
-  const ready = Boolean(owned.packageImportable && selectedExecutable);
+  // A configured browser retires bundled Chromium (GH#36190); do not demand its new build.
+  const staleBrowsers = (owned.staleBrowsers || []).filter((name) => !(configuredExecutableSetting() && name === 'chromium'));
+  const ready = Boolean(owned.packageImportable && selectedExecutable) && staleBrowsers.length === 0;
   const axe = await ownedAxeStatus(runtimeDir);
-  return { runtimeDir, version, installedVersion, chromiumExecutable, configuredExecutable, ready, axe };
+  return { runtimeDir, version, installedVersion, chromiumExecutable, configuredExecutable, staleBrowsers, ready, axe };
 }
 
 // Named browsers are always installed. With none named, bundled Chromium is the
