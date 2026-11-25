@@ -10,6 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.282] - 2026-11-25
+
+### Changed
+
+- Maintenance: mark t19379 complete (pr:#40374 completed:2026-11-25) (#40375)
+- Tests: honour gh --jq in checkpoint fixture so e2e tests reach the orphan-release path
+- Refactor: split worker-lifecycle-common into 1200-line-headroom modules (#40355)
+- Maintenance: mark t19374 complete (pr:#40357 completed:2026-11-25) (#40352)
+- Maintenance: mark t19370 complete (pr:#40337 completed:2026-11-25) (#40343)
+
+### Fixed
+
+- recover squash merges with missing PR association via GH# task reference
+- do not fail coordinator artifact cleanup on isolated delete failures (GH#40382)
+- treat cancelled check with same-name pass on head as superseded (#40374)
+- release own automatic orphans before claiming
+- recover deleted working directory before forking
+- explain refresh-body refusals
+- raise tier3 full-loop-helper line cap to 650 (GH#40359)
+- discover Nix-profile Node runtimes (GH#40354) (#40356)
+- exclude PR metadata from regression rationale (#40346)
+- finish OpenAI pool add routing and single email resolution (#40348)
+- ignore multiline single-quoted positional fields (GH#40335) (#40337)
+- propagate agent deployment failure on the new-commit path (GH#40333)
+- repair signature, distill redaction and tier3 suite drift (GH#40286) (#40315)
+- ignore cancelled check runs superseded by a later success (GH#40329)
+- keep bounded-operation supervisor alive after an exited command and make load-flaky plugin tests deterministic (GH#40309) (#40319)
+
 ## [3.39.281] - 2026-11-25
 
 ### Added
