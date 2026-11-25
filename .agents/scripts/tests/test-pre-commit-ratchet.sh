@@ -258,7 +258,7 @@ test_string_literals_preexisting_pass() {
 	local stderr_out ret=0
 	stderr_out=$(validate_string_literals "offender.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -eq 0 ] && echo "$stderr_out" | grep -q 'Pre-existing repeated string literals'; then
+	if [ "$ret" -eq 0 ] && grep -q 'Pre-existing repeated string literals' <<<"$stderr_out"; then
 		print_result "string_literals: pre-existing same-count PASSES (ratchet)" 0
 	else
 		print_result "string_literals: pre-existing same-count PASSES (ratchet)" 1 \
@@ -276,7 +276,7 @@ test_string_literals_new_literal_blocks() {
 	local stderr_out ret=0
 	stderr_out=$(validate_string_literals "offender.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -gt 0 ] && echo "$stderr_out" | grep -q 'NEW repeated string literals'; then
+	if [ "$ret" -gt 0 ] && grep -q 'NEW repeated string literals' <<<"$stderr_out"; then
 		print_result "string_literals: NEW literal BLOCKS (ratchet)" 0
 	else
 		print_result "string_literals: NEW literal BLOCKS (ratchet)" 1 \
@@ -356,7 +356,7 @@ test_return_statements_preexisting_pass() {
 	local stderr_out ret=0
 	stderr_out=$(validate_return_statements "returns.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -eq 0 ] && echo "$stderr_out" | grep -q 'Pre-existing missing returns'; then
+	if [ "$ret" -eq 0 ] && grep -q 'Pre-existing missing returns' <<<"$stderr_out"; then
 		print_result "return_statements: pre-existing missing returns PASS (ratchet)" 0
 	else
 		print_result "return_statements: pre-existing missing returns PASS (ratchet)" 1 \
@@ -374,7 +374,7 @@ test_return_statements_new_missing_blocks() {
 	local stderr_out ret=0
 	stderr_out=$(validate_return_statements "returns.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -gt 0 ] && echo "$stderr_out" | grep -q 'NEW missing return statements'; then
+	if [ "$ret" -gt 0 ] && grep -q 'NEW missing return statements' <<<"$stderr_out"; then
 		print_result "return_statements: NEW missing return BLOCKS (ratchet)" 0
 	else
 		print_result "return_statements: NEW missing return BLOCKS (ratchet)" 1 \
@@ -398,7 +398,7 @@ test_positional_params_preexisting_pass() {
 	local stderr_out ret=0
 	stderr_out=$(validate_positional_parameters "posparam.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -eq 0 ] && echo "$stderr_out" | grep -q 'Pre-existing positional parameter usage'; then
+	if [ "$ret" -eq 0 ] && grep -q 'Pre-existing positional parameter usage' <<<"$stderr_out"; then
 		print_result "positional_params: pre-existing usage PASSES (ratchet)" 0
 	else
 		print_result "positional_params: pre-existing usage PASSES (ratchet)" 1 \
@@ -416,7 +416,7 @@ test_positional_params_new_usage_blocks() {
 	local stderr_out ret=0
 	stderr_out=$(validate_positional_parameters "posparam.sh" 2>&1) || ret=$?
 
-	if [ "$ret" -gt 0 ] && echo "$stderr_out" | grep -q 'NEW direct positional parameter usage'; then
+	if [ "$ret" -gt 0 ] && grep -q 'NEW direct positional parameter usage' <<<"$stderr_out"; then
 		print_result "positional_params: NEW usage BLOCKS (ratchet)" 0
 	else
 		print_result "positional_params: NEW usage BLOCKS (ratchet)" 1 \
@@ -639,10 +639,10 @@ test_classification_labels_present() {
 	out_new=$(validate_string_literals "offender.sh" 2>&1 || true)
 
 	local ok=0
-	if ! echo "$out_pre" | grep -q '(not blocking)'; then
+	if ! grep -q '(not blocking)' <<<"$out_pre"; then
 		ok=1
 	fi
-	if ! echo "$out_new" | grep -q 'new:'; then
+	if ! grep -q 'new:' <<<"$out_new"; then
 		ok=1
 	fi
 
