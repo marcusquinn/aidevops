@@ -83,63 +83,166 @@ Existing-suite verification: core-layout passed 9/9; manifest-index passed 5/5,
 including its no-node fallback. Both use disposable installations, not a real
 agent-source configuration.
 
-## Remaining incident work
+## Recovery on current main (2026-11-25)
 
-This is a partial repair. Keep GH#40176 open; do not use a closing keyword on
-the first repair PR. The original artifact remains the inventory for the other
-79 suites; they have not been established as fixed or unrelated by a new health
-run. Examples showing that a single environment workaround is insufficient:
+PR #40177 was closed after conflicting with independently merged fixture
+repairs. Its four implementation/report commits were recovered onto the fresh
+dispatcher branch based on `a2255568bf`. Conflict resolution retains upstream:
 
-| Suites (under `.agents/scripts/tests/`) | Artifact evidence | Next verification |
-| --- | --- | --- |
-| `test-encryption-git-roundtrip.sh`, `test-dispatch-override.sh` | Missing companion script in fixture | Check current source modules before changing fixture copies |
-| `test-model-routing-reasoning-migration.sh`, `test-sonnet-5-5-migration.sh`, `test-deploy-runtimes-bounded.sh` | Assertions about setup call sites fail | Compare current setup module ownership against extracted-function assertions |
-| `test-maintainer-gate-approval-api-failure.sh`, `test-maintainer-gate-interactive-status-retry.sh`, `test-maintainer-gate-nmr-residue.sh` | Mocked gate jobs return nonzero | Inspect gate extraction and mocked metadata; retain fail-closed behavior |
-| `test-gui-codefactor-css.sh` | Duplicate top-level selectors | Reproduce with the current CSS parser before editing UI files |
-| `test-simplex-integration.sh`, `test-macos-activity-cleaner-guidance.sh`, `test-managed-temp-workspace.sh` | Documentation and setup structural assertions fail | Determine moved contract vs missing behavior; do not restore obsolete inline guidance |
-| `test-gh-signature-helper.sh` | Token accounting and interactive-session expectations fail | Separate inherited identity from SQLite fixture behavior |
-| `test-sync-workflows-helper.sh`, `test-sync-workflows-install-missing.sh`, `test-planning-commit-helper-protected-default-pr.sh` | Linked-worktree fixture preparation fails | Inspect fake Git identity and authority dependencies, without bypassing live guards |
+- #40053 already isolates the command-policy interactive analyzer context.
+- #40234 / PR #40240 already provides the merge-flag mock registry.
+- #40232 / PR #40238 already copies the full core-layout dependency closure and
+  exports both fixture installation/config paths in setup. The recovered
+  per-command overrides are therefore redundant and were removed.
 
-Use `suite-health-repro-helper.sh` for subsequent host/fake-HOME/Linux
-comparisons, and run the existing affected-suite comparison for each coherent
-repair. A newer successful scheduled run, or explicit per-suite verification,
-is required before reporting the aggregate incident resolved.
+The only remaining test delta is manifest-index's hermetic no-node inventory.
+Existing suite execution under `GITHUB_ACTIONS=true FULL_LOOP_HEADLESS=true
+AIDEVOPS_WORKER_ID=fixture-parent` passes 5/5. The affected-suite comparison with
+`--base origin/main --compare-base --jobs 2 --timeout 180 --retries 0` selects
+one suite, omits none and reports pass. Bash syntax and whitespace checks pass.
+No production guard, workflow, threshold or tool-resolution contract changes.
 
-## Continuation checkpoint
+Replacement PR: <https://github.com/marcusquinn/aidevops/pull/40259>.
 
-Draft PR: <https://github.com/marcusquinn/aidevops/pull/40177>. The fixture repair
-is committed and pushed; the draft is intentionally not delivery of the whole
-incident. The next bounded investigation is the encryption/dispatch fixture
-group in the table: inspect current sourced modules and missing companion
-copies. Apply integration-scope recovery before adding target paths to the
-canonical issue scope. Do not close GH#40176 or turn this first unit into a
-closing PR while the aggregate criteria remain open.
+## Complete original row ownership
 
-### Bounded continuation verification
+The following groups enumerate all **83** original regression rows exactly once.
+Names omit the common `.agents/scripts/tests/test-` prefix and `.sh` suffix.
+Ownership is not a claim of a fresh passing result for every suite: merged
+repairs are evidence of delivery, while #40029 retains global convergence and
+reassessment. #40041's residual batch was decomposed into the four named groups.
 
-The continuation found another inherited-environment dependency in core-layout:
-setting only HOME still let `AIDEVOPS_AGENTS_DIR` select the runner installation.
-With inherited Actions/worker identity, all nine assertions failed because the
-disposable installation was not populated. Bind `AIDEVOPS_AGENTS_DIR` to the
-fixture directory in both helper subprocesses, matching manifest-index. After
-the change, core-layout passes 9/9 with the same parent environment.
+### This repair (1)
 
-Re-executed with `GITHUB_ACTIONS=true FULL_LOOP_HEADLESS=true
-AIDEVOPS_WORKER_ID=fixture-parent`: merge-flag passes 3/3, manifest-index passes
-5/5, and command-policy reports 224 assertions with the same three failures
-documented above. All worker signing restrictions and the interactive signing
-assertion pass. Bash syntax and diff whitespace checks pass. Local ShellCheck
-still cannot locate its real binary; the existing PR's
-`Code Quality Analysis / ShellCheck (ubuntu-latest)` job passed for checkpoint
-`4d00a3ad01` and covers the continuation when pushed. The existing gh-shim suite
-exits 2 after its first pass-through heading on this runner, so this continuation
-does not claim a new passing external-write guard run or weaken that guard.
+- `agent-source-manifest-index`: #40176, verified 5/5 as above.
 
-The in-scope fixture repair is complete, but the aggregate acceptance remains
-unmet: the other 79 artifact regressions are not individually accounted for.
-The continuation's ready transition requires a closing reference to GH#40176;
-that would misrepresent this partial repair as resolving the aggregate. Retain
-the draft and request a scope/closure decision instead. Options: authorize this
-repair as a non-closing ready PR (recommended), or explicitly extend the assigned
-scope to account for the remaining inventory before using a closing reference.
-No production guard changes are needed for either option.
+### Setup/install/release group (20)
+
+Owner #40232, delivered in PR #40238:
+
+- `agent-sources-core-layout`
+- `check-workflows-classifier`
+- `encryption-git-roundtrip`
+- `gui-codefactor-css`
+- `hot-deploy-flow`
+- `legacy-dashboard-launchagent-cleanup`
+- `lint-resource-benchmark`
+- `macos-activity-cleaner-guidance`
+- `managed-temp-workspace`
+- `qlty-workflow-version-pin`
+- `release-publication-destination-state`
+- `release-publication-workflows`
+- `release-stale-runtime-recovery`
+- `remove-osgrep-mcp`
+- `stale-process-deploy-hardening`
+- `sync-workflows-helper`
+- `sync-workflows-install-missing`
+- `terminal-output-contract`
+- `tool-install-claudebar`
+- `tool-install-serve-sim`
+
+### GitHub/mock/gate group (19)
+
+Owner #40233, delivered in PR #40237:
+
+- `contributor-activity-helper-person`
+- `email-receipt-forward`
+- `enrich-batch-prefetch`
+- `forge-event-mapping`
+- `gh-signature-helper`
+- `interactive-session-post-merge`
+- `issue-sync-list-timeout`
+- `issue-sync-pull-seeds-orphans`
+- `issue-triage-gate-fail-closed`
+- `maintainer-gate-approval-api-failure`
+- `maintainer-gate-interactive-status-retry`
+- `maintainer-gate-nmr-residue`
+- `parent-prose-child-detection`
+- `post-merge-verify-report`
+- `pr-3885-recovery`
+- `pr-review-thread-response-scanner`
+- `review-bot-gate-completion-signal`
+- `shared-gh-wrappers-checks-null-suites`
+- `solved-label-attribution`
+
+### Dispatch/lifecycle group (21)
+
+Owner #40234, delivered in PR #40240:
+
+- `cas-retry-exhaustion`
+- `claim-task-id-todo-collision`
+- `codegraph-worktree-init-helper`
+- `deferred-job-helper`
+- `define-sufficiency`
+- `dispatch-claim-helper`
+- `dispatch-lease-claims-private-member`
+- `dispatch-override`
+- `full-loop-cleanup-receipt`
+- `full-loop-merge-flag-conflict`
+- `full-loop-release-helper`
+- `local-branch-cleanup-helper`
+- `planning-commit-helper-protected-default-pr`
+- `pre-push-dup-todo-guard`
+- `pulse-cleanup-worker-owned-no-pr`
+- `pulse-default-branch-detection`
+- `repo-state-guard`
+- `stats-wrapper-headless-export`
+- `watchdog-stall-cap`
+- `worker-output-discovery`
+- `worktree-recovery-lifecycle`
+
+### Runtime group (8)
+
+Owner #40235, delivered in PR #40244 (command-policy identity also in #40053):
+
+- `command-policy-helper`
+- `mcp-prefix-chunk-boundary`
+- `opencode-launcher-helper`
+- `postflight-check-run-dedup`
+- `postflight-no-source-rescan`
+- `postflight-scan-scope`
+- `postflight-sonarcloud-gate`
+- `profile-readme-contributions-fail-closed`
+
+### Other delivered structural/context groups (5)
+
+- `aidevops-sh-portability`: #40053, merged fixture/context repair.
+- `deploy-runtimes-bounded`: #40184 / PR #40193.
+- `simplex-integration`: #40184 / PR #40193.
+- `model-routing-reasoning-migration`: #40041 / PR #40236.
+- `sonnet-5-5-migration`: #40041 / PR #40236.
+
+### Residual convergence reassessment (9)
+
+These original rows are not in those merged child scopes. They remain explicit
+reassessment inputs for the still-open #40029, not assertions of repair here:
+
+- `matterbridge-helper`
+- `open-done-nonclosing-regression`
+- `pulse-instance-lock-mkdir-only`
+- `pulse-systemd-timeout`
+- `pulse-wrapper-isrunning-shortcircuit`
+- `quickfile-rest-routing`
+- `session-distill-provenance`
+- `tier3-simplified`
+- `worker-reliability-self-heal`
+
+For each, use the original artifact's matching log, run the current suite with
+a disposable HOME via `suite-health-repro-helper.sh`, compare the current
+production contract, and retain real refusal paths. Do not reopen implementation
+in this narrowly scoped duplicate incident or infer success from closed sibling
+issues. Any still-red row belongs in #40029's next convergence assessment.
+
+## Convergence and notification ownership
+
+The newer scheduled run `45529588341` failed with 77 red suites at
+`391c4a389f0701092035d58105d9b4e795cdea6e`. That run predates the current merged
+residual groups; it is neither verification of this replacement head nor proof
+that those groups failed. #40029 stays open until a fresh assessed full run
+meets its criterion. This bounded fixture repair and ownership accounting can
+resolve #40176 without closing or declaring that parent green.
+
+Duplicate-signature notification repair is independently delivered by #40178 /
+PR #40179: timestamped log envelopes no longer change the error fingerprint.
+Its existing signature-noise suite covers this incident's raw, three-column and
+four-column payloads. No additional pulse-output workaround is needed here.
