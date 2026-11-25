@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$SCRIPT_DIR/project-node-runtime.sh"
 root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
+# Volta and n also enumerate fixed HOME-relative paths, so isolate HOME itself.
+export HOME="$root/home"
 # Keep host runtimes (for example Homebrew or Nix Node) out of the candidate set.
 export AIDEVOPS_NODE_BREW_PREFIXES="$root/missing" AIDEVOPS_NODE_NIX_PROFILES="$root/missing" NVM_DIR="$root/missing" MISE_DATA_DIR="$root/missing" N_PREFIX="$root/missing"
 mkdir -p "$root/project/packages/app" "$root/active" "$root/fnm/node-versions/v24.18.0/installation/bin"
@@ -121,6 +123,19 @@ rg -q 'Install a matching Node.*Nix' "$root/error" || {
 	exit 1
 }
 printf 'PASS incompatible Nix Node fails closed with actionable diagnostic\n'
+
+# Default HOME/XDG profile paths preserve spaces without the test override.
+for profile in "$root/home with spaces/.nix-profile" "$root/state with spaces/nix/profiles/profile"; do
+	mkdir -p "$profile/bin"
+	cp "$root/sys/bin/node" "$profile/bin/node"
+	actual=$(PATH="$root/active:$PATH" HOME="$root/home with spaces" XDG_STATE_HOME="$root/state with spaces" FNM_DIR="$root/missing" AIDEVOPS_NODE_NIX_PROFILES="" AIDEVOPS_TEMP_DIR="$root/tmp" _project_node_bin "$root/project" packages/app)
+	[[ -n "$actual" && "$actual" == "$root/tmp/"* && "$(readlink "$actual/node")" == "$profile/bin/node" ]] || {
+		printf 'FAIL default Nix profile path with spaces: %s\n' "$actual"
+		exit 1
+	}
+	rm "$profile/bin/node"
+done
+printf 'PASS default HOME and XDG Nix profiles preserve path spaces\n'
 
 # Exercise the worker preparation path without a live dispatch claim.
 # shellcheck source=../headless-runtime-worker-prepare.sh

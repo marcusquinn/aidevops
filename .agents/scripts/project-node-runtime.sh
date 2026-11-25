@@ -129,7 +129,15 @@ _project_node_bin() {
 	# Nix user, XDG, per-user and system profiles are shared multi-tool prefixes.
 	# Override the profile list for hermetic tests, as with Homebrew prefixes.
 	local nix_profile=""
-	for nix_profile in ${AIDEVOPS_NODE_NIX_PROFILES:-$HOME/.nix-profile ${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/profile /nix/var/nix/profiles/per-user/${USER:-}/profile /run/current-system/sw}; do
+	local -a nix_profiles=()
+	if [[ -n "${AIDEVOPS_NODE_NIX_PROFILES:-}" ]]; then
+		# The override is a whitespace-separated list; defaults preserve path spaces.
+		read -r -a nix_profiles <<<"$AIDEVOPS_NODE_NIX_PROFILES"
+	else
+		nix_profiles=("$HOME/.nix-profile" "${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/profile"
+			"/nix/var/nix/profiles/per-user/${USER:-}/profile" "/run/current-system/sw")
+	fi
+	for nix_profile in "${nix_profiles[@]}"; do
 		candidates+=("$nix_profile/bin/node")
 		shared_dirs="${shared_dirs}${nix_profile}/bin "
 	done
