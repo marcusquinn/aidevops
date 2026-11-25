@@ -234,6 +234,23 @@ _invoke_opencode_disable_snapshots() {
 	return 0
 }
 
+# t19376: OpenCode's native fff file index keeps a background watcher that
+# re-runs a libgit2 status pass over the whole index on every file-event batch.
+# In a ~50k-file worktree, installs and builds kept a worker at 0.7-0.9 cores
+# with nothing but that loop on-CPU. Its grep also stops after a 1.5 s time
+# budget, so a saturated host can silently truncate a worker's results.
+# OPENCODE_DISABLE_FFF selects OpenCode's ripgrep backend instead: glob and
+# grep run live on every call, and only the TUI fuzzy picker (unused headless)
+# reads a startup file list. Runs inside the launch subshell like the snapshot
+# switch above; the worker sandbox passes OPENCODE_* through. A value the
+# caller already set wins. Opt out with AIDEVOPS_WORKER_OPENCODE_FFF=1.
+_invoke_opencode_disable_fff() {
+	[[ "${AIDEVOPS_WORKER_OPENCODE_FFF:-0}" != "1" ]] || return 0
+	[[ -z "${OPENCODE_DISABLE_FFF+x}" ]] || return 0
+	export OPENCODE_DISABLE_FFF=1
+	return 0
+}
+
 # Build the child command and public-triage egress policy inside the subprocess.
 _invoke_opencode_prepare_child_command() {
 	if [[ "$public_triage" -eq 1 ]]; then
@@ -262,6 +279,7 @@ _invoke_opencode_prepare_child_command() {
 		sandbox_home_args=(--home-dir "$isolated_home_dir")
 	fi
 	_invoke_opencode_disable_snapshots
+	_invoke_opencode_disable_fff
 	_oc_cmd=("${cmd[@]}")
 	if [[ "${HEADLESS:-}" == "1" && "$private_workload" -ne 1 ]]; then
 		local -a new_cmd=()
