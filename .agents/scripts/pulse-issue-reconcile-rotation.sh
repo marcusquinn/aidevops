@@ -36,6 +36,19 @@ _normalize_pass_order() {
 	return 0
 }
 
+# True when the pass started within the last max_age seconds. A missing,
+# unreadable or future-dated stamp is not recent, so the pass runs.
+# Args: $1 state_dir, $2 pass, $3 now_epoch, $4 max_age seconds
+_normalize_pass_started_within() {
+	local state_dir="$1" pass="$2" now_epoch="$3" max_age="$4" started=""
+	[[ "$now_epoch" =~ ^[0-9]+$ && "$max_age" =~ ^[0-9]+$ ]] || return 1
+	[[ -f "${state_dir}/${pass}" ]] || return 1
+	read -r started <"${state_dir}/${pass}" 2>/dev/null || return 1
+	[[ "$started" =~ ^[0-9]+$ && "$started" -le "$now_epoch" ]] || return 1
+	[[ $((now_epoch - started)) -lt "$max_age" ]] && return 0
+	return 1
+}
+
 # Best effort: an unwritable stamp only makes the pass sort first again.
 _normalize_mark_pass_started() {
 	local state_dir="$1" pass="$2" now_epoch=""

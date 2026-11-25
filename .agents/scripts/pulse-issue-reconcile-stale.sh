@@ -18,6 +18,12 @@
 #   _normalize_stale_get_dispatch_info — Read PID, timestamp, runner from dispatch comment
 #   _normalize_stale_should_skip_reset — Gate reset decision (t1933 + t2375 cross-runner)
 #   _normalize_unassign_stale          — Detect and reset stale runner assignments
+#                                        (per-repo listing; fallback pass)
+#   _normalize_unassign_stale_search   — Same sweep from one search, every
+#                                        normalize run (GH#40231)
+#   _normalize_claim_recovery_every_run — Search sweep + claim-release drains,
+#                                        run before the listing passes
+#   _normalize_stale_per_repo_backstop_due — When the per-repo pass still runs
 #   _normalize_stale_recover_orphaned_self_claim — Guarded is-assigned recovery
 #                                        for orphaned self-device claims (GH#40204)
 #   _normalize_unassign_available_stale — Release stale assignees on status:available issues (GH#39327)
@@ -679,6 +685,45 @@ _normalize_stale_try_orphan_recovery() {
 	return 0
 }
 
+# Gate, audit and reset one stale candidate. Shared by the per-repo pass and
+# the search sweep (GH#40231) so both apply identical guards.
+# Args: $1 issue, $2 slug, $3 now epoch, $4 cross-runner max runtime,
+#       $5 runner login, $6 dedup helper (may be empty), $7 orphan cap,
+#       $8 stale threshold seconds (audit detail only)
+# Returns: 0 reset, 1 kept (worker live, unverifiable, or audit not persisted)
+_normalize_stale_process_candidate() {
+	local stale_num="$1"
+	local slug="$2"
+	local now_epoch="$3"
+	local cross_runner_max_runtime="$4"
+	local runner_user="$5"
+	local dedup_helper="$6"
+	local orphan_cap="$7"
+	local stale_threshold="$8"
+	local release_device=""
+
+	if _normalize_stale_should_skip_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime" "$runner_user"; then
+		# GH#40204: a process match or live recorded PID is not proof that
+		# this device's worker still owns the claim.
+		_normalize_stale_try_orphan_recovery "$stale_num" "$slug" "$now_epoch" \
+			"$runner_user" "$dedup_helper" "$orphan_cap" || true
+		return 1
+	fi
+
+	# No active worker and all guards passed — reset for re-dispatch.
+	# GH#35218: the release audit is persisted first; without it the reset is
+	# skipped so no claim is ever released silently.
+	release_device=$(_normalize_stale_local_device_id)
+	if ! _normalize_stale_post_release "$stale_num" "$slug" "$runner_user" \
+		"device=${release_device:-unknown} stale_threshold_s=${stale_threshold}${_NORMALIZE_STALE_RELEASE_DETAIL:+ ${_NORMALIZE_STALE_RELEASE_DETAIL}}"; then
+		echo "[pulse-wrapper] Stale assignment skip (CLAIM_RELEASED not persisted): #${stale_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-wrapper] Stale assignment reset: #${stale_num} in ${slug} — assigned to ${runner_user} with active label but no worker process" >>"$LOGFILE"
+	_normalize_clear_status_labels "$stale_num" "$slug" "$runner_user" || true
+	return 0
+}
+
 #######################################
 # (Phase 12) Detect and reset stale runner assignments.
 #
@@ -794,28 +839,10 @@ _normalize_unassign_stale() {
 		while IFS= read -r stale_num; do
 			[[ "$stale_num" =~ ^[0-9]+$ ]] || continue
 			total_candidates=$((total_candidates + 1))
-
-			if _normalize_stale_should_skip_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime" "$runner_user"; then
-				# GH#40204: a process match or live recorded PID is not proof
-				# that this device's worker still owns the claim.
-				_normalize_stale_try_orphan_recovery "$stale_num" "$slug" "$now_epoch" \
-					"$runner_user" "$dedup_helper" "$orphan_cap" || true
-				continue
+			if _normalize_stale_process_candidate "$stale_num" "$slug" "$now_epoch" \
+				"$cross_runner_max_runtime" "$runner_user" "$dedup_helper" "$orphan_cap" "$_stale_threshold"; then
+				total_reset=$((total_reset + 1))
 			fi
-
-			# No active worker and all guards passed — reset for re-dispatch.
-			# GH#35218: the release audit is persisted first; without it the
-			# reset is skipped so no claim is ever released silently.
-			local release_device
-			release_device=$(_normalize_stale_local_device_id)
-			if ! _normalize_stale_post_release "$stale_num" "$slug" "$runner_user" \
-				"device=${release_device:-unknown} stale_threshold_s=${_stale_threshold}${_NORMALIZE_STALE_RELEASE_DETAIL:+ ${_NORMALIZE_STALE_RELEASE_DETAIL}}"; then
-				echo "[pulse-wrapper] Stale assignment skip (CLAIM_RELEASED not persisted): #${stale_num} in ${slug}" >>"$LOGFILE"
-				continue
-			fi
-			echo "[pulse-wrapper] Stale assignment reset: #${stale_num} in ${slug} — assigned to ${runner_user} with active label but no worker process" >>"$LOGFILE"
-			_normalize_clear_status_labels "$stale_num" "$slug" "$runner_user" || true
-			total_reset=$((total_reset + 1))
 		done <<<"$stale_issues"
 	done <<<"$stale_slugs"
 
@@ -823,6 +850,236 @@ _normalize_unassign_stale() {
 	# and operators can confirm the sweep is firing per-cycle.
 	echo "[pulse-wrapper] Stale assignment scan: threshold=${_stale_threshold}s candidates=${total_candidates} reset=${total_reset} orphan_checked=${_NORMALIZE_ORPHAN_CHECKED} orphan_recovered=${_NORMALIZE_ORPHAN_RECOVERED}" >>"$LOGFILE"
 
+	return 0
+}
+
+#######################################
+# GH#40231: search-driven stale sweep.
+#
+# The per-repo pass above lists every pulse repo, so on large fleets it shared
+# one stage budget with four other listing passes and was killed before it
+# reached most repos: dead workers' claims stayed status:in-progress for
+# hours. One search finds this runner's stale active claims in every repo;
+# each candidate then goes through the same gate and audited reset.
+#
+# Search can lag the live issue, so every candidate is re-read before any
+# gate. Search can also omit repos the token cannot search (for example an
+# org whose SSO has not authorised it), so the caller keeps the per-repo pass
+# as a slower backstop.
+#######################################
+
+# ISO-8601 UTC for an epoch (portable via jq). Prints nothing on bad input.
+_normalize_stale_epoch_iso() {
+	local epoch="$1"
+	[[ "$epoch" =~ ^[0-9]+$ ]] || return 1
+	jq -rn --argjson e "$epoch" '$e | todate' 2>/dev/null || return 1
+	return 0
+}
+
+# jq definitions shared by the search sweep. Callers pass --arg u (runner
+# login), --arg queued and --arg in_progress (active status label names) and
+# --argjson cutoff (epoch). A stale claim is an issue, actively labelled,
+# assigned to the runner and last updated before the cutoff.
+# shellcheck disable=SC2016  # $names are jq variables, expanded by jq
+_NORMALIZE_STALE_SEARCH_JQ_DEFS='
+	def updated_epoch: try (.updated_at | fromdateiso8601) catch 9999999999;
+	def stale_claim:
+		(.pull_request == null)
+		and ([.labels[]?.name] | (index($queued) or index($in_progress)))
+		and ([.assignees[]?.login | ascii_downcase] | index($u | ascii_downcase))
+		and (updated_epoch < $cutoff);
+'
+
+# True when the live issue is still an open stale claim of the runner.
+# Unreadable issues fail closed.
+# Args: $1 issue, $2 slug, $3 runner login, $4 cutoff epoch
+_normalize_stale_search_live_recheck() {
+	local stale_num="$1"
+	local slug="$2"
+	local runner_user="$3"
+	local cutoff="$4"
+	local issue_json=""
+	issue_json=$(gh api "repos/${slug}/issues/${stale_num}" 2>/dev/null) || return 1
+	printf '%s' "$issue_json" | jq -e --arg u "$runner_user" --argjson cutoff "$cutoff" \
+		--arg queued status:queued --arg in_progress status:in-progress \
+		"${_NORMALIZE_STALE_SEARCH_JQ_DEFS}"'(.state == "open") and stale_claim' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# "slug|number" rows (repos.json slug spelling), oldest update first, for
+# search items in non-local repos.json repos that still look stale.
+# Args: $1 search JSON, $2 repos.json path, $3 runner login, $4 cutoff epoch
+_normalize_stale_search_rows() {
+	local result="$1"
+	local repos_json="$2"
+	local runner_user="$3"
+	local cutoff="$4"
+	printf '%s' "$result" | jq -r --slurpfile repos "$repos_json" \
+		--arg u "$runner_user" --argjson cutoff "$cutoff" \
+		--arg queued status:queued --arg in_progress status:in-progress \
+		"${_NORMALIZE_STALE_SEARCH_JQ_DEFS}"'
+		([$repos[0].initialized_repos[]?
+			| select((.local_only // false) == false and ((.slug | strings | length) > 0))
+			| {key: (.slug | ascii_downcase), value: .slug}] | from_entries) as $known
+		| [.items[]?
+			| (.repository_url | tostring | split("/") | .[-2:] | join("/") | ascii_downcase) as $k
+			| select(($known[$k] != null) and stale_claim)
+			| {t: updated_epoch, row: "\($known[$k])|\(.number)"}]
+		| sort_by(.t) | .[].row
+	' 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
+# Sweep this runner's stale active claims from one search.
+#
+# Candidates with a live same-device session leader are skipped before any
+# API read (a live registered worker always keeps its claim). At most
+# AIDEVOPS_STALE_SEARCH_MAX_CANDIDATES (default 20) other candidates are
+# checked per run, oldest update first; the rest wait for the next run.
+#
+# Args: $1 runner login, $2 repos.json, $3 now epoch,
+#       $4 cross-runner max runtime, $5 dedup helper (optional)
+# Env:  STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS (default 600),
+#       AIDEVOPS_ORPHANED_SELF_CLAIM_CAP (default 5)
+# Returns: 0 when the search saw every stale claim (processing may be capped);
+#          1 when search failed, was incomplete or hit the page limit, so the
+#          caller must keep the per-repo pass this run
+#######################################
+_normalize_unassign_stale_search() {
+	local runner_user="$1"
+	local repos_json="$2"
+	local now_epoch="$3"
+	local cross_runner_max_runtime="$4"
+	local dedup_helper="${5:-}"
+	local threshold="${STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS:-600}"
+	local cap="${AIDEVOPS_STALE_SEARCH_MAX_CANDIDATES:-20}"
+	local orphan_cap="${AIDEVOPS_ORPHANED_SELF_CLAIM_CAP:-5}"
+	local per_page=100
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=600
+	[[ "$cap" =~ ^[1-9][0-9]*$ ]] || cap=20
+	[[ "$orphan_cap" =~ ^[0-9]+$ ]] || orphan_cap=5
+	_NORMALIZE_ORPHAN_CHECKED=0
+	_NORMALIZE_ORPHAN_RECOVERED=0
+
+	local unavailable="[pulse-wrapper] Stale assignment scan (search) unavailable"
+	if [[ ! "$runner_user" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ || ! -f "$repos_json" ]]; then
+		echo "${unavailable}: reason=bad_input — per-repo pass kept" >>"$LOGFILE"
+		return 1
+	fi
+	local cutoff=$((now_epoch - threshold)) cutoff_iso=""
+	cutoff_iso=$(_normalize_stale_epoch_iso "$cutoff") || cutoff_iso=""
+	if [[ -z "$cutoff_iso" ]]; then
+		echo "${unavailable}: reason=bad_cutoff — per-repo pass kept" >>"$LOGFILE"
+		return 1
+	fi
+
+	local query="is:issue is:open assignee:${runner_user} label:\"status:in-progress\",\"status:queued\" updated:<${cutoff_iso}"
+	local result="" meta="" total=0 items=0 complete="false"
+	if ! result=$(gh api -X GET search/issues -f q="$query" -f sort=updated -f order=asc \
+		-f per_page="$per_page" 2>/dev/null); then
+		echo "${unavailable}: reason=search_failed — per-repo pass kept" >>"$LOGFILE"
+		return 1
+	fi
+	# Only an explicit incomplete_results=false is complete (jq `//` would
+	# replace false, so compare instead).
+	meta=$(printf '%s' "$result" | jq -r '"\(.total_count // -1) \(.items // [] | length) \(.incomplete_results == false)"' 2>/dev/null) || meta=""
+	read -r total items complete <<<"$meta"
+	if [[ ! "$total" =~ ^[0-9]+$ || ! "$items" =~ ^[0-9]+$ || "$complete" != "true" ]]; then
+		echo "${unavailable}: reason=incomplete total=${total:-?} items=${items:-?} — per-repo pass kept" >>"$LOGFILE"
+		return 1
+	fi
+
+	local rows="" row="" slug="" stale_num="" coverage_rc=0
+	local candidates=0 live_local=0 rechecked_out=0 reset=0 deferred=0
+	if [[ "$items" -ge "$per_page" || "$total" -gt "$items" ]]; then
+		coverage_rc=1
+	fi
+	rows=$(_normalize_stale_search_rows "$result" "$repos_json" "$runner_user" "$cutoff") || rows=""
+	local allowed_slugs=" " denied_slugs=" "
+	while IFS='|' read -r slug stale_num; do
+		[[ -n "$slug" && "$stale_num" =~ ^[0-9]+$ ]] || continue
+		if [[ "$denied_slugs" == *" ${slug} "* ]]; then
+			continue
+		elif [[ "$allowed_slugs" != *" ${slug} "* ]]; then
+			if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 ||
+				! repo_allows_pulse_write_actions "$slug"; then
+				denied_slugs="${denied_slugs}${slug} "
+				continue
+			fi
+			allowed_slugs="${allowed_slugs}${slug} "
+		fi
+		if _normalize_stale_session_leader_live "$stale_num"; then
+			live_local=$((live_local + 1))
+			continue
+		fi
+		if [[ "$candidates" -ge "$cap" ]]; then
+			deferred=$((deferred + 1))
+			continue
+		fi
+		candidates=$((candidates + 1))
+		if ! _normalize_stale_search_live_recheck "$stale_num" "$slug" "$runner_user" "$cutoff"; then
+			rechecked_out=$((rechecked_out + 1))
+			continue
+		fi
+		if _normalize_stale_process_candidate "$stale_num" "$slug" "$now_epoch" \
+			"$cross_runner_max_runtime" "$runner_user" "$dedup_helper" "$orphan_cap" "$threshold"; then
+			reset=$((reset + 1))
+		fi
+	done <<<"$rows"
+
+	local coverage="complete"
+	[[ "$coverage_rc" -eq 0 ]] || coverage="partial"
+	echo "[pulse-wrapper] Stale assignment scan (search): threshold=${threshold}s results=${items} total=${total} candidates=${candidates} live_local=${live_local} recheck_dropped=${rechecked_out} reset=${reset} deferred=${deferred} orphan_checked=${_NORMALIZE_ORPHAN_CHECKED} orphan_recovered=${_NORMALIZE_ORPHAN_RECOVERED} coverage=${coverage}" >>"$LOGFILE"
+	return "$coverage_rc"
+}
+
+# Substage timing when the normalization driver provides it.
+_normalize_stale_log_timing() {
+	local stage="$1"
+	local start="$2"
+	declare -F _normalize_log_timing >/dev/null 2>&1 || return 0
+	_normalize_log_timing "$stage" "$start" 0
+	return 0
+}
+
+#######################################
+# GH#40231: claim recovery run first on every normalize run: the search
+# sweep, then the pending checkpoint-lease and deferred claim-release drains
+# (GH#36553, GH#37344), which used to wait for the per-repo pass's turn.
+# Args: as _normalize_unassign_stale_search
+# Returns: 0 when the search covered every stale claim, 1 when the caller
+#          must keep the per-repo pass this run
+#######################################
+_normalize_claim_recovery_every_run() {
+	local runner_user="$1"
+	local repos_json="$2"
+	local now_epoch="$3"
+	local cross_runner_max_runtime="$4"
+	local dedup_helper="${5:-}"
+	local start=$SECONDS coverage_rc=0
+	_normalize_unassign_stale_search "$runner_user" "$repos_json" "$now_epoch" \
+		"$cross_runner_max_runtime" "$dedup_helper" || coverage_rc=1
+	_normalize_stale_log_timing "substage:normalize/unassign_stale_search" "$start"
+	start=$SECONDS
+	_normalize_stale_close_pending_checkpoint_leases || true
+	_normalize_deferred_claim_releases || true
+	_normalize_stale_log_timing "substage:normalize/claim_release_drains" "$start"
+	return "$coverage_rc"
+}
+
+# GH#40231: with complete search coverage, the per-repo stale pass is only a
+# backstop for repos search cannot see. It is due when it has not started for
+# AIDEVOPS_STALE_PER_REPO_BACKSTOP_S (default 6h) or its stamp is unreadable.
+# Args: $1 pass state dir, $2 now epoch
+# Returns: 0 due, 1 not due
+_normalize_stale_per_repo_backstop_due() {
+	local state_dir="$1"
+	local now_epoch="$2"
+	local backstop="${AIDEVOPS_STALE_PER_REPO_BACKSTOP_S:-21600}"
+	[[ "$backstop" =~ ^[0-9]+$ ]] || backstop=21600
+	declare -F _normalize_pass_started_within >/dev/null 2>&1 || return 0
+	_normalize_pass_started_within "$state_dir" unassign_stale "$now_epoch" "$backstop" && return 1
 	return 0
 }
 

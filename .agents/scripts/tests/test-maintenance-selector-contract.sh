@@ -148,7 +148,10 @@ safety_functions = {
     ".agents/scripts/pulse-issue-reconcile.sh": [
         "_normalize_unassign_stampless_interactive"
     ],
-    ".agents/scripts/pulse-issue-reconcile-stale.sh": ["_normalize_unassign_stale"],
+    ".agents/scripts/pulse-issue-reconcile-stale.sh": [
+        "_normalize_unassign_stale",
+        "_normalize_unassign_stale_search",
+    ],
     ".agents/scripts/redirect-link-guard-helper.sh": [
         "redirect_spam_sweep_all_repos"
     ],
@@ -177,7 +180,10 @@ guarded_safety_writes = {
     ".agents/scripts/pulse-issue-reconcile.sh": [
         "_normalize_unassign_stampless_interactive"
     ],
-    ".agents/scripts/pulse-issue-reconcile-stale.sh": ["_normalize_unassign_stale"],
+    ".agents/scripts/pulse-issue-reconcile-stale.sh": [
+        "_normalize_unassign_stale",
+        "_normalize_unassign_stale_search",
+    ],
     ".agents/scripts/pulse-triage-dispatch.sh": [
         "_backfill_stale_consolidation_labels"
     ],
