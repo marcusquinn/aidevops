@@ -1328,6 +1328,32 @@ for push_owner in owner fork-owner; do
 		fail "omitted PR head recovery queries push owner $push_owner"
 	fi
 done
+# Exercise the public wrapper through an empty recovery lookup and REST POST.
+# The remote branch deliberately differs from the local branch.
+if (
+	git() {
+		case "$*" in
+		'symbolic-ref --quiet HEAD') printf 'refs/heads/topic\n' ;;
+		'for-each-ref --format=%(push:remotename) refs/heads/topic') printf 'fork\n' ;;
+		'for-each-ref --format=%(push:remoteref) refs/heads/topic') printf 'refs/heads/remote-topic\n' ;;
+		'remote get-url --push fork') printf 'git@github.com:fork-owner/repo.git\n' ;;
+		*) command git "$@"; return $? ;;
+		esac
+		return 0
+	}
+	export STUB_PRIMARY_FAIL=1 STUB_PRIMARY_ERROR='GraphQL: query timeout'
+	unset STUB_RECOVERY_PR STUB_RECOVERY_FAIL
+	: >"$GH_CALLS"
+	create_output=$(gh_create_pr --repo owner/repo --title 'Transient create' --base main --body body) || exit 1
+	[[ "$create_output" == 'https://github.com/owner/repo/pull/9999' ]] || exit 1
+	[[ "$(grep -cE '^api -X POST /repos/owner/repo/pulls ' "$GH_CALLS")" -eq 1 ]] || exit 1
+	grep -qE '^api --method GET repos/owner/repo/pulls .*head=fork-owner:remote-topic ' "$GH_CALLS" || exit 1
+	grep -qE '^api -X POST /repos/owner/repo/pulls .*head=fork-owner:remote-topic ' "$GH_CALLS"
+); then
+	pass "omitted PR head REST retry retains the fork owner and remote branch"
+else
+	fail "omitted PR head REST retry retains the fork owner and remote branch"
+fi
 if (
 	git() { return 1; }
 	_gh_create_pr_recover_after_mutation_failure 'GraphQL: query timeout' --repo owner/repo

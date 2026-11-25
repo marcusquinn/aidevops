@@ -1261,7 +1261,7 @@ _gh_create_pr_extract_head() {
 
 #######################################
 # Recover a PR created before native gh failed a follow-up mutation.
-# Sets the durable identity globals.
+# Sets the durable identity globals and retains an inferred head for REST retry.
 # Args: diagnostics, then PR create argv
 # Returns: 0=recovered, 1=no exact durable PR found
 #######################################
@@ -1271,12 +1271,16 @@ _gh_create_pr_recover_after_mutation_failure() {
 	local repo=""
 	local head_ref=""
 	local recovered_url=""
+	_GH_CREATE_PR_RECOVERY_HEAD=""
 	repo=$(_gh_extract_repo_from_args "$@")
 	head_ref=$(_gh_create_pr_extract_head "$@")
 	if _rest_create_failure_is_transient "$diagnostics"; then
-		if [[ -z "$head_ref" ]] && ! head_ref=$(_rest_pr_push_head); then
-			_GH_CREATE_PR_RECOVERY_FAILED=1
-			return 1
+		if [[ -z "$head_ref" ]]; then
+			if ! head_ref=$(_rest_pr_push_head); then
+				_GH_CREATE_PR_RECOVERY_FAILED=1
+				return 1
+			fi
+			_GH_CREATE_PR_RECOVERY_HEAD="$head_ref"
 		fi
 		if ! recovered_url=$(_rest_recover_created_pr "$repo" "$head_ref"); then
 			_GH_CREATE_PR_RECOVERY_FAILED=1
@@ -1471,6 +1475,7 @@ gh_create_pr() {
 	fi
 
 	local pr_output rc create_error="" transient_failure=0 _GH_CREATE_PR_RECOVERY_FAILED=0
+	local _GH_CREATE_PR_RECOVERY_HEAD=""
 	if _gh_create_capture_native "${pr_cmd[@]}"; then
 		rc=0
 	else
@@ -1499,6 +1504,8 @@ gh_create_pr() {
 		! _rest_create_failure_is_fatal "$create_error" &&
 		{ [[ "$transient_failure" -eq 1 ]] || _rest_should_fallback_write; }; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted or transient failure, falling back to REST for pr create"
+		# Keep the exact inferred push destination used by the negative lookup.
+		[[ -z "$_GH_CREATE_PR_RECOVERY_HEAD" ]] || set -- "$@" --head "$_GH_CREATE_PR_RECOVERY_HEAD"
 		if [[ ${#_origin_label_args[@]} -gt 0 || ${#_draft_args[@]} -gt 0 ]]; then
 			pr_output=$(_rest_pr_create "$@" "${_draft_args[@]}" "${_origin_label_args[@]}")
 		else
