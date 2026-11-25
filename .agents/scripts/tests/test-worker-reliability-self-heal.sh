@@ -429,14 +429,14 @@ test_no_work_circuit_breaker_threshold_guard() {
 		return 0
 	fi
 
-	if ! printf '%s\n' "$fn_src" | grep -q 'NO_WORK_NMR_THRESHOLD'; then
+	if ! grep -q 'NO_WORK_NMR_THRESHOLD' <<<"$fn_src"; then
 		print_result "t2769: no_work circuit breaker threshold guard" 1 \
 			"NO_WORK_NMR_THRESHOLD not referenced in _log_no_work_skip_escalation"
 		return 0
 	fi
 
 	# Assertion 2: the function delegates to the dedicated structural breaker helper.
-	if ! printf '%s\n' "$fn_src" | grep -q '_apply_no_work_nmr_breaker'; then
+	if ! grep -q '_apply_no_work_nmr_breaker' <<<"$fn_src"; then
 		print_result "t2769: no_work circuit breaker threshold guard" 1 \
 			"_apply_no_work_nmr_breaker not called in _log_no_work_skip_escalation"
 		return 0
@@ -475,12 +475,12 @@ test_no_work_circuit_breaker_marker_posted() {
 		return 0
 	fi
 
-	if ! printf '%s\n' "$breaker_src" | grep -q 'cost-circuit-breaker:no_work_loop'; then
+	if ! grep -q 'cost-circuit-breaker:no_work_loop' <<<"$breaker_src"; then
 		print_result "t2769: no_work circuit breaker marker posted" 1 \
 			"marker 'cost-circuit-breaker:no_work_loop' not found in breaker function"
 		return 0
 	fi
-	if printf '%s\n' "$skip_src" | grep -q 'cost-circuit-breaker:no_work_loop'; then
+	if grep -q 'cost-circuit-breaker:no_work_loop' <<<"$skip_src"; then
 		print_result "t2769: no_work circuit breaker marker posted" 1 \
 			"below-threshold diagnostic prose quotes the breaker marker"
 		return 0
@@ -509,7 +509,7 @@ test_nmr_approval_recognises_no_work_loop_marker() {
 		return 0
 	fi
 
-	if ! printf '%s\n' "$fn_src" | grep -q 'cost-circuit-breaker:no_work_loop'; then
+	if ! grep -q 'cost-circuit-breaker:no_work_loop' <<<"$fn_src"; then
 		print_result "t2769: nmr-approval recognises no_work_loop marker" 1 \
 			"marker 'cost-circuit-breaker:no_work_loop' not in recognition regex"
 		return 0

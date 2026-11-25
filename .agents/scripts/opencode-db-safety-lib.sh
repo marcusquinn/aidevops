@@ -9,6 +9,11 @@ OPENCODE_DB_STATE_UNKNOWN="${OPENCODE_DB_STATE_UNKNOWN:-unknown}"
 OPENCODE_DB_STATE_MISSING="${OPENCODE_DB_STATE_MISSING:-missing}"
 OPENCODE_ARCHIVE_SCHEMA_MODE_OPTIONAL="optional"
 OPENCODE_ARCHIVE_SCHEMA_MODE_REQUIRED="required"
+# Session-scoped tables (all carry session_id) added by the OpenCode session-inbox
+# schema generation (migrations 20260812181746_session_inbox through
+# 20260910120000_clear_v1_session_permission). instruction_blob, kv, worktree and
+# session_v2 have no session_id column and are never session-scoped.
+OPENCODE_ARCHIVE_INBOX_SESSION_TABLES="session_inbox session_pending instruction_entry instruction_state"
 
 opencode_db_file_signature() {
 	local file_path="$1"
@@ -212,7 +217,16 @@ opencode_archive_table_schema_supported() {
 		supported="${legacy}|${legacy},replacement_seq,revision,agent"
 		;;
 	event_sequence) supported="aggregate_id,seq,owner_id" ;;
-	event) supported="id,aggregate_id,seq,type,data" ;;
+	session_inbox) supported="id,session_id,type,payload,delivery,enqueued_seq,time_created" ;;
+	session_pending) supported="id,session_id,type,data,delivery,admitted_seq,time_created" ;;
+	instruction_entry) supported="session_id,key,value,removed,time_created,time_updated" ;;
+	instruction_state) supported="session_id,epoch_start,through_seq,initial_values,current_values" ;;
+	event)
+		# The session-inbox generation added event.created. Archives migrate
+		# additively, so both shapes are valid in either mode.
+		legacy="id,aggregate_id,seq,type,data"
+		supported="${legacy}|${legacy},created"
+		;;
 	*)
 		_opencode_archive_schema_set_error "$table_name" "unavailable" "no-supported-schema" "unknown-table"
 		return 1
@@ -243,6 +257,7 @@ opencode_archive_schema_supported() {
 	local unknown_session_tables=""
 	local unknown_aggregate_tables=""
 	local unknown_columns=""
+	local inbox_generation=0
 
 	OPENCODE_ARCHIVE_SCHEMA_ERROR_TABLE=""
 	OPENCODE_ARCHIVE_SCHEMA_ERROR_ACTUAL=""
@@ -258,8 +273,17 @@ opencode_archive_schema_supported() {
 	done
 
 	session_columns=$(opencode_db_table_columns "$db_path" session) || return 1
+	# The session-inbox generation of an active DB dropped session_input and
+	# session_context_epoch. The aidevops-owned archive (required mode) keeps
+	# both, so only optional mode relaxes them.
+	if [[ "$schema_mode" == "$OPENCODE_ARCHIVE_SCHEMA_MODE_OPTIONAL" ]] && opencode_db_table_exists "$db_path" session_inbox; then
+		inbox_generation=1
+	fi
 	if [[ "$schema_mode" == "$OPENCODE_ARCHIVE_SCHEMA_MODE_REQUIRED" ]] || _opencode_archive_columns_match "$session_columns" "$current_session_columns"; then
 		for table_name in session_message session_input session_context_epoch event_sequence event; do
+			if ((inbox_generation)) && [[ "$table_name" == "session_input" || "$table_name" == "session_context_epoch" ]] && ! opencode_db_table_exists "$db_path" "$table_name"; then
+				continue
+			fi
 			opencode_archive_table_schema_supported "$db_path" "$table_name" "$OPENCODE_ARCHIVE_SCHEMA_MODE_REQUIRED" || return 1
 		done
 	else
@@ -270,8 +294,16 @@ opencode_archive_schema_supported() {
 		done
 	fi
 
+	# Session-inbox generation tables are validated whenever present, never
+	# required, so archives created before this generation stay readable.
+	for table_name in $OPENCODE_ARCHIVE_INBOX_SESSION_TABLES; do
+		if opencode_db_table_exists "$db_path" "$table_name"; then
+			opencode_archive_table_schema_supported "$db_path" "$table_name" "$schema_mode" || return 1
+		fi
+	done
+
 	unknown_session_tables=$(sqlite3 "$db_path" \
-		"SELECT DISTINCT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type='table' AND p.name='session_id' AND m.name NOT IN ('message','part','todo','session_share','session_message','session_input','session_context_epoch') ORDER BY m.name LIMIT 1;" 2>/dev/null) || return 1
+		"SELECT DISTINCT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type='table' AND p.name='session_id' AND m.name NOT IN ('message','part','todo','session_share','session_message','session_input','session_context_epoch','session_inbox','session_pending','instruction_entry','instruction_state') ORDER BY m.name LIMIT 1;" 2>/dev/null) || return 1
 	if [[ -n "$unknown_session_tables" ]]; then
 		unknown_columns=$(opencode_db_table_columns "$db_path" "$unknown_session_tables" 2>/dev/null || printf 'unavailable')
 		_opencode_archive_schema_set_error "$unknown_session_tables" "$unknown_columns" "no-additional-session-id-table" "unknown-session-table"
