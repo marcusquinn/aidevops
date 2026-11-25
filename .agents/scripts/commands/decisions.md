@@ -69,6 +69,7 @@ recommends, runs what it can, and writes.
    production state needs the maintainer's answer first. Otherwise give one
    line naming the single human action the check needs (environment, account,
    or credential). Never record evidence you did not observe.
+   For plugin checks, use `plugin-runtime-probe-helper.sh --worktree <exact-head> --probes <trusted.tsv>` and `--baseline`, then record both observed reports with the item's verification command (GH#40399).
 5. For each `held-pr` item, read the hold comment and the PR summary
    (`gh pr view <N> --repo <slug> --comments`), then recommend one of: run the
    named check, lift the hold, or close the PR, with evidence. A `latest note`
