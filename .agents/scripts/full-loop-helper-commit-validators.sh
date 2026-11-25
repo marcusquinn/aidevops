@@ -151,7 +151,8 @@ _validator_scopes() {
 		_validator_file_is_node_related "$changed_file" || continue
 		scope=${changed_file%/*}
 		[[ "$scope" == "$changed_file" ]] && scope="."
-		while [[ "$scope" != "." && ! -f "$scope/package.json" ]]; do
+		# Runtime-generated, ignored manifests do not own repository checks.
+		while [[ "$scope" != "." ]] && { [[ ! -f "$scope/package.json" ]] || git check-ignore -q -- "$scope/package.json"; }; do
 			if [[ "$scope" == */* ]]; then
 				scope=${scope%/*}
 			else

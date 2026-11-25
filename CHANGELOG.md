@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.283] - 2026-11-25
+
+### Added
+
+- keep v2 prompt cache warm during tools (#40274)
+- isolate exact-head OpenCode plugin probes (#40401)
+- opt-in nvm install of exact pinned Node for project selection
+
+### Changed
+
+- Maintenance: mark t19358 complete (pr:#40274 completed:2026-11-25) (#40408)
+- Documentation: verify launchd routine privacy permissions (#40400)
+- Maintenance: mark t19381 complete (pr:#40387 completed:2026-11-25) (#40396)
+
+### Fixed
+
+- never uninstall user-installed Beads binaries (#40430)
+- skip Anthropic OAuth candidates in public-triage model selection (GH#40416) (#40426)
+- repair Shell Suite Main Health regressions (GH#40417) (#40427)
+- open read-only lookup helpers with mode=ro to avoid checkpoint-on-close lock (GH#40415) (#40421)
+- scope in-review footprints to linked PR changed files (t19393) (#40412)
+- resync PRs desynced from branch ref (GH#40405) (#40411)
+- let a terminal failure beat absent downstream required contexts in the held runtime-pending CI gate (#40404)
+- exclude terminal-blocker re-arm receipts from cost breaker spend (GH#40366) (#40371)
+- narrow headless runtime access (GH#40255) (#40263)
+- recover transient GraphQL create failures (#40381)
+- fail fast on pnpm hoisted node-linker (#40387)
+- discard feedback for merged partial PRs (#40392)
+- map a login input owner through verified repo permission
+
 ## [3.39.282] - 2026-11-25
 
 ### Changed

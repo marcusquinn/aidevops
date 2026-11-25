@@ -876,6 +876,15 @@ if declare -f claim_worktree_ownership >/dev/null 2>&1; then
 	fi
 fi
 
+# GH#40288: a worktree left behind by a refused maintainer-gate start stays
+# read-only until a signed approval verifies (or a re-run of the gate passes).
+if [[ -x "$SCRIPT_DIR/gate-blocked-marker-helper.sh" ]]; then
+	if ! gate_marker_output=$("$SCRIPT_DIR/gate-blocked-marker-helper.sh" check "$PWD" 2>&1); then
+		echo -e "${RED}${gate_marker_output}${NC}"
+		exit 1
+	fi
+fi
+
 # --- Linked worktree (correct working context) ---
 
 _check_task_assignee "$current_branch"
