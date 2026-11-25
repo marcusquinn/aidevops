@@ -1506,11 +1506,7 @@ gh_create_pr() {
 		print_info "[INFO] gh-wrapper: GraphQL exhausted or transient failure, falling back to REST for pr create"
 		# Keep the exact inferred push destination used by the negative lookup.
 		[[ -z "$_GH_CREATE_PR_RECOVERY_HEAD" ]] || set -- "$@" --head "$_GH_CREATE_PR_RECOVERY_HEAD"
-		if [[ ${#_origin_label_args[@]} -gt 0 || ${#_draft_args[@]} -gt 0 ]]; then
-			pr_output=$(_rest_pr_create "$@" "${_draft_args[@]}" "${_origin_label_args[@]}")
-		else
-			pr_output=$(_rest_pr_create "$@")
-		fi
+		pr_output=$(_rest_pr_create "$@" ${_draft_args[@]+"${_draft_args[@]}"} ${_origin_label_args[@]+"${_origin_label_args[@]}"})
 		rc=$?
 	fi
 	if [[ "$is_help" -eq 0 && ( "$rc" -eq 0 || "$rc" -eq "$_GH_PR_CREATE_PARTIAL_RC" ) ]]; then
