@@ -7,7 +7,7 @@ import { dirname, join } from "path";
 import { homedir } from "os";
 import { recordPermissionBlocker } from "./permission-broker-blocker-log.mjs";
 import { isManagedToolOutputRead } from "./permission-broker-tool-output.mjs";
-import { impossibleExternalRead as classifyImpossibleRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
+import { impossibleExternalRead as classifyImpossibleRead, isWorkerRuntimeRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
 import { isReadOnlyRootRead, resolvedRiskTargets } from "./permission-broker-read-only-root.mjs";
 import { isDesignedPollDoomLoop, recordDesignedPollAllow } from "./permission-broker-designed-poll.mjs";
 
@@ -226,6 +226,7 @@ async function replyPermissionRequest(client, request, response) {
 // Returns the post-allow audit hook for an allowed request, otherwise null.
 function onceAllowance(context, request) {
   if (isDesignedPollDoomLoop(request)) return () => recordDesignedPollAllow(context, request, sanitizePermissionText);
+  if (isWorkerRuntimeRead(context, request, FORBIDDEN_PATTERN)) return () => {};
   if (isManagedToolOutputRead(context.toolCalls, request, context.dataHome)) return () => {};
   if (isReadOnlyRootRead(context, request, FORBIDDEN_PATTERN)) return () => recordReadOnlyRootAllow(context, request);
   return null;

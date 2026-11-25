@@ -3,6 +3,23 @@
 
 import { lstatSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { resolveReal } from "./permission-broker-read-only-root.mjs";
+
+// OpenCode may ask for the parent directory wildcard when Read names one file.
+// Require the recorded concrete target; never infer it from a broad /dev/* ask.
+export function isWorkerRuntimeRead(context, raw, forbidden) {
+  if ((raw?.permission || raw?.type) !== "external_directory") return false;
+  const call = context.toolCalls.get(raw?.tool?.callID || raw?.callID || "");
+  if (!["read", "glob", "grep", "list"].includes(call?.tool)) return false;
+  const target = call.target;
+  if (!hasBoundedReadTarget(raw, target, forbidden)) return false;
+  if (/^\/dev\/(?:null|stdin|stdout|stderr|fd\/[0-9]+)$/.test(target)) return true;
+  const root = join(context.home, ".aidevops", ".agent-workspace", "tmp");
+  if (!isWithin(root, target)) return false;
+  const realRoot = resolveReal(root);
+  const realTarget = resolveReal(target);
+  return Boolean(realRoot && realTarget && !forbidden.test(realTarget) && isWithin(realRoot, realTarget));
+}
 
 function hasBoundedReadTarget(raw, target, forbidden) {
   if (typeof target !== "string" || !isAbsolute(target)) return false;

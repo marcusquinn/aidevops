@@ -9,6 +9,48 @@ import { tmpdir } from "os";
 
 import { createPermissionBroker, sanitizePermissionText } from "../permission-broker.mjs";
 
+test("worker runtime reads allow bounded plumbing but keep broad and proc requests gated", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-runtime-read-")));
+  const previous = preserveWorkerEnvironment();
+  t.after(() => { restoreWorkerEnvironment(previous); rmSync(root, { recursive: true, force: true }); });
+  const requestFile = join(root, "request.json");
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = requestFile;
+  const temp = join(root, ".aidevops/.agent-workspace/tmp");
+  mkdirSync(temp, { recursive: true });
+  writeFileSync(join(temp, "output.txt"), "worker output");
+  symlinkSync(root, join(temp, "escape"));
+  const replies = [];
+  const broker = createPermissionBroker({ isHeadless: () => true, home: root,
+    blockerLogPath: join(root, "blockers.jsonl"),
+    client: { postSessionIdPermissionsPermissionId: async (value) => replies.push(value) } });
+  for (const [id, target, pattern, tool, allowed] of [
+    ["null", "/dev/null", "/dev/*", "read", true],
+    ["stdin", "/dev/stdin", "/dev/*", "read", true],
+    ["stdout", "/dev/stdout", "/dev/*", "read", true],
+    ["stderr", "/dev/stderr", "/dev/*", "read", true],
+    ["fd", "/dev/fd/1", "/dev/fd/*", "read", true],
+    ["temp", join(temp, "output.txt"), `${temp}/*`, "read", true],
+    ["broad-dev", "", "/dev/*", "read", false],
+    ["broad-home", join(temp, "output.txt"), `${root}/*`, "read", false],
+    ["proc", "/proc/meminfo", "/proc/*", "read", false],
+    ["proc-self", "/proc/self/status", "/proc/self/*", "read", false],
+    ["write", "/dev/null", "/dev/*", "edit", false],
+    ["symlink", join(temp, "escape/request.json"), `${temp}/escape/*`, "read", false],
+    ["secret", join(temp, ".env"), `${temp}/*`, "read", false],
+  ]) {
+    broker.recordToolCall({ tool, callID: id }, { args: { filePath: target } });
+    const raw = { id, sessionID: "runtime", permission: "external_directory", patterns: [pattern], callID: id };
+    const output = { status: "ask" };
+    broker.permissionAsk(raw, output);
+    assert.equal(output.status, allowed ? "allow" : "deny", id);
+    await broker.handleEvent({ event: { type: "permission.asked", properties: raw } });
+    assert.equal(replies.at(-1).body.response, allowed ? "once" : "reject", id);
+    if (allowed) assert.equal(existsSync(requestFile), false, id);
+  }
+  const capture = JSON.parse(readFileSync(requestFile, "utf8"));
+  assert.ok(capture.requests.some((request) => request.patterns.includes("/dev/*")));
+});
+
 test("missing exact external reads fail without a permission handoff; existing and sensitive paths retain gates", async (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-impossible-read-")));
   const previous = preserveWorkerEnvironment();

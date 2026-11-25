@@ -6,6 +6,8 @@
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
 import { readFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
 import { verifyPermissionGrant } from "./worker-permission-grant-verification.mjs";
 
@@ -15,6 +17,20 @@ const PATTERN_CAPABLE_PERMISSIONS = new Set(JSON.parse(readFileSync(
 const FORBIDDEN_GRANT_PATTERN = /(?:approval-keys\/private|\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube)(?:\/|$)|\/(?:\.config\/(?:gh|gcloud|glab-cli|hub)|\.docker)(?:\/|$)|\/(?:\.netrc|\.npmrc|\.pypirc|\.git-credentials)(?:$|\*)|auth\.json(?:$|\*)|credentials?(?:\.|\/|$)|(?:^|\/)\.env(?:\.|$|\/))/i;
 const UNBOUNDED_GRANT_PATTERN = /^(?:\*|\*\*|\/\*\*|~\/\*\*|\$WORKTREE\/\*\*)$/;
 const MAX_PERMISSION_GRANT_MS = 4 * 60 * 60 * 1000;
+
+// These are runtime plumbing, not a grant to enumerate /dev or the home root.
+// /proc remains gated: external_directory cannot express read-only proc access.
+export function registerWorkerRuntimePermissions(config, env = process.env, home = homedir()) {
+  if (!env.WORKER_WORKTREE_PATH || !env.WORKER_ISSUE_NUMBER) return 0;
+  const tempRoot = join(home, ".aidevops", ".agent-workspace", "tmp");
+  const patterns = ["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/*",
+    tempRoot, `${tempRoot}/**`];
+  let count = addApprovedCapabilityRules(config, [{ permission: "external_directory", patterns }]);
+  for (const agent of Object.values(config.agent || {})) {
+    count += addApprovedCapabilityRules(agent, [{ permission: "external_directory", patterns }]);
+  }
+  return count;
+}
 
 function ensurePermissionMap(target) {
   if (typeof target.permission === "string") {
