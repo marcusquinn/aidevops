@@ -478,14 +478,9 @@ code {
   border: 1px solid var(--border);
   border-radius: 18px;
   box-shadow: var(--glass-panel-shadow);
+  grid-row: 1;
   min-height: 0;
   -webkit-backdrop-filter: saturate(180%) blur(22px);
-}
-
-.machine-rail,
-.app-sidebar,
-.app-inset {
-  grid-row: 1;
 }
 
 .machine-rail {
