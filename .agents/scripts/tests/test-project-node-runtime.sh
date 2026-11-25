@@ -137,6 +137,45 @@ for profile in "$root/home with spaces/.nix-profile" "$root/state with spaces/ni
 done
 printf 'PASS default HOME and XDG Nix profiles preserve path spaces\n'
 
+# t19387: opt-in nvm install of an exact pin, using a stub nvm.
+mkdir -p "$root/exact" "$root/rangeonly" "$root/partial" "$root/stubnvm/alias"
+printf '%s\n' '24.18.0' >"$root/exact/.nvmrc"
+printf '%s\n' '{"engines":{"node":">=24 <25"}}' >"$root/rangeonly/package.json"
+printf '%s\n' '24' >"$root/partial/.nvmrc"
+printf '%s\n' 'system' >"$root/stubnvm/alias/default"
+cat >"$root/stubnvm/nvm.sh" <<'STUB'
+nvm() {
+	[[ "$1" == install ]] || return 1
+	local v="${*: -1}"
+	mkdir -p "$NVM_DIR/versions/node/v$v/bin" "$NVM_DIR/alias"
+	printf '#!/bin/sh\nprintf "v%s\\n"\n' "$v" >"$NVM_DIR/versions/node/v$v/bin/node"
+	chmod +x "$NVM_DIR/versions/node/v$v/bin/node"
+	printf '%s\n' "$v" >"$NVM_DIR/alias/default"
+	printf '%s\n' "$v" >>"$NVM_DIR/install.log"
+	return 0
+}
+STUB
+export FNM_DIR="$root/missing" NVM_DIR="$root/stubnvm"
+node_path="$root/active:$PATH"
+if PATH="$node_path" _project_node_bin "$root/exact" . >"$root/output" 2>"$root/error"; then
+	printf 'FAIL install ran without opt-in\n'; exit 1
+fi
+[[ ! -e "$root/stubnvm/install.log" ]] || { printf 'FAIL nvm invoked while disabled\n'; exit 1; }
+printf 'PASS nvm install disabled by default\n'
+for case_dir in rangeonly partial; do
+	if PATH="$node_path" AIDEVOPS_NODE_INSTALL=nvm _project_node_bin "$root/$case_dir" . >"$root/output" 2>"$root/error"; then
+		printf 'FAIL %s requirement installed\n' "$case_dir"; exit 1
+	fi
+done
+[[ ! -e "$root/stubnvm/install.log" ]] || { printf 'FAIL non-exact pin triggered install\n'; exit 1; }
+printf 'PASS range-only and partial pins still fail closed\n'
+actual=$(PATH="$node_path" AIDEVOPS_NODE_INSTALL=nvm _project_node_bin "$root/exact" . 2>"$root/error")
+[[ "$actual" == "$root/stubnvm/versions/node/v24.18.0/bin" ]] || { printf "FAIL installed pin not selected: %s\n%s\n" "$actual" "$(<"$root/error")"; exit 1; }
+[[ "$(<"$root/stubnvm/install.log")" == 24.18.0 ]] || { printf 'FAIL unexpected install log\n'; exit 1; }
+[[ "$(<"$root/stubnvm/alias/default")" == system ]] || { printf 'FAIL nvm default alias changed\n'; exit 1; }
+printf 'PASS exact pin installed with nvm and default alias unchanged\n'
+export NVM_DIR="$root/missing"
+
 # Exercise the worker preparation path without a live dispatch claim.
 # shellcheck source=../headless-runtime-worker-prepare.sh
 source "$SCRIPT_DIR/headless-runtime-worker-prepare.sh"
