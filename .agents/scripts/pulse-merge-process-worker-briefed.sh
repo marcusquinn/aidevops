@@ -321,7 +321,11 @@ _is_trusted_services_sync_issue_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local issue_api="$3"
-	local issue_meta title files_json file_count path
+	local issue_meta
+	local title
+	local files_json
+	local file_count
+	local path
 	local re_title='^Sync site services list with upstream aidevops \([0-9a-f]{7}\)$'
 	local marker='<!-- aidevops:generator=services-sync-check -->'
 	local files_api
