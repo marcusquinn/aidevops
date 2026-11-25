@@ -18,6 +18,8 @@
 #   _normalize_stale_get_dispatch_info — Read PID, timestamp, runner from dispatch comment
 #   _normalize_stale_should_skip_reset — Gate reset decision (t1933 + t2375 cross-runner)
 #   _normalize_unassign_stale          — Detect and reset stale runner assignments
+#   _normalize_stale_recover_orphaned_self_claim — Guarded is-assigned recovery
+#                                        for orphaned self-device claims (GH#40204)
 #   _normalize_unassign_available_stale — Release stale assignees on status:available issues (GH#39327)
 
 # Include guard — prevent double-sourcing.
@@ -25,6 +27,9 @@
 _PULSE_ISSUE_RECONCILE_STALE_LOADED=1
 # GH#36186: extra audit tokens for the next stale release (set per candidate).
 _NORMALIZE_STALE_RELEASE_DETAIL=""
+# GH#40204: why _normalize_stale_should_skip_reset last skipped a candidate
+# (empty when the skip reason is not used by orphaned-claim recovery).
+_NORMALIZE_STALE_SKIP_REASON=""
 
 # GH#36553: local-first recovery; the existing close command owns all GH guards.
 _normalize_stale_close_pending_checkpoint_leases() {
@@ -418,24 +423,24 @@ _normalize_stale_should_skip_reset() {
 	local now_epoch="$3"
 	local cross_runner_max_runtime="$4"
 	local self_login="$5"
+	_NORMALIZE_STALE_SKIP_REASON=""
 
-	# An open PR linked by GitHub's authoritative closing metadata is durable
-	# ownership evidence even after the worker process and dispatch lease expire.
-	# Indeterminate linkage fails closed so transient API faults cannot launch a
-	# competing implementation. GH#36186: abandoned worker drafts do not block.
+	# An authoritatively linked open PR is durable ownership evidence even after
+	# the worker and lease expire; indeterminate linkage fails closed.
+	# GH#36186: abandoned worker drafts do not block.
 	if _normalize_stale_open_pr_blocks_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime" "$self_login"; then
+		_NORMALIZE_STALE_SKIP_REASON="open_pr"
 		return 0
 	fi
 
 	# Check 1: local worker process still referencing this issue
 	if pgrep -f "pulse-reconcile.*[^0-9]${stale_num}([^0-9]|$)" >/dev/null 2>&1 || pgrep -f "#${stale_num}([^0-9]|$)" >/dev/null 2>&1; then
+		_NORMALIZE_STALE_SKIP_REASON="local_process"
 		return 0
 	fi
 
-	# t2375: Read dispatch PID, timestamp, and runner from the most recent
-	# dispatch comment. Fail-CLOSED on gh api error — match the reactive-path
-	# stance in dispatch-dedup-stale.sh:401-405. A transient gh failure is
-	# not evidence of staleness.
+	# t2375: read PID, timestamp and runner from the latest dispatch comment.
+	# Fail-CLOSED on gh api error: a transient failure is not staleness.
 	local dispatch_info
 	local dispatch_info_rc=0
 	dispatch_info=$(_normalize_stale_get_dispatch_info "$slug" "$stale_num") || dispatch_info_rc=$?
@@ -493,6 +498,7 @@ _normalize_stale_should_skip_reset() {
 			# is authoritative here. If our own PID is still running, skip;
 			# otherwise fall through to Check 3 (local log) and reset.
 			if ps -p "$dispatch_pid" >/dev/null 2>&1; then
+				_NORMALIZE_STALE_SKIP_REASON="worker_pid_alive"
 				return 0
 			fi
 			echo "[pulse-wrapper] Stale assignment reset candidate (local worker gone): #${stale_num} in ${slug} — dispatch PID ${dispatch_pid} not running, comment age ${dispatch_comment_age}s" >>"$LOGFILE"
@@ -511,6 +517,166 @@ _normalize_stale_should_skip_reset() {
 	fi
 
 	return 1
+}
+
+#######################################
+# GH#40204: orphaned self-device claim recovery.
+#
+# A worker whose exit-path CLAIM_RELEASED write fails (rest-gate deferral,
+# network or host IPC outage) leaves its issue status:in-progress and assigned
+# to this runner. The sweep above then skips it while any surviving process
+# still names "#N" (for example a detached runtime subshell of the dead
+# worker) or while the recorded PID has been reused. Candidate listing
+# excludes status:in-progress, so the guarded is-assigned recovery never ran.
+#
+# These helpers prove the claim is this device's and its worker is gone, then
+# delegate the decision and audit to `dispatch-dedup-helper.sh is-assigned`,
+# which keeps its open-PR, branch-activity, issue-activity and interactive
+# fences. No staleness rule is reimplemented here.
+#######################################
+
+# True when a live process for session issue-N leads its own process group:
+# the registered headless runtime of a live worker. A surviving subshell of a
+# dead worker keeps the dead leader's PGID, so it does not count. Local only.
+# Args: $1 issue number
+_normalize_stale_session_leader_live() {
+	local issue_num="$1"
+	local pids="" pid="" pgid=""
+	pids=$(pgrep -f "session-key[[:space:]]+issue-${issue_num}([^0-9]|$)" 2>/dev/null) || pids=""
+	while IFS= read -r pid; do
+		[[ "$pid" =~ ^[0-9]+$ ]] || continue
+		pgid=$(ps -o pgid= -p "$pid" 2>/dev/null) || pgid=""
+		pgid="${pgid//[[:space:]]/}"
+		[[ "$pgid" == "$pid" ]] && return 0
+	done <<<"$pids"
+	return 1
+}
+
+# True when PID is running and its command line still names the issue, so a
+# reused PID is not mistaken for the registered worker.
+# Args: $1 PID, $2 issue number
+_normalize_stale_worker_pid_owns_issue() {
+	local pid="$1"
+	local issue_num="$2"
+	local cmd=""
+	local issue_re="(issue-|#)${issue_num}([^0-9]|$)"
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	cmd=$(ps -o command= -p "$pid" 2>/dev/null) || return 1
+	[[ "$cmd" =~ $issue_re ]] && return 0
+	return 1
+}
+
+# Claim evidence from trusted comments (slurped pages or flat array):
+# "pid|dispatch_runner|dispatch_device|lease_device|claim_runner" from the
+# newest `Dispatching worker` comment and the newest DISPATCH_CLAIM/LEASE line.
+# Args: $1 comments JSON, $2 self login
+_normalize_stale_self_claim_evidence() {
+	local comments="$1"
+	local self_login="$2"
+	printf '%s' "$comments" | jq -r --arg self "$self_login" '
+		def trusted: ((.author_association // "") as $a |
+			$a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR") or
+			($self != "" and (.user.login // "") == $self);
+		def grab($re): ((capture($re) // {v: ""}) | .v);
+		[if type == "array" then flatten[] else empty end | objects | select(trusted)]
+		| sort_by((.created_at // ""), (.id // 0)) as $c
+		| (([$c[] | (.body // "") | select(contains("Dispatching worker"))] | last) // "") as $d
+		| [$c[] | (.body // "") | split("\n")[] | sub("\r$"; "")
+			| select(test("^DISPATCH_(CLAIM|LEASE) "))] as $leases
+		| (($leases | last) // "") as $l
+		| (([$leases[] | select(startswith("DISPATCH_CLAIM "))] | last) // "") as $cl
+		| [($d | grab("\\*\\*Worker PID\\*\\*: (?<v>[0-9]+)")),
+		   ($d | grab("\\*\\*Runner\\*\\*: (?<v>[A-Za-z0-9][A-Za-z0-9-]*)")),
+		   ($d | grab("aidevops:dispatch [^>]*device=(?<v>[A-Za-z0-9][A-Za-z0-9._-]*)")),
+		   ($l | grab("(^| )device=(?<v>[A-Za-z0-9][A-Za-z0-9._-]*)")),
+		   ($cl | grab("(^| )runner=(?<v>[A-Za-z0-9][A-Za-z0-9-]*)"))]
+		| join("|")
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# Local, API-free prefilter: 0 when the candidate may be an orphaned claim of
+# this device (no live session leader, no recent worker log), 1 otherwise.
+# Args: $1 issue, $2 slug, $3 now epoch
+_normalize_stale_orphan_local_prefilter() {
+	local stale_num="$1"
+	local slug="$2"
+	local now_epoch="$3"
+	[[ -n "$(_normalize_stale_local_device_id)" ]] || return 1
+	_normalize_stale_session_leader_live "$stale_num" && return 1
+	local worker_log="" log_mtime=0
+	worker_log=$(aidevops_pulse_worker_log_path "$slug" "$stale_num" 2>/dev/null || true)
+	if [[ -n "$worker_log" && -f "$worker_log" ]] && declare -F _file_mtime_epoch >/dev/null 2>&1; then
+		log_mtime=$(_file_mtime_epoch "$worker_log")
+		[[ "$log_mtime" =~ ^[0-9]+$ ]] || return 1
+		[[ $((now_epoch - log_mtime)) -lt 600 ]] && return 1
+	fi
+	return 0
+}
+
+# Prove the claim is this runner's and device's, its lease has expired and
+# its registered worker PID is gone; then run the guarded is-assigned path.
+# Args: $1 issue, $2 slug, $3 now epoch, $4 self login, $5 dedup helper path
+# Returns: 0 recovered (STALE_RECOVERED), 1 otherwise (no mutation by us)
+_normalize_stale_recover_orphaned_self_claim() {
+	local stale_num="$1"
+	local slug="$2"
+	local now_epoch="$3"
+	local self_login="$4"
+	local dedup_helper="$5"
+	local local_device="" comments="" evidence="" lease_rc=0 output=""
+	local pid="" runner="" dispatch_device="" lease_device="" claim_runner=""
+	[[ -n "$self_login" && -n "$dedup_helper" && -x "$dedup_helper" ]] || return 1
+	local_device=$(_normalize_stale_local_device_id)
+	[[ -n "$local_device" ]] || return 1
+	if ! comments=$(_normalize_stale_issue_comments "$slug" "$stale_num"); then
+		echo "[pulse-wrapper] Orphaned self claim skip (comment lookup fail-closed): #${stale_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+	evidence=$(_normalize_stale_self_claim_evidence "$comments" "$self_login") || return 1
+	IFS='|' read -r pid runner dispatch_device lease_device claim_runner <<<"$evidence"
+	runner="${runner:-$claim_runner}"
+	[[ "$runner" == "$self_login" && "$lease_device" == "$local_device" ]] || return 1
+	[[ -z "$dispatch_device" || "$dispatch_device" == "$local_device" ]] || return 1
+	_normalize_stale_has_live_lease "$comments" "$now_epoch" "$self_login" || lease_rc=$?
+	[[ "$lease_rc" -eq 1 ]] || return 1
+	if [[ -n "$pid" ]] && _normalize_stale_worker_pid_owns_issue "$pid" "$stale_num"; then
+		return 1
+	fi
+	output=$("$dedup_helper" is-assigned "$stale_num" "$slug" "$self_login" 2>/dev/null) || true
+	echo "[pulse-wrapper] Orphaned self claim check: #${stale_num} in ${slug} — device=${local_device} pid=${pid:-none} lease expired, worker gone; is-assigned: ${output%%$'\n'*}" >>"$LOGFILE"
+	[[ "$output" == *STALE_RECOVERED* ]] && return 0
+	return 1
+}
+
+# Per-sweep orphan counters, reset by _normalize_unassign_stale.
+_NORMALIZE_ORPHAN_CHECKED=0
+_NORMALIZE_ORPHAN_RECOVERED=0
+
+# Sweep hook after _normalize_stale_should_skip_reset skipped a candidate:
+# only process-match and live-PID skips qualify, the local prefilter runs
+# before any API read, and comment-reading checks are capped per sweep.
+# Args: $1 issue, $2 slug, $3 now epoch, $4 self login, $5 dedup helper,
+#       $6 per-sweep cap
+# Returns: 0 recovered, 1 otherwise
+_normalize_stale_try_orphan_recovery() {
+	local stale_num="$1"
+	local slug="$2"
+	local now_epoch="$3"
+	local self_login="$4"
+	local dedup_helper="$5"
+	local cap="$6"
+	case "$_NORMALIZE_STALE_SKIP_REASON" in
+	local_process | worker_pid_alive) ;;
+	*) return 1 ;;
+	esac
+	[[ -n "$dedup_helper" && "$_NORMALIZE_ORPHAN_CHECKED" -lt "$cap" ]] || return 1
+	_normalize_stale_orphan_local_prefilter "$stale_num" "$slug" "$now_epoch" || return 1
+	_NORMALIZE_ORPHAN_CHECKED=$((_NORMALIZE_ORPHAN_CHECKED + 1))
+	_normalize_stale_recover_orphaned_self_claim "$stale_num" "$slug" "$now_epoch" \
+		"$self_login" "$dedup_helper" || return 1
+	_NORMALIZE_ORPHAN_RECOVERED=$((_NORMALIZE_ORPHAN_RECOVERED + 1))
+	return 0
 }
 
 #######################################
@@ -554,6 +720,10 @@ _normalize_stale_should_skip_reset() {
 #   $3 now_epoch                — current Unix timestamp (date +%s)
 #   $4 cross_runner_max_runtime — seconds before a cross-runner dispatch is
 #                                  considered expired (default: WORKER_MAX_RUNTIME)
+#   $5 dedup_helper             — optional dispatch-dedup-helper.sh path; enables
+#                                  GH#40204 orphaned self-device claim recovery
+# Env: AIDEVOPS_ORPHANED_SELF_CLAIM_CAP (default 5) comment-reading orphan
+#      checks per cycle (live same-device workers are filtered locally first)
 # Returns: 0 always (best-effort; logs summary to $LOGFILE)
 #######################################
 _normalize_unassign_stale() {
@@ -561,6 +731,11 @@ _normalize_unassign_stale() {
 	local repos_json="$2"
 	local now_epoch="$3"
 	local cross_runner_max_runtime="$4"
+	local dedup_helper="${5:-}"
+	local orphan_cap="${AIDEVOPS_ORPHANED_SELF_CLAIM_CAP:-5}"
+	[[ "$orphan_cap" =~ ^[0-9]+$ ]] || orphan_cap=5
+	_NORMALIZE_ORPHAN_CHECKED=0
+	_NORMALIZE_ORPHAN_RECOVERED=0
 
 	# t2372: tunable outer-filter age. Default matches the reactive
 	# STALE_ASSIGNMENT_THRESHOLD_SECONDS=600 in dispatch-dedup-stale.sh so
@@ -621,6 +796,10 @@ _normalize_unassign_stale() {
 			total_candidates=$((total_candidates + 1))
 
 			if _normalize_stale_should_skip_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime" "$runner_user"; then
+				# GH#40204: a process match or live recorded PID is not proof
+				# that this device's worker still owns the claim.
+				_normalize_stale_try_orphan_recovery "$stale_num" "$slug" "$now_epoch" \
+					"$runner_user" "$dedup_helper" "$orphan_cap" || true
 				continue
 			fi
 
@@ -642,7 +821,7 @@ _normalize_unassign_stale() {
 
 	# t2372: always log scan summary so silent runs are visible in pulse log
 	# and operators can confirm the sweep is firing per-cycle.
-	echo "[pulse-wrapper] Stale assignment scan: threshold=${_stale_threshold}s candidates=${total_candidates} reset=${total_reset}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Stale assignment scan: threshold=${_stale_threshold}s candidates=${total_candidates} reset=${total_reset} orphan_checked=${_NORMALIZE_ORPHAN_CHECKED} orphan_recovered=${_NORMALIZE_ORPHAN_RECOVERED}" >>"$LOGFILE"
 
 	return 0
 }
