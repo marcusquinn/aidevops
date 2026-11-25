@@ -41,6 +41,7 @@ WRITER_LOGIN=runner
 SYNC_HEAD=""
 PR_FILES='[{"filename":".agents/scripts/example.sh","status":"modified"}]'
 PR_FILES_API_FAIL=0
+SERVICES_HEAD_AFTER=""
 ROUTINE_META=""
 ROUTINE_HEAD_CONTENT=""
 ROUTINE_BASE_CONTENT=""
@@ -89,11 +90,15 @@ gh() {
 	*/collaborators/*/permission) payload=$(jq -n --arg p "$ISSUE_PERMISSION" '{permission:$p}') ;;
 	repos/owner/repo/pulls/100/files*)
 		[[ "$PR_FILES_API_FAIL" == 0 ]] || return 1
+		if [[ -n "$SERVICES_HEAD_AFTER" ]]; then touch "${TEST_ROOT}/services-files-read"; fi
 		payload="$PR_FILES"
 		;;
 	repos/owner/repo/pulls/100)
 		payload="$ROUTINE_META"
 		[[ -n "$payload" ]] || payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
+		if [[ -n "$SERVICES_HEAD_AFTER" && -f "${TEST_ROOT}/services-files-read" ]]; then
+			payload=$(jq -n --arg sha "$SERVICES_HEAD_AFTER" '{head:{sha:$sha}}')
+		fi
 		;;
 	# Only SHA-pinned reads are answered: an unpinned diff read fails the test.
 	repos/owner/repo/compare/"${ROUTINE_BASE}...${ROUTINE_HEAD}?per_page=1")
@@ -174,7 +179,9 @@ _pulse_is_trusted_issue_sync_pr() {
 expect_parity() {
 	local expected="$1" name="$2" deterministic=0 full_loop=0
 	local linked_issue="${3-42}"
+	rm -f "${TEST_ROOT}/services-files-read"
 	_attempt_worker_briefed_auto_merge 100 owner/repo origin:worker false "$linked_issue" || deterministic=$?
+	rm -f "${TEST_ROOT}/services-files-read"
 	_merge_worker_briefed_trust_gate 100 owner/repo 1 || full_loop=$?
 	[[ "$deterministic" == "$expected" && "$full_loop" == "$expected" ]] || {
 		printf 'FAIL %s: deterministic=%s full-loop=%s\n' "$name" "$deterministic" "$full_loop" >&2
@@ -265,6 +272,23 @@ PR_FILES='[{"filename":"data/services-sync.json","status":"modified"}]'
 expect_parity 0 'services-sync brief with json-only diff allowed on both paths'
 PR_FILES='[{"filename":"data/services-sync.json","status":"modified"},{"filename":"index.html","status":"modified"}]'
 expect_parity 0 'services-sync brief with index.html and json diff allowed on both paths'
+WORKER_BRIEFED_EXPECTED_HEAD=0123456789abcdef0123456789abcdef01234567
+expect_parity 0 'services-sync matching Pulse pin allowed'
+WORKER_BRIEFED_EXPECTED_HEAD=3333333333333333333333333333333333333333
+expect_parity 1 'services-sync mismatched Pulse pin denied'
+unset WORKER_BRIEFED_EXPECTED_HEAD
+FULL_LOOP_EXPECTED_PR_HEAD_SHA=0123456789abcdef0123456789abcdef01234567
+expect_parity 0 'services-sync matching full-loop pin allowed'
+FULL_LOOP_EXPECTED_PR_HEAD_SHA=3333333333333333333333333333333333333333
+expect_parity 1 'services-sync mismatched full-loop pin denied'
+unset FULL_LOOP_EXPECTED_PR_HEAD_SHA
+SERVICES_HEAD_AFTER=3333333333333333333333333333333333333333
+expect_parity 1 'services-sync head moving during file read denied'
+SERVICES_HEAD_AFTER=malformed
+expect_parity 1 'services-sync malformed head after file read denied'
+SERVICES_HEAD_AFTER=""
+PR_FILES='[{"filename":"index.html\ndata/services-sync.json","status":"modified"}]'
+expect_parity 1 'services-sync newline-containing filename denied on both paths'
 PR_FILES='[{"filename":"data/services-sync.json","status":"modified"},{"filename":".agents/scripts/example.sh","status":"modified"}]'
 expect_parity 1 'services-sync brief with an out-of-scope file denied on both paths'
 PR_FILES='[{"filename":"data/services-sync.json","status":"renamed","previous_filename":"x.json"}]'

@@ -329,9 +329,13 @@ _is_trusted_services_sync_issue_pr() {
 	local re_title='^Sync site services list with upstream aidevops \([0-9a-f]{7}\)$'
 	local marker='<!-- aidevops:generator=services-sync-check -->'
 	local files_api
+	local pr_api
+	local head_before
+	local head_after
 
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$issue_api" ]] || return 1
-	files_api=$(printf 'repos/%s/pulls/%s/files?per_page=100' "$repo_slug" "$pr_number") || return 1
+	pr_api=$(printf 'repos/%s/pulls/%s' "$repo_slug" "$pr_number") || return 1
+	files_api="${pr_api}/files?per_page=100"
 	issue_meta=$(gh api "$issue_api" 2>/dev/null) || return 1
 	# One predicate: a real issue (not a PR) with a string body, the exact bot
 	# identity, the generator marker and the origin:worker label. Anything else
@@ -343,12 +347,22 @@ _is_trusted_services_sync_issue_pr() {
 	title=$(jq -r '.title // ""' <<<"$issue_meta") || return 1
 	[[ "$title" =~ $re_title ]] || return 1
 
+	#aidevops:trust-boundary — classify one stable head, matching either merge
+	# entrypoint's pin when present. Never reuse scope checked for another head.
+	head_before=$(gh api "$pr_api" --jq '.head.sha // ""' 2>/dev/null) || return 1
+	[[ "$head_before" =~ ^[0-9a-f]{40}$ ]] || return 1
+	[[ -z "${WORKER_BRIEFED_EXPECTED_HEAD:-}" || "$head_before" == "$WORKER_BRIEFED_EXPECTED_HEAD" ]] || return 1
+	[[ -z "${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}" || "$head_before" == "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" ]] || return 1
 	files_json=$(gh api "$files_api" 2>/dev/null) || return 1
+	head_after=$(gh api "$pr_api" --jq '.head.sha // ""' 2>/dev/null) || return 1
+	[[ "$head_after" == "$head_before" ]] || return 1
 	# `arrays` emits nothing for non-array payloads, so the integer check fails closed.
 	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 1
 	[[ "$file_count" =~ ^[0-9]+$ ]] || return 1
 	[[ "$file_count" -ge 1 && "$file_count" -le 2 ]] || return 1
-	jq -e --arg renamed renamed 'all(.[]; .status != $renamed and ([.filename | strings] | length == 1))' <<<"$files_json" >/dev/null 2>&1 || return 1
+	# Validate whole JSON strings before raw output can split embedded newlines.
+	jq -e --arg renamed renamed 'all(.[]; .status != $renamed and
+		(.filename == "index.html" or .filename == "data/services-sync.json"))' <<<"$files_json" >/dev/null 2>&1 || return 1
 
 	while IFS= read -r path; do
 		case "$path" in
