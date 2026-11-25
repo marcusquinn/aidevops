@@ -75,7 +75,7 @@ main() {
 	first_create=$(grep -n 'await github\.rest\.issues\.createLabel' "$WORKFLOW" | head -1 | cut -d: -f1)
 	persistent_guard=$(grep -n "issueLabels\.has('persistent')" "$WORKFLOW" | head -1 | cut -d: -f1)
 	trusted_cleanup=$(grep -n 'if (authorIsTrusted)' "$WORKFLOW" | head -1 | cut -d: -f1)
-	triage_labels=$(grep -n 'const triageLabels =' "$WORKFLOW" | head -1 | cut -d: -f1)
+	triage_labels=$(grep -n 'const triageLabels =' "$WORKFLOW" | cut -d: -f1)
 	TESTS_RUN=$((TESTS_RUN + 1))
 	if [[ "$first_add" =~ ^[0-9]+$ && "$first_create" =~ ^[0-9]+$ && "$first_add" -lt "$first_create" ]]; then
 		printf 'PASS critical label application precedes label creation\n'
