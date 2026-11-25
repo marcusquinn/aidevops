@@ -81,11 +81,13 @@ uninstaller. Ask the user first.
   actual recovery folder; quote paths containing spaces. Unquoted `~/` expands
   to an absolute home path; a quoted `"~/..."` does not.
 - Keychain password: copy the file into its own new folder, named exactly
-  `login.keychain-db`, then have the user run
-  `security unlock-keychain "/absolute/path/to/recovery/login.keychain-db"`.
-  No output = unlocked, not permission to read every item. Keep the copy until
-  recovery is verified, then lock it with
+  `login.keychain-db`. Before **each** candidate password test, run
   `security lock-keychain "/absolute/path/to/recovery/login.keychain-db"`.
+  Confirm the copy is locked (see the lock-state check below), then have the
+  user run `security unlock-keychain "/absolute/path/to/recovery/login.keychain-db"`.
+  No output = unlocked, not permission to read every item. An already-unlocked
+  copy does not verify a candidate password. Keep the copy until recovery is
+  verified, then lock it again using the same absolute path.
   Remove it from any temporary search list before deleting it, with user consent.
 - Observed on macOS 26 (cause unknown): identical bytes rejected the correct
   password under another file name and accepted it as `login.keychain-db`.
@@ -121,6 +123,7 @@ passwords. Do not keep retrying or infer that the keychain password is wrong;
 prefer Keychain Access's **Show password** route:
 
 1. Record the existing user search list with `security list-keychains -d user`.
+   If the copy is already listed, leave the list unchanged and do not add it again.
    To make the copy visible, use `security list-keychains -d user -s` followed
    by **every existing absolute path in its original order**, then the copy's
    absolute path. The `-s` option replaces the list; do not discard other entries.
@@ -131,9 +134,12 @@ prefer Keychain Access's **Show password** route:
    Open the required item, tick **Show password**, and let the user authenticate
    in the GUI. Copy and paste directly into the target app, never into chat,
    command arguments or logs. Clear the clipboard after use. If GUI access also
-   fails, stop and treat access as unknown; do not weaken the item's ACL.
-3. Restore the recorded search list with `security list-keychains -d user -s`
-   followed by the original absolute paths, omitting the temporarily added copy.
+   fails, treat access as unknown and perform step 3 before stopping; do not
+   weaken the item's ACL.
+3. On success **or failure**, restore the recorded search list exactly with
+   `security list-keychains -d user -s` followed by the original absolute paths
+   in their original order. This removes the copy only if this procedure added
+   it; a copy already in the recorded list must remain there.
    Verify with `security list-keychains -d user`, then lock the copy. Retain it
    until recovery is verified; removing a search-list entry does not delete it.
 
