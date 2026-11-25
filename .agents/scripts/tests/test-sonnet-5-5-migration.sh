@@ -8,7 +8,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULE="${SCRIPT_DIR}/../setup/modules/migration-sonnet-5-5.sh"
-SETUP_SCRIPT="${SCRIPT_DIR}/../../../setup.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 LOG="$TEST_ROOT/messages.log"
@@ -59,7 +58,8 @@ file_mode() {
 	return 0
 }
 
-assert_eq "2" "$(grep -c 'migrate_sonnet_5_5_settings' "$SETUP_SCRIPT")" "setup runs the migration in interactive and non-interactive paths"
+SETUP_EXECUTION_MODULE="${SCRIPT_DIR}/../setup/modules/setup-execution.sh"
+assert_eq "2" "$(grep -c 'migrate_sonnet_5_5_settings' "$SETUP_EXECUTION_MODULE")" "setup runs the migration in interactive and non-interactive paths"
 
 # --- Old pins across every owned file are moved; everything else is kept ---
 HOME="$TEST_ROOT/pinned"

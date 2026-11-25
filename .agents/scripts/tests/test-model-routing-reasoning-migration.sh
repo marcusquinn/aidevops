@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIGRATIONS_MODULE="${SCRIPT_DIR}/../setup/modules/migrations.sh"
-SETUP_SCRIPT="${SCRIPT_DIR}/../../../setup.sh"
+SETUP_EXECUTION_MODULE="${SCRIPT_DIR}/../setup/modules/setup-execution.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 WARNING_LOG="$TEST_ROOT/warnings.log"
@@ -58,8 +58,8 @@ file_mode() {
 	return 0
 }
 
-assert_eq "2" "$(grep -c 'migrate_custom_model_routing_reasoning_defaults' "$SETUP_SCRIPT")" "setup runs the migration in interactive and non-interactive paths" || true
-assert_eq "2" "$(grep -c 'migrate_obsolete_settings_model_routing' "$SETUP_SCRIPT")" "setup removes obsolete settings routing in interactive and non-interactive paths" || true
+assert_eq "2" "$(grep -c 'migrate_custom_model_routing_reasoning_defaults' "$SETUP_EXECUTION_MODULE")" "setup runs the migration in interactive and non-interactive paths" || true
+assert_eq "2" "$(grep -c 'migrate_obsolete_settings_model_routing' "$SETUP_EXECUTION_MODULE")" "setup removes obsolete settings routing in interactive and non-interactive paths" || true
 
 unset HOME
 migrate_custom_model_routing_reasoning_defaults
