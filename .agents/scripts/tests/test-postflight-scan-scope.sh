@@ -4,8 +4,8 @@
 
 # test-postflight-scan-scope.sh — GH#22437 regression guard.
 #
-# Verifies the postflight scan excludes the intentional transcript scrubber
-# fixture without disabling blocking detection for production-like files.
+# Verifies routine postflight avoids source rescans (including the intentional
+# transcript scrubber fixture), while explicit scanning still detects keys.
 
 set -euo pipefail
 
@@ -41,26 +41,18 @@ require_scanner() {
 	return 0
 }
 
-postflight_scan_targets() {
-	secretlint \
-		"**/*" \
-		"!.agents/scripts/tests/test-credential-transcript-scrub.sh" \
-		--secretlintrc .secretlintrc.json \
-		--secretlintignore .secretlintignore \
-		--format compact >/tmp/postflight-scan-fixture.out 2>&1
-	return $?
-}
-
 test_scrubber_fixture_is_excluded() {
-	if postflight_scan_targets; then
-		pass 'postflight scan ignores transcript scrubber fixture'
+	# Postflight no longer owns a scanner invocation. Reuse the current contract
+	# guard instead of running a historical whole-repository Secretlint command.
+	if bash "$ROOT_DIR/.agents/scripts/tests/test-postflight-no-source-rescan.sh"; then
+		pass 'routine postflight does not scan the transcript scrubber fixture'
 		return 0
 	fi
-	fail 'postflight scan reported the transcript scrubber fixture'
+	fail 'routine postflight unexpectedly rescans source fixtures'
+	return 1
 }
 
 test_production_like_private_key_blocks() {
-	TEST_TMP_DIR="$(mktemp -d "$ROOT_DIR/postflight-scan.XXXXXX")"
 	local private_key_path="$TEST_TMP_DIR/production-like-key"
 	local output_path="$TEST_TMP_DIR/scanner.out"
 
@@ -84,6 +76,7 @@ test_production_like_private_key_blocks() {
 
 main() {
 	require_scanner
+	TEST_TMP_DIR="$(mktemp -d)"
 	test_scrubber_fixture_is_excluded
 	test_production_like_private_key_blocks
 	return 0

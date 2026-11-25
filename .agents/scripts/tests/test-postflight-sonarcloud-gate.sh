@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 POSTFLIGHT_SCRIPT="${REPO_ROOT}/.agents/scripts/postflight-check.sh"
 STUB_DIR=$(mktemp -d)
+POSTFLIGHT_TEST_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD)
+export POSTFLIGHT_TEST_SHA
 
 cleanup() {
 	rm -rf "$STUB_DIR"
@@ -15,6 +17,10 @@ trap cleanup EXIT
 
 cat >"${STUB_DIR}/gh" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${1:-}" == "api" && "$*" == *"/commits/v1.2.3"* ]]; then
+	printf '%s\n' "$POSTFLIGHT_TEST_SHA"
+	exit 0
+fi
 if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
 	if [[ "${GH_AUTH_STUB_RESULT:-authenticated}" == "failure" ]]; then
 		exit 1
@@ -168,7 +174,7 @@ LATE_REQUIRED_OUTPUT=$(PATH="${STUB_DIR}:$PATH" \
 	CI_STUB_STATE_FILE="$SEQUENCE_STATE" \
 	POSTFLIGHT_POLL_INTERVAL=0 \
 	POSTFLIGHT_MAX_ATTEMPTS=6 \
-	bash "$POSTFLIGHT_SCRIPT" --ci-only --sha release-sha --tag v1.2.3 2>&1) || LATE_REQUIRED_EXIT=$?
+	bash "$POSTFLIGHT_SCRIPT" --ci-only --sha "$POSTFLIGHT_TEST_SHA" --tag v1.2.3 2>&1) || LATE_REQUIRED_EXIT=$?
 if [[ "$LATE_REQUIRED_EXIT" -ne 1 || "$LATE_REQUIRED_OUTPUT" != *"Late Required: failure"* ]]; then
 	printf 'FAIL: postflight missed a required check that appeared after a complete snapshot\n%s\n' "$LATE_REQUIRED_OUTPUT" >&2
 	exit 1
@@ -180,7 +186,7 @@ STARTUP_FAILURE_OUTPUT=$(PATH="${STUB_DIR}:$PATH" \
 	CI_STUB_WORKFLOW_STARTUP_FAILURE=true \
 	POSTFLIGHT_POLL_INTERVAL=0 \
 	POSTFLIGHT_MAX_ATTEMPTS=4 \
-	bash "$POSTFLIGHT_SCRIPT" --ci-only --sha release-sha --tag v1.2.3 2>&1) || STARTUP_FAILURE_EXIT=$?
+	bash "$POSTFLIGHT_SCRIPT" --ci-only --sha "$POSTFLIGHT_TEST_SHA" --tag v1.2.3 2>&1) || STARTUP_FAILURE_EXIT=$?
 if [[ "$STARTUP_FAILURE_EXIT" -ne 1 || "$STARTUP_FAILURE_OUTPUT" != *"Workflow .github/workflows/startup-failure.yml: startup_failure"* ]]; then
 	printf 'FAIL: postflight missed a zero-check workflow startup failure\n%s\n' "$STARTUP_FAILURE_OUTPUT" >&2
 	exit 1

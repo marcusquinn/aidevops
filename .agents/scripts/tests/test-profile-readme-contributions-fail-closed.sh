@@ -677,6 +677,48 @@ test_renderer_failure_propagates() {
 main() {
 	TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/profile-contributions-test.XXXXXX") || return 1
 	trap teardown EXIT
+	# Exercise publication against disposable repositories, not the host service
+	# manager or protected process table. Worktree lifetime guards have their own
+	# suites; retain real Git worktree creation, commit and push in these cases.
+	local fixture_scripts="$TEST_ROOT/runtime/scripts"
+	mkdir -p "$fixture_scripts" || return 1
+	cp -R "$SCRIPT_DIR/../." "$fixture_scripts/" || return 1
+	cp -R "$SCRIPT_DIR/../../worker-lifecycle" "$TEST_ROOT/runtime/worker-lifecycle" || return 1
+	HELPER="$fixture_scripts/profile-readme-helper.sh"
+	cat >"$fixture_scripts/worktree-managed-run.py" <<'PY'
+import sys
+
+# Select the real helper's guarded legacy path, without requiring systemd.
+assert sys.argv[1:] == ['--check-backend']
+sys.exit(1)
+PY
+	cat >"$fixture_scripts/shared-worktree-create.sh" <<'SH'
+#!/usr/bin/env bash
+worktree_create_registered() {
+	local repo="$1"
+	local target="$2"
+	local ref="$3"
+	shift 3
+	case "$repo:$target" in
+	"${PROFILE_TEST_ROOT:?}"/*:"${PROFILE_TEST_ROOT:?}"/*) ;;
+	*) return 1 ;;
+	esac
+	git -C "$repo" worktree add "$@" "$target" "$ref" || return 1
+	return 0
+}
+SH
+	cat >"$fixture_scripts/worktree-helper.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == remove && -n "${2:-}" ]] || exit 1
+# Never remove anything outside the disposable suite root, nor force dirty work.
+case "$2" in
+"${PROFILE_TEST_ROOT:?}"/*) git worktree remove "$2" ;;
+*) exit 1 ;;
+esac
+SH
+	chmod +x "$fixture_scripts/worktree-helper.sh" || return 1
+	export PROFILE_TEST_ROOT="$TEST_ROOT"
 	# Each fixture has private registry state; do not inherit a real managed cwd.
 	cd "$TEST_ROOT" || return 1
 
