@@ -19,7 +19,7 @@ TESTS_FAILED=0
 
 # The extracted gates use the lifecycle module's boolean constants.
 eval "$(sed -n '/^_FULL_LOOP_BOOL_TRUE=/p; /^_FULL_LOOP_BOOL_FALSE=/p' "$STATE_HELPER")"
-helper_source=$(awk '/^(_linked_issue_resolve_authority|_linked_issue_gate_marker|_linked_issue_author_allows_start)\(\) \{/,/^}/ { print }' "$STATE_HELPER")
+helper_source=$(awk '/^(_linked_issue_fetch_raw|_linked_issue_resolve_authority|_linked_issue_gate_marker|_linked_issue_author_allows_start)\(\) \{/,/^}/ { print }' "$STATE_HELPER")
 export AIDEVOPS_GATE_LOOKUP_RETRY_DELAY=0
 gate_source=$(awk '/^_check_linked_issue_gate\(\) \{/,/^}/ { print }' "$STATE_HELPER")
 [[ -n "$helper_source" ]] || {

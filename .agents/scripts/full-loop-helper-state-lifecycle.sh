@@ -135,6 +135,28 @@ _linked_issue_resolve_authority() {
 	return "$rc"
 }
 
+# Fetch the linked issue JSON on stdout; fail closed with a diagnostic.
+# Keeps stderr separate: successful shim diagnostics must not corrupt JSON.
+_linked_issue_fetch_raw() {
+	local issue_num="$1"
+	local repo="$2"
+	local raw_issue issue_error_file issue_error=""
+	issue_error_file=$(mktemp) || {
+		print_error "Maintainer gate pre-check: cannot capture linked issue #${issue_num} lookup errors — refusing start" >&2
+		return 1
+	}
+	raw_issue=$(gh api "repos/${repo}/issues/${issue_num}" 2>"$issue_error_file") || {
+		issue_error=$(<"$issue_error_file")
+		rm -f "$issue_error_file"
+		print_error "Maintainer gate pre-check: could not fetch linked issue #${issue_num} — refusing start" >&2
+		[[ -z "$issue_error" ]] || printf 'gh lookup error: %s\n' "$issue_error" >&2
+		return 1
+	}
+	rm -f "$issue_error_file"
+	printf '%s\n' "$raw_issue"
+	return 0
+}
+
 _linked_issue_author_allows_start() {
 	local issue_num="$1"
 	local repo="$2"
@@ -296,19 +318,8 @@ _check_linked_issue_gate() {
 	# Fetch issue data. Every mode fails closed because the prompt has already
 	# supplied both an issue reference and repository context.
 	# Keep stderr separate: successful shim diagnostics must not corrupt JSON.
-	local raw_issue issue_error_file issue_error=""
-	issue_error_file=$(mktemp) || {
-		print_error "Maintainer gate pre-check: cannot capture linked issue #${issue_num} lookup errors — refusing start"
-		return 1
-	}
-	raw_issue=$(gh api "repos/${repo}/issues/${issue_num}" 2>"$issue_error_file") || {
-		issue_error=$(<"$issue_error_file")
-		rm -f "$issue_error_file"
-		print_error "Maintainer gate pre-check: could not fetch linked issue #${issue_num} — refusing start"
-		[[ -z "$issue_error" ]] || printf 'gh lookup error: %s\n' "$issue_error" >&2
-		return 1
-	}
-	rm -f "$issue_error_file"
+	local raw_issue
+	raw_issue=$(_linked_issue_fetch_raw "$issue_num" "$repo") || return 1
 
 	local state labels assignees issue_author_association
 	state=$(echo "$raw_issue" | jq -r '.state' 2>/dev/null || echo "unknown")
