@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TOOL_INSTALL="$REPO_ROOT/.agents/scripts/setup/modules/tool-install.sh"
+TOOL_INSTALL="$REPO_ROOT/.agents/scripts/setup/modules/tool-install-developer.sh"
 
 SANDBOX="$(mktemp -d -t tool-install-claudebar-XXXXXX)"
 trap 'rm -rf "$SANDBOX"' EXIT
@@ -42,6 +42,7 @@ needs_upgrade_rc() {
 	local installed_version="$1"
 	local target_version="$2"
 	local rc=0
+	TOOL_INSTALL_EMPTY=""
 	# shellcheck disable=SC1090
 	source "$SANDBOX/extract.sh"
 	setup_claudebar_needs_upgrade "$installed_version" "$target_version" || rc=$?
