@@ -183,6 +183,7 @@ out=$(list_things) || return 1              # capture first, then test
 ### Enforcement
 
 - CI gate: `.github/workflows/pipe-early-exit-check.yml` (diff-scoped — fails only on lines the PR adds; legacy matches are ignored). Judged files enable `pipefail` or carry the top-level source guard `[[ -n "${_X_LOADED:-}" ]] && return`; a sourced library runs under its caller's options (`pulse-wrapper.sh` sets `pipefail` for every `pulse-merge*.sh` module).
+- Pre-commit: `validate_pipe_early_exit` in `.agents/scripts/pre-commit-hook.sh` runs the same diff-scoped check against `HEAD` on staged `.sh` files (GH#40407), so a new match fails locally instead of costing a CI cycle.
 - Required full scan: the Pulse-merge Regression Suites step in `code-quality.yml` judges every line of the suites and the `pulse-merge*.sh` libraries.
 - When rewriting a pipe, keep the input: `grep -q PATTERN` with neither a file nor `<<<` reads the caller's stdin.
 - Local check: `.agents/scripts/pipe-early-exit-check.sh --scan-files [--diff-base <ref>] <files>`.
