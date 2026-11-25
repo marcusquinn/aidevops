@@ -17,7 +17,7 @@ found no competing PR or claim for the validator. The canonical issue scope was
 corrected and re-read before implementation. No explicit hard boundary exists.
 
 The validator's nearest-manifest lookup stops at an ignored, runtime-generated
-`.opencode/package.json` without check scripts instead of reaching the root
+OpenCode dependency manifest without check scripts instead of reaching the root
 package's typecheck. Ignore Git-ignored generated manifests during this lookup;
 retain declared workspace checks, check-only nested packages, and failure gates.
 Add focused coverage to the existing validator suite, not a new harness.

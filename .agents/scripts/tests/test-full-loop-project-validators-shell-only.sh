@@ -652,13 +652,13 @@ NPM_CALL_LOG="${TEST_ROOT}/npm-generated-manifest.log"
 export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
 (
 	cd "$GENERATED_MANIFEST_REPO" || exit 1
-	mkdir -p .opencode/lib
+	mkdir -p .runtime/lib
 	printf '%s\n' '{"scripts":{"typecheck":"tsc --noEmit"},"workspaces":["packages/*"]}' >package.json
-	printf '%s\n' '.opencode/package.json' >.gitignore
-	printf '%s\n' 'export const example = true;' >.opencode/lib/example.ts
-	git add package.json .gitignore .opencode/lib/example.ts
+	printf '%s\n' '.runtime/package.json' >.gitignore
+	printf '%s\n' 'export const example = true;' >.runtime/lib/example.ts
+	git add package.json .gitignore .runtime/lib/example.ts
 	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'add root-owned runtime source'
-	printf '%s\n' '{"dependencies":{"example":"1.0.0"}}' >.opencode/package.json
+	printf '%s\n' '{"dependencies":{"example":"1.0.0"}}' >.runtime/package.json
 	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
 )
 generated_manifest_rc=$?
