@@ -72,11 +72,12 @@ def read_response(args, data):
     if key not in responses:
         raise ValueError("Unexpected mocked GitHub call: " + repr(args))
     expression = next((args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "--jq"), None)
-    if expression is None or key == "api user":
+    if expression is None or key != "api repos/owner/repo/issues/123":
         print(responses[key])
         return
-    # GH#40373: apply --jq like gh does, so readers such as the orphan filter's
-    # `.assignees | length` see the projected value rather than the whole object.
+    # GH#40373: apply --jq like gh does on the issue REST read, so the orphan
+    # filter's `.assignees | length` sees a number rather than the whole object.
+    # Other keys keep their pre-shaped responses that existing cases rely on.
     result = subprocess.run(["jq", "-r", expression], input=responses[key],  # nosec B603 B607
                             capture_output=True, text=True, timeout=10, check=False)
     if result.returncode != 0:
