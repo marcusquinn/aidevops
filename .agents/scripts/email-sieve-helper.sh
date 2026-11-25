@@ -820,7 +820,6 @@ DEPLOY OPTIONS
   --port <port>         ManageSieve port (default: 4190)
   --script <name>       Script name on server (default: aidevops-triage)
   --file <sieve-file>   Sieve file to deploy (default: /tmp/aidevops-generated.sieve)
-
   --secret <NAME>       Stored password name (default: SIEVE_PASSWORD)
   Password: use aidevops secret set NAME, or the SIEVE_PASSWORD environment variable.
   Never pass password as argument.
@@ -841,7 +840,6 @@ COPY OPTIONS
   --dry-run            Preview copy-to without connecting or reading secrets
   --yes                Confirm copy-to-remove (otherwise preview removal)
   --secret is also accepted by list-scripts, show-script and delete-script.
-
 ADD-PATTERN OPTIONS
   --type <type>         Pattern type: sender|domain|subject|list-id|header|transaction|mailing-list|notification
   --value <value>       Pattern value (email, domain, subject text, or header:value)
@@ -867,7 +865,6 @@ EXAMPLES
   email-sieve-helper.sh add-pattern --type subject --value "[JIRA]" --folder INBOX/Jira
   email-sieve-helper.sh add-pattern --type transaction --value "" --folder INBOX/Receipts
   email-sieve-helper.sh add-pattern --type mailing-list --value "" --folder INBOX/Lists
-
   # Generate and validate
   email-sieve-helper.sh generate --output ~/my-rules.sieve
   email-sieve-helper.sh validate --file ~/my-rules.sieve
@@ -879,7 +876,6 @@ EXAMPLES
   # Manage remote scripts
   email-sieve-helper.sh list-scripts --server mail.example.com --user me@example.com
   email-sieve-helper.sh show-script --server mail.example.com --user me@example.com --script aidevops-triage
-
 CLOUDRON NOTES
   Cloudron uses Dovecot with ManageSieve on port 4190.
   Server: my.<domain>:4190; authenticate with a mail-scoped Cloudron app password
