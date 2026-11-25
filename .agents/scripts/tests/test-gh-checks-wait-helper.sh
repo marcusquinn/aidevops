@@ -530,6 +530,25 @@ cancel_final_rc=$?
 set -e
 [[ "$cancel_final_rc" -eq 1 ]] && pass "unsuperseded cancel is terminal after grace" || fail "unsuperseded cancel is terminal after grace" "got ${cancel_final_rc}"
 
+# A same-workflow, same-name pass on the head supersedes a later cancel in one read.
+cancel_sibling_dir="${TMPDIR_TEST}/cancel-sibling-pass"
+write_fixture "$cancel_sibling_dir" 1 '[{"name":"Gate","workflow":"Review Bot Gate","state":"SUCCESS","bucket":"pass","link":"run-a","startedAt":"2026-11-25T14:33:09Z"},{"name":"Gate","workflow":"Review Bot Gate","state":"CANCELLED","bucket":"cancel","link":"run-b","startedAt":"2026-11-25T14:39:53Z"}]'
+set +e
+cancel_sibling_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=0 run_fixture_wait "$cancel_sibling_dir" 2>&1)
+cancel_sibling_rc=$?
+set -e
+assert_eq "cancel beside same-name pass is superseded" "0" "$cancel_sibling_rc"
+assert_contains "superseded sibling cancel ends with pass" "PASS: required checks completed" "$cancel_sibling_output"
+
+cancel_sibling_fail_dir="${TMPDIR_TEST}/cancel-sibling-pass-fail"
+write_fixture "$cancel_sibling_fail_dir" 1 '[{"name":"Gate","workflow":"Review Bot Gate","state":"SUCCESS","bucket":"pass","link":"run-a","startedAt":"2026-11-25T14:33:09Z"},{"name":"Gate","workflow":"Review Bot Gate","state":"CANCELLED","bucket":"cancel","link":"run-b","startedAt":"2026-11-25T14:39:53Z"},{"name":"Test","workflow":"CI","state":"FAILURE","bucket":"fail","link":""}]'
+set +e
+cancel_sibling_fail_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=0 run_fixture_wait "$cancel_sibling_fail_dir" 2>&1)
+cancel_sibling_fail_rc=$?
+set -e
+assert_eq "real failure beside superseded cancel stays terminal" "1" "$cancel_sibling_fail_rc"
+assert_contains "real failure beside superseded cancel is reported" "Test: fail" "$cancel_sibling_fail_output"
+
 # GH#38537: with other checks still pending, the replacement run may be queued;
 # even a zero grace must not turn the cancellation terminal before they settle.
 cancel_queued_dir="${TMPDIR_TEST}/cancel-queued"

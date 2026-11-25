@@ -18,7 +18,7 @@ _GCW_DEFAULT_HEADLESS_TIMEOUT="${AIDEVOPS_GH_CHECKS_HEADLESS_TIMEOUT_SECONDS:-20
 _GCW_DEFAULT_INITIAL_INTERVAL="${AIDEVOPS_GH_CHECKS_INITIAL_INTERVAL_SECONDS:-15}"
 _GCW_DEFAULT_MAX_INTERVAL="${AIDEVOPS_GH_CHECKS_MAX_INTERVAL_SECONDS:-120}"
 _GCW_DEFAULT_HEARTBEAT_INTERVAL="${AIDEVOPS_GH_CHECKS_HEARTBEAT_SECONDS:-120}"
-readonly _GCW_BUCKET_PASS="pass" _GCW_BUCKET_PENDING="pending" _GCW_BUCKET_SKIPPING="skipping"
+readonly _GCW_BUCKET_PASS="pass" _GCW_BUCKET_PENDING="pending" _GCW_BUCKET_SKIPPING="skipping" _GCW_BUCKET_CANCEL="cancel"
 _GCW_ACTIVE_DEFERRAL=""
 _GCW_API_ERROR_VISIBLE=0
 _GCW_NEXT_INTERVAL=""
@@ -606,6 +606,8 @@ classify_state() {
 		fi
 		return 0
 	fi
+	# A cancel with a same-workflow, same-name pass on this head is superseded.
+	checks=$(drop_superseded_cancels "$checks")
 	if printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
 		'any(.[]; .bucket != $pass and .bucket != $pending and .bucket != $skipping)' >/dev/null; then
 		printf 'failure\n'
@@ -620,11 +622,21 @@ classify_state() {
 	return 0
 }
 
+# Drops cancel entries whose (workflow, name) pair also has a pass entry in the
+# same read. The successor run of a cancelled review-event run can attach to the
+# default-branch SHA, so only the earlier pass is visible on the PR head.
+drop_superseded_cancels() {
+	local checks="$1"
+	printf '%s' "$checks" | jq -c --arg pass "$_GCW_BUCKET_PASS" --arg cancel "$_GCW_BUCKET_CANCEL" \
+		'. as $all | [.[] | . as $c | select(($c.bucket != $cancel) or (any($all[]; .bucket == $pass and .workflow == $c.workflow and .name == $c.name) | not))]'
+	return 0
+}
+
 # True when every failing check is a bare cancellation (no real failure).
 only_cancelled_failures() {
 	local checks="$1"
-	printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
-		'[.[] | select(.bucket != $pass and .bucket != $pending and .bucket != $skipping)] | length > 0 and all(.[]; .bucket == "cancel")' >/dev/null
+	printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" --arg cancel "$_GCW_BUCKET_CANCEL" \
+		'[.[] | select(.bucket != $pass and .bucket != $pending and .bucket != $skipping)] | length > 0 and all(.[]; .bucket == $cancel)' >/dev/null
 	return $?
 }
 
@@ -635,6 +647,8 @@ apply_cancel_grace() {
 	local attempt_checks="${4:-$checks}"
 	local cancelled_set=""
 	_GCW_GRACED_CLASSIFICATION="$classification"
+	checks=$(drop_superseded_cancels "$checks")
+	attempt_checks=$(drop_superseded_cancels "$attempt_checks")
 	if [[ "$classification" == "failure" ]] && only_cancelled_failures "$checks"; then
 		# GH#38537: while other checks are pending (often queued behind runner
 		# capacity), the superseding run may not be visible yet. Hold the
@@ -648,7 +662,7 @@ apply_cancel_grace() {
 		# Include run links and timestamps so a different cancelled attempt of the same check
 		# gets its own window; sort to ignore API ordering changes. Use raw attempt
 		# metadata without changing the canonical transition/heartbeat comparison.
-		cancelled_set=$(printf '%s' "$attempt_checks" | jq -c '[.[] | select(.bucket == "cancel") | {workflow, name, link, startedAt, completedAt}] | sort_by(.workflow, .name, .link, .startedAt, .completedAt)')
+		cancelled_set=$(printf '%s' "$attempt_checks" | jq -c --arg cancel "$_GCW_BUCKET_CANCEL" '[.[] | select(.bucket == $cancel) | {workflow, name, link, startedAt, completedAt}] | sort_by(.workflow, .name, .link, .startedAt, .completedAt)')
 		if [[ -z "$_GCW_CANCEL_FIRST_EPOCH" || "$cancelled_set" != "${_GCW_CANCEL_SET:-}" ]]; then
 			_GCW_CANCEL_FIRST_EPOCH="$now_epoch"
 		fi
