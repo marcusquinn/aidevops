@@ -700,6 +700,18 @@ EOF
 # Entry point
 # -----------------------------------------------------------------------------
 
+# Compact archive DBs by exact-file holder evidence, independent of the global
+# opencode process count (GH#40302). Never fails the caller's primary command.
+_compact_archives_best_effort() {
+	local rc=0
+	[[ -f "$OPENCODE_DB_ARCHIVE_HELPER" ]] || return 0
+	bash "$OPENCODE_DB_ARCHIVE_HELPER" compact-archives || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		_log WARN "archive compaction returned rc=${rc}"
+	fi
+	return 0
+}
+
 main() {
 	local sub="${1:-help}"
 	shift || true
@@ -708,7 +720,13 @@ main() {
 	report) cmd_report "$@" ;;
 	maintain | run) cmd_maintain "$@" ;;
 	"$MAINTENANCE_WINDOW_MODE" | window) cmd_maintenance_window "$@" ;;
-	auto) cmd_auto "$@" ;;
+	auto)
+		local auto_rc=0
+		cmd_auto "$@" || auto_rc=$?
+		_compact_archives_best_effort
+		return "$auto_rc"
+		;;
+	compact-archives) bash "$OPENCODE_DB_ARCHIVE_HELPER" compact-archives ;;
 	install) cmd_install "$@" ;;
 	uninstall) cmd_uninstall "$@" ;;
 	status) cmd_status "$@" ;;
