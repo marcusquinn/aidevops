@@ -20,6 +20,8 @@
 #   gitlocks       canonical-recovery-helper.sh repair-stale-locks (stale,
 #                  unheld Git lock files and interrupted-fetch pack temporaries
 #                  in registered canonical repositories; audited; GH#39722)
+#   quarantine     pulse-stats-helper.sh prune-quarantine (newest 5 corrupt
+#                  stats copies retained; GH#40197)
 #
 # Usage:
 #   storage-cleanup-helper.sh [report]            Sizes and owning cleaners (read-only)
@@ -44,7 +46,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=./worktree-paths.sh
 source "${SCRIPT_DIR}/worktree-paths.sh"
 
-readonly SC_STORES="tmp worktrees artefacts opencode observability trash gitlocks"
+readonly SC_STORES="tmp worktrees artefacts opencode observability trash gitlocks quarantine"
 readonly SC_SCHEDULE_NAME="storage-hygiene"
 readonly SC_APPLY="apply" SC_DRY_RUN="dry-run"
 SC_SIZE_TIMEOUT="${STORAGE_CLEANUP_SIZE_TIMEOUT:-30}"
@@ -89,8 +91,9 @@ _sc_store_paths() {
 			"${workspace}/work/repo-layout-migrations"
 		;;
 	observability) printf '%s\n' "${workspace}/observability" ;;
-	trash) ;; # Only owned buckets inside ~/.Trash; sized by _sc_trash_kb.
-	gitlocks) ;; # Lock files are tiny; the preview reports candidate counts.
+	trash) ;;      # Only owned buckets inside ~/.Trash; sized by _sc_trash_kb.
+	gitlocks) ;;   # Lock files are tiny; the preview reports candidate counts.
+	quarantine) ;; # Preview reports corrupt-stats copy counts, not all logs.
 	*) return 1 ;;
 	esac
 	return 0
@@ -106,6 +109,7 @@ _sc_store_cleaner() {
 	observability) printf '%s\n' "observability-helper.sh retention-maintenance: verified archives" ;;
 	trash) printf '%s\n' "todo-sync-trash-retention.sh: TODO-sync buckets older than ${TODO_SYNC_TRASH_RETENTION_DAYS:-3}d or beyond newest ${TODO_SYNC_TRASH_MAX_COUNT:-5}" ;;
 	gitlocks) printf '%s\n' "canonical-recovery-helper.sh repair-stale-locks: unheld Git locks 60+ min old, pack temporaries 2+ days old; audited" ;;
+	quarantine) printf '%s\n' "pulse-stats-helper.sh prune-quarantine: retain newest 5 pulse-stats.json.corrupt.* evidence copies" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -202,7 +206,7 @@ cmd_report() {
 		if [[ "$store" == "artefacts" ]]; then
 			# Counted inside worktrees; eligibility needs the bounded preview.
 			size="(in wt)"
-		elif [[ "$store" == "gitlocks" ]]; then
+		elif [[ "$store" == "gitlocks" || "$store" == "quarantine" ]]; then
 			# Counted by the bounded preview; the files themselves are tiny.
 			size="(count)"
 		elif [[ "$store" == "trash" ]]; then
@@ -361,6 +365,7 @@ _sc_dry_run_store() {
 		;;
 	trash) _sc_preview_trash || rc=$? ;;
 	gitlocks) _sc_gitlocks "$SC_DRY_RUN" || rc=$? ;;
+	quarantine) bash "${SCRIPT_DIR}/pulse-stats-helper.sh" prune-quarantine || rc=$? ;;
 	*) return 1 ;;
 	esac
 	return "$rc"
@@ -409,6 +414,7 @@ _sc_apply_store() {
 		;;
 	trash) bash "${SCRIPT_DIR}/todo-sync-trash-retention.sh" prune --apply || rc=$? ;;
 	gitlocks) _sc_gitlocks "$SC_APPLY" || rc=$? ;;
+	quarantine) bash "${SCRIPT_DIR}/pulse-stats-helper.sh" prune-quarantine --apply || rc=$? ;;
 	*) return 1 ;;
 	esac
 	return "$rc"
