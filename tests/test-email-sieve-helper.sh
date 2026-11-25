@@ -63,7 +63,7 @@ assert_contains() {
 
 	TESTS_RUN=$((TESTS_RUN + 1))
 	# Use grep -F -- to handle needles starting with -- (macOS grep treats them as options otherwise)
-	if echo "$haystack" | grep -qF -- "$needle"; then
+	if grep -qF -- "$needle" <<<"$haystack"; then
 		TESTS_PASSED=$((TESTS_PASSED + 1))
 		echo "  PASS: $description"
 	else
@@ -81,7 +81,7 @@ assert_not_contains() {
 	local haystack="$3"
 
 	TESTS_RUN=$((TESTS_RUN + 1))
-	if ! echo "$haystack" | grep -qF -- "$needle"; then
+	if ! grep -qF -- "$needle" <<<"$haystack"; then
 		TESTS_PASSED=$((TESTS_PASSED + 1))
 		echo "  PASS: $description"
 	else

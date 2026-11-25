@@ -573,9 +573,9 @@ except Exception as e:
     sys.exit(1)
 PYEOF
 		)
-		if echo "$py_result" | grep -q "^VALID"; then
+		if grep -q "^VALID" <<<"$py_result"; then
 			print_success "sievelib validation: VALID"
-		elif echo "$py_result" | grep -q "^INVALID"; then
+		elif grep -q "^INVALID" <<<"$py_result"; then
 			print_error "sievelib validation: $py_result"
 			errors=$((errors + 1))
 		fi
