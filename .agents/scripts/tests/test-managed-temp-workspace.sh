@@ -58,8 +58,9 @@ runtime_artifact_files=(
 	"$SCRIPTS_DIR/../workflows/runners.md"
 	"$SCRIPTS_DIR/../workflows/ui-verification.md"
 )
-assert "agent guidance directs readable artifacts to the managed workspace" grep -q "temporary artifacts.*AIDEVOPS_TEMP_DIR.*never host \`/tmp\`" "$SCRIPTS_DIR/../AGENTS.md"
-assert "runtime-visible artifact defaults avoid host /tmp paths" test -z "$(grep -El '/tmp/(browser-qa|aidevops-(pr-body|merge-summary|issue-body)|ui-verify|worker-)' "${runtime_artifact_files[@]}" || true)"
+assert "agent guidance directs readable artifacts to the managed workspace" grep -q "[Tt]emp artifacts.*AIDEVOPS_TEMP_DIR.*never host \`/tmp\`" "$SCRIPTS_DIR/../AGENTS.md"
+# Match a host-root path, not the suffix of ~/.aidevops/.agent-workspace/tmp/.
+assert "runtime-visible artifact defaults avoid host /tmp paths" test -z "$(grep -El '(^|[[:space:]\x60"=])/tmp/(browser-qa|aidevops-(pr-body|merge-summary|issue-body)|ui-verify|worker-)' "${runtime_artifact_files[@]}" || true)"
 
 print_info() { return 0; }
 print_warning() { return 0; }
@@ -103,7 +104,7 @@ assert "held FFF artifact is preserved" test -f "$held_fff"
 assert "non-attributable native artifact is preserved" test -f "$not_fff"
 assert "recent FFF artifact is preserved" test -f "$recent_fff"
 
-assert "setup invokes legacy cleanup in both modes" test "$(grep -c 'cleanup_legacy_aidevops_temp_artifacts' "$SCRIPTS_DIR/../../setup.sh")" -ge 2
+assert "setup invokes legacy cleanup in both modes" test "$(grep -c 'cleanup_legacy_aidevops_temp_artifacts' "$SCRIPTS_DIR/setup/modules/setup-execution.sh")" -ge 2
 
 # Exercise the legacy scan independently of native-artifact metadata checks.
 mkdir -p "$TEST_ROOT/empty-managed" "$legacy_root/unrelated"
