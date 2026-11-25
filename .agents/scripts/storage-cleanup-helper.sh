@@ -406,7 +406,7 @@ _sc_dry_run_store() {
 	gitlocks) _sc_gitlocks "$SC_DRY_RUN" || rc=$? ;;
 	quarantine) bash "${SCRIPT_DIR}/pulse-stats-helper.sh" prune-quarantine || rc=$? ;;
 	docker)
-		bash "${SCRIPT_DIR}/docker-resource-helper.sh" reap --dry-run --max-seconds "$SC_DOCKER_MAX_SECONDS" || rc=$?
+		bash "${SCRIPT_DIR}/docker-resource-helper.sh" reap --images-only --dry-run --max-seconds "$SC_DOCKER_MAX_SECONDS" || rc=$?
 		bash "${SCRIPT_DIR}/docker-resource-helper.sh" prune-cache --dry-run || rc=$?
 		;;
 	*) return 1 ;;
@@ -459,7 +459,7 @@ _sc_apply_store() {
 	gitlocks) _sc_gitlocks "$SC_APPLY" || rc=$? ;;
 	quarantine) bash "${SCRIPT_DIR}/pulse-stats-helper.sh" prune-quarantine --apply || rc=$? ;;
 	docker)
-		bash "${SCRIPT_DIR}/docker-resource-helper.sh" reap --apply --max-seconds "$SC_DOCKER_MAX_SECONDS" || rc=$?
+		bash "${SCRIPT_DIR}/docker-resource-helper.sh" reap --images-only --apply --max-seconds "$SC_DOCKER_MAX_SECONDS" || rc=$?
 		bash "${SCRIPT_DIR}/docker-resource-helper.sh" prune-cache --apply || rc=$?
 		;;
 	*) return 1 ;;

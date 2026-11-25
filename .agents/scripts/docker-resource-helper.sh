@@ -11,7 +11,7 @@
 #   docker-resource-helper.sh compose-labels [same options] [--indent N]
 #   docker-resource-helper.sh inventory         # labelled resources as TSV
 #   docker-resource-helper.sh teardown --worktree PATH [--dry-run] [--force]
-#   docker-resource-helper.sh reap [--apply] [--max-seconds N] [--verbose]
+#   docker-resource-helper.sh reap [--apply] [--max-seconds N] [--verbose] [--images-only]
 #   docker-resource-helper.sh report [--max-seconds N]
 #   docker-resource-helper.sh prune-cache [--apply] [--hours N]  # BuildKit cache
 #
@@ -524,7 +524,7 @@ _drh_remove() {
 	container) err=$(_drh_docker rm -f -v "$id" 2>&1 >/dev/null) && return 0 ;;
 	network) err=$(_drh_docker network rm "$id" 2>&1 >/dev/null) && return 0 ;;
 	volume) err=$(_drh_docker volume rm "$id" 2>&1 >/dev/null) && return 0 ;;
-	image) err=$(_drh_docker image rm -f "$id" 2>&1 >/dev/null) && return 0 ;;
+	image) err=$(_drh_docker image rm -f --no-prune "$id" 2>&1 >/dev/null) && return 0 ;;
 	*) return 1 ;;
 	esac
 	lower=$(printf '%s' "$err" | tr '[:upper:]' '[:lower:]')
@@ -675,7 +675,7 @@ cmd_teardown() {
 # --- reap --------------------------------------------------------------------
 
 cmd_reap() {
-	local mode="$DRH_MODE_DRY_RUN" labelled=0
+	local mode="$DRH_MODE_DRY_RUN" labelled=0 only_kind=""
 	local records plan opt val kind id name owner repo ref worktree created ttl state
 	while [[ $# -gt 0 ]]; do
 		local opt="$1" val="${2:-}"
@@ -683,6 +683,7 @@ cmd_reap() {
 		--apply) mode="$DRH_MODE_APPLY" ;;
 		--dry-run) mode="$DRH_MODE_DRY_RUN" ;;
 		--verbose) DRH_VERBOSE=1 ;;
+		--images-only) only_kind="image" ;;
 		--max-seconds)
 			_drh_set_max_seconds "$val" || return 1
 			shift
@@ -707,6 +708,7 @@ cmd_reap() {
 	DRH_NOW=$(date +%s)
 	while IFS="$DRH_US" read -r kind id name owner repo ref worktree created ttl state; do
 		[[ "$owner" == "1" ]] || continue
+		[[ -z "$only_kind" || "$kind" == "$only_kind" ]] || continue
 		labelled=$((labelled + 1))
 		_drh_budget_left || break
 		_drh_decide "$kind" "$id" "$owner" "$repo" "$ref" "$worktree" "$created" "$ttl" "$state"

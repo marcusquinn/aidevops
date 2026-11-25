@@ -59,8 +59,9 @@ _npm_cache_warn_bytes() {
 
 _npm_cache_low_disk_pct() {
 	local pct="${AIDEVOPS_NPM_CACHE_LOW_DISK_PERCENT:-5}"
-	if _npm_cache_is_nonnegative_integer "$pct"; then
-		printf '%s' "$pct"
+	if _npm_cache_is_nonnegative_integer "$pct" && [[ "${#pct}" -le 3 ]] && [[ "$((10#$pct))" -le 100 ]]; then
+		# 10# forces decimal so a leading zero is never read as octal.
+		printf '%s' "$((10#$pct))"
 	else
 		printf '5'
 	fi
