@@ -36,6 +36,29 @@ import {
 } from "./provider-auth-pool-recovery.mjs";
 import { buildRequestHeaders, transformRequestBody, addBetaQueryParam, transformResponseStream } from "./provider-auth-request.mjs";
 import { usageUpdateFromHeaders } from "./oauth-pool-ordering.mjs";
+import { createCacheKeepalive } from "./cache-keepalive.mjs";
+
+const KEEPALIVE_TIMEOUT_MS = 60_000;
+
+/**
+ * Re-send a recorded agent request as a `max_tokens: 1` cache refresh
+ * (t19356). Same transforms and headers as the real request, so the cached
+ * prefix bytes match; the host's abort signal is replaced with a bounded one.
+ */
+function sendCacheKeepalive(request, rawBody) {
+  const body = transformRequestBody(rawBody, { sessionID: request.sessionID });
+  const headers = new Headers(request.headers);
+  headers.set("accept", "application/json");
+  return fetch(request.input, {
+    ...request.init,
+    body,
+    headers,
+    signal: AbortSignal.timeout(KEEPALIVE_TIMEOUT_MS),
+  });
+}
+
+/** Process-wide: tool hooks in index.mjs report running tools per session. */
+export const cacheKeepalive = createCacheKeepalive({ send: sendCacheKeepalive });
 
 /**
  * Persist the seat's usage window from Anthropic rate-limit response headers
@@ -348,6 +371,9 @@ async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAc
     }));
   }
   recordSeatUsage(currentKey, response);
+  cacheKeepalive.recordRequest(sessionID, {
+    input: ctx.requestInput, init: ctx.requestInit, headers: ctx.requestHeaders, sessionID,
+  }, init?.body, response.status);
   return { response: transformResponseStream(response), sessionAccountKey: currentKey };
 }
 

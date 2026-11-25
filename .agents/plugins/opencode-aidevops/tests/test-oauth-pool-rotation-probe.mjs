@@ -13,7 +13,7 @@ import test from "node:test";
 
 const plugin = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const scripts = resolve(plugin, "../../scripts");
-const moduleNames = ["provider-auth.mjs", "provider-auth-pool.mjs", "provider-auth-pool-recovery.mjs", "oauth-pool-ordering.mjs"];
+const moduleNames = ["provider-auth.mjs", "provider-auth-pool.mjs", "provider-auth-pool-recovery.mjs", "oauth-pool-ordering.mjs", "cache-keepalive.mjs"];
 
 function fixture(t) {
   const temp = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops/.agent-workspace/tmp");

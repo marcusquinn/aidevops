@@ -94,6 +94,28 @@ when their trigger applies; never remove them merely to meet a token target.
   from r group by aidevops_version order by min(timestamp);
   ```
 
+  `llm_requests.timestamp` records when the step finished, and that time
+  includes the step's tool execution. Measure the idle gap between two requests
+  as `julianday(timestamp)*86400 - duration_ms/1000.0` (the start of this
+  request) minus the start of the previous request. If you measure
+  finish-to-finish, cache expiry during a long tool call looks like a warm
+  break.
+- The Anthropic prompt cache expires 5 minutes after its last read. A tool
+  call that runs longer would otherwise force a re-write of the whole context
+  at 1.25x. Lock waits, dependency installs, merge waits and subagent tasks are
+  typical examples. In award workers this was 30% of all cache writes
+  (GH#40251).
+  - While a tool is still running, `cache-keepalive.mjs` re-sends the
+    session's last agent request with `max_tokens: 1` every 4 minutes. This is
+    a 0.1x cache read that resets the TTL. It runs at most
+    `AIDEVOPS_CACHE_KEEPALIVE_MAX_REFRESHES` times per gap (default 5).
+  - It skips requests with a fixed thinking budget. Logs:
+    `rg 'cache-keepalive' ~/.aidevops/logs/opencode-plugin.log`.
+  - Opt out with `AIDEVOPS_CACHE_KEEPALIVE=0`.
+  - A blanket 1-hour TTL was simulated at +5.9% net cost, so it is not used.
+  - Repository workflows should still avoid tool calls that are idle for
+    minutes. Prefer fail-fast lock checks over long blocking waits.
+
 - Successful verbose test/build receipts already use `output-compaction.mjs`.
   Do not discard failure diagnostics or blindly summarise source files. Read
   targeted ranges and load retained evidence when needed.
