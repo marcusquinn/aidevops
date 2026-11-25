@@ -33,6 +33,37 @@ _aidevops_disk_quota_reset() {
 	return 0
 }
 _aidevops_disk_quota_reset
+# GH#40266: macOS APFS "important usage" capacity: df headroom plus space the
+# OS holds as purgeable (Time Machine local snapshots, purgeable caches) and
+# reclaims on demand for user-initiated writes. States: disabled | unsupported
+# | unavailable | measured. Probed only when raw df headroom is below the
+# percentage floor; read-only, never thins, deletes or modifies snapshots.
+_aidevops_disk_important_reset() {
+	AIDEVOPS_DISK_IMPORTANT_STATE="unavailable"
+	AIDEVOPS_DISK_IMPORTANT_AVAILABLE_KB=0
+	return 0
+}
+_aidevops_disk_important_reset
+
+# Run a read-only probe under the first available bounded runner. Returns 124
+# when none exists, so callers never run an unbounded probe.
+_aidevops_disk_bounded() {
+	local seconds="$1"
+	shift
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		timeout_sec "$seconds" "$@"
+		return $?
+	fi
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$seconds" "$@"
+		return $?
+	fi
+	if command -v gtimeout >/dev/null 2>&1; then
+		gtimeout "$seconds" "$@"
+		return $?
+	fi
+	return 124
+}
 
 aidevops_disk_capacity_existing_path() {
 	local candidate="${1:-${HOME:-/}}"
@@ -119,6 +150,44 @@ aidevops_disk_quota_snapshot() {
 	return 0
 }
 
+# GH#40266: read NSURLVolumeAvailableCapacityForImportantUsageKey for the
+# volume holding probe_path through JXA. The path is passed as argv, never as
+# script text. Sets AIDEVOPS_DISK_IMPORTANT_*; always returns 0. Opt-out,
+# non-Darwin hosts, timeouts and non-numeric replies leave no capacity credit.
+aidevops_disk_important_capacity_snapshot() {
+	local probe_path="$1"
+	local timeout_seconds="${AIDEVOPS_DISK_IMPORTANT_TIMEOUT_SECONDS:-5}"
+	local reply=""
+	# shellcheck disable=SC2016 # literal JXA source: $ is the ObjC bridge, not shell expansion
+	local program='function run(argv) { ObjC.import("Foundation"); var key = "NSURLVolumeAvailableCapacityForImportantUsageKey"; var values = $.NSURL.fileURLWithPath(argv[0]).resourceValuesForKeysError($([key]), null); if (!values) return ""; var value = values.objectForKey(key); return value ? String(ObjC.unwrap(value)) : ""; }'
+
+	_aidevops_disk_important_reset
+	if [[ "${AIDEVOPS_DISK_COUNT_PURGEABLE:-1}" == "0" ]]; then
+		AIDEVOPS_DISK_IMPORTANT_STATE="disabled"
+		return 0
+	fi
+	if [[ "$(uname -s 2>/dev/null)" != Darwin ]] || ! command -v osascript >/dev/null 2>&1; then
+		AIDEVOPS_DISK_IMPORTANT_STATE="unsupported"
+		return 0
+	fi
+	[[ -n "$probe_path" ]] || return 0
+	[[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || timeout_seconds=5
+	reply=$(_aidevops_disk_bounded "$timeout_seconds" osascript -l JavaScript -e "$program" "$probe_path" 2>/dev/null) || return 0
+	[[ "$reply" =~ ^[0-9]+$ ]] || return 0
+	AIDEVOPS_DISK_IMPORTANT_STATE="measured"
+	AIDEVOPS_DISK_IMPORTANT_AVAILABLE_KB=$((reply / 1024))
+	return 0
+}
+
+# GH#40266: true when important-usage capacity covers the percentage floor.
+# The absolute minimum stays on raw df, so purge latency cannot reach ENOSPC.
+_aidevops_disk_important_meets_floor() {
+	aidevops_disk_important_capacity_snapshot "$AIDEVOPS_DISK_CAPACITY_PROBE_PATH"
+	[[ "$AIDEVOPS_DISK_IMPORTANT_STATE" == measured ]] || return 1
+	[[ "$AIDEVOPS_DISK_IMPORTANT_AVAILABLE_KB" -ge "$AIDEVOPS_DISK_PERCENT_FLOOR_KB" ]] || return 1
+	return 0
+}
+
 aidevops_disk_capacity_snapshot() {
 	local target_path="${1:-${HOME:-/}}"
 	local capacity_line=""
@@ -136,6 +205,7 @@ aidevops_disk_capacity_snapshot() {
 	AIDEVOPS_DISK_FILESYSTEM_MOUNT_POINT=""
 	AIDEVOPS_DISK_CAPACITY_SOURCE="filesystem"
 	_aidevops_disk_quota_reset
+	_aidevops_disk_important_reset
 
 	AIDEVOPS_DISK_CAPACITY_PROBE_PATH=$(aidevops_disk_capacity_existing_path "$target_path") || return 1
 	capacity_line=$(df -Pk "$AIDEVOPS_DISK_CAPACITY_PROBE_PATH" 2>/dev/null | awk 'NR == 2 { m = $6; for (i = 7; i <= NF; i++) m = m " " $i; print $2, $4, m; exit }') || return 1
@@ -197,15 +267,7 @@ aidevops_disk_capacity_reclaim_hint() {
 	esac
 	[[ "$(uname -s 2>/dev/null)" == Darwin && -n "$mount_point" ]] || return 0
 	command -v tmutil >/dev/null 2>&1 || return 0
-	if declare -F timeout_sec >/dev/null 2>&1; then
-		listing=$(timeout_sec 5 tmutil listlocalsnapshots "$mount_point" 2>/dev/null) || return 0
-	elif command -v timeout >/dev/null 2>&1; then
-		listing=$(timeout 5 tmutil listlocalsnapshots "$mount_point" 2>/dev/null) || return 0
-	elif command -v gtimeout >/dev/null 2>&1; then
-		listing=$(gtimeout 5 tmutil listlocalsnapshots "$mount_point" 2>/dev/null) || return 0
-	else
-		return 0
-	fi
+	listing=$(_aidevops_disk_bounded 5 tmutil listlocalsnapshots "$mount_point" 2>/dev/null) || return 0
 	count=$(printf '%s\n' "$listing" | grep -c '^com\.apple\.TimeMachine\.' 2>/dev/null) || count=0
 	[[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] || return 0
 	printf 'Advisory: %s Time Machine local snapshot(s) on %s may hold space that df does not report as free. To reclaim it, let Time Machine complete a backup or run: tmutil thinlocalsnapshots %s <bytes> 4 (see man tmutil). aidevops never deletes backups automatically.\n' \
@@ -217,7 +279,10 @@ aidevops_disk_capacity_reclaim_hint() {
 # and 2 when capacity cannot be established. Callers fail closed on 1 or 2.
 # GH#37922: a positively exhausted quota blocks first; a binding quota adds
 # only the absolute floor ("quota-below-minimum-kb"). The percentage floor
-# protects the shared filesystem, so it stays on the raw df numbers.
+# protects the shared filesystem, so it stays on the raw df numbers, except
+# that GH#40266 lets macOS important-usage capacity (df plus purgeable space
+# the OS reclaims on demand) satisfy it; AIDEVOPS_DISK_COUNT_PURGEABLE=0
+# restores the raw-only floor.
 aidevops_worktree_capacity_check() {
 	local target_path="${1:-${HOME:-/}}"
 	local minimum_kb="${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}"
@@ -239,7 +304,8 @@ aidevops_worktree_capacity_check() {
 		AIDEVOPS_DISK_CAPACITY_REASON="below-minimum-kb"
 		return 1
 	fi
-	if [[ "$AIDEVOPS_DISK_FILESYSTEM_AVAILABLE_KB" -lt "$AIDEVOPS_DISK_PERCENT_FLOOR_KB" ]]; then
+	if [[ "$AIDEVOPS_DISK_FILESYSTEM_AVAILABLE_KB" -lt "$AIDEVOPS_DISK_PERCENT_FLOOR_KB" ]] &&
+		! _aidevops_disk_important_meets_floor; then
 		AIDEVOPS_DISK_CAPACITY_REASON="below-minimum-percent"
 		return 1
 	fi
