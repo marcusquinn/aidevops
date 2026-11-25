@@ -736,6 +736,65 @@ if _hrw_verify_dispatch_ownership; then exit 99; fi
                 self.assertIn("checkpoint_mode=automatic", claims[0]["body"])
                 self.assertNotIn("CHECKPOINT_CONTINUATION_APPROVED", json.dumps(saved))
 
+    def test_retry_after_own_never_launched_claim_transfers_and_compensates(self):
+        # GH#40297/GH#40373: a retry from the same device and per-PR session must
+        # release its own expired, never-launched claim before claiming again.
+        with tempfile.TemporaryDirectory() as root:
+            data = fixture()
+            data["issue"]["labels"].append({"name": "auto-dispatch"})
+            data["pr"]["title"] = "Preserved automatic checkpoint"
+            data["comments"] = data["comments"][:2]
+            data["comments"][1]["body"] = "CLAIM_RELEASED reason=worker_draft_checkpoint runner=worker"
+            data["issue"]["assignees"] = []
+            data["issue"]["labels"][1]["name"] = "status:available"
+            now = dt.datetime.now(dt.timezone.utc)
+            for c in data["comments"]:
+                c["created_at"] = (now - dt.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            old_ts = (now - dt.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            expired = str(int((now - dt.timedelta(minutes=3)).timestamp()))
+            old_fields = {"nonce": "oldnonce", "runner": "next-worker", "ts": old_ts, "max_age_s": "1800",
+                          "lease_" + "token": "oldnonce", "device": "test-device",
+                          "session": "pr-checkpoint-continuation-owner-repo-42", "phase": "prelaunch",
+                          "expires_at": expired, "checkpoint_mode": "automatic", "checkpoint_snapshot": "old",
+                          "checkpoint_owner": "none", "checkpoint_status": "available"}
+            old = comment(3, "DISPATCH_CLAIM " + " ".join(f"{k}={v}" for k, v in old_fields.items()), "next-worker")
+            old["created_at"] = old_ts
+            data["comments"].append(old)
+            state = pathlib.Path(root) / "state.json"
+            state.write_text(json.dumps(data))
+            gh = pathlib.Path(root) / "gh"
+            gh.write_text('#!/usr/bin/env bash\nexec python3 "$CHECKPOINT_TEST_FILE" --gh "$@"\n')
+            gh.chmod(0o700)
+            env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
+                   "CHECKPOINT_TEST_FILE": str(pathlib.Path(__file__).with_name("checkpoint_github_fixture.py")),
+                   "CHECKPOINT_TEST_STATE": str(state), "AIDEVOPS_TEST_MODE": "1",
+                   "AIDEVOPS_ATTEMPT_ID": "automatic-fixture", "AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS": "1",
+                   "DISPATCH_CLAIM_WINDOW": "0", "AIDEVOPS_DEVICE_ID": "test-device",
+                   "AIDEVOPS_DISPATCH_LEASE_SESSION": "unrelated-parent-session"}
+            command = r'''
+set -euo pipefail
+source "$1/pr-checkpoint-continuation-helper.sh"
+source "$1/headless-runtime-worker-prepare.sh"
+set_issue_status() { python3 "$CHECKPOINT_TEST_FILE" --set-issue "$@"; }
+_prrts_dispatch_guarded() { return 0; }
+PCC_ALLOW_RELEASED=true
+[[ "$(_pcc_session_key owner/repo 42)" == pr-checkpoint-continuation-owner-repo-42 ]]
+_pcc_dispatch owner/repo "$HOME" 42 123 worker next-worker >/dev/null
+_prrts_prelaunch_target_fence owner/repo 42 "$PCC_HEAD_REF" "$PCC_HEAD_OID"
+_pcc_restore_transferred_ownership owner/repo 42
+'''
+            result = subprocess.run([BASH, "-c", command, "test", str(SCRIPTS)], env=env,  # nosec B603
+                                    capture_output=True, text=True, timeout=60, check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            saved = json.loads(state.read_text())
+            events = [("old-release" if "oldnonce" in c["body"] else "new-claim")
+                      for c in saved["comments"]
+                      if ("CLAIM_RELEASED" in c["body"] and "oldnonce" in c["body"])
+                      or ("DISPATCH_CLAIM " in c["body"] and "oldnonce" not in c["body"])]
+            self.assertEqual(events, ["old-release", "new-claim"])
+            self.assertEqual(saved["issue"]["assignees"], [])
+            self.assertIn({"name": "status:available"}, saved["issue"]["labels"])
+
 
 class ProgressTests(ProgressCases, unittest.TestCase):
     queue = queue
