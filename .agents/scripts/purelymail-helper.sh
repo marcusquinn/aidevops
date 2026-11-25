@@ -10,6 +10,8 @@
 # Secret values never appear in argv, stdout or stderr: secret-helper.sh
 # injects them into a child run of this script (the __* internal commands),
 # which hands them to curl through a config on a file descriptor.
+# Sieve filters (GH#40230) use ManageSieve via purelymail_sieve.py, which
+# reads the password from the injected environment variable.
 #
 # Usage: purelymail-helper.sh <command> [args]   (purelymail-helper.sh help)
 # Docs:  .agents/services/email/purelymail.md
@@ -28,6 +30,8 @@ PM_STATE_ROOT="${PURELYMAIL_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/work/p
 PM_SECRET_HELPER="${SCRIPT_DIR}/secret-helper.sh"
 PM_RECORD_COMMENT="purelymail-helper"
 PM_OWNERSHIP_PREFIX="purelymail_ownership_proof="
+# Roundcube's managesieve plugin shows only the script named "roundcube".
+PM_SIEVE_SCRIPT="roundcube"
 # Parsed DNS options (globals keep Bash 3.2 compatibility without namerefs).
 PM_CF_SECRET="${PURELYMAIL_CF_SECRET:-}"
 PM_ZONE=""
@@ -149,6 +153,18 @@ _pm_inner_imap() {
 	password="${password//\\/\\\\}"
 	password="${password//\"/\\\"}"
 	curl -sS --max-time 60 -K <(printf 'user = "%s:%s"\n' "$user" "$password") "$@" "$url"
+	return $?
+}
+
+# __sieve PASSWORD_VAR USER OP [ARGS]: one ManageSieve operation as USER. The
+# client reads the password from the injected variable itself (curl has no
+# ManageSieve support), so it never reaches argv.
+_pm_inner_sieve() {
+	local password_var="$1"
+	local user="$2"
+	shift 2
+	_pm_valid_secret_name "$password_var" >&2 || return 3
+	python3 "${SCRIPT_DIR}/purelymail_sieve.py" "$password_var" "$user" "$@"
 	return $?
 }
 
@@ -854,6 +870,142 @@ cmd_auth_results() {
 	return "$rc"
 }
 
+# --- Sieve (ManageSieve, mailbox-side filters) --------------------------------
+
+# One ManageSieve operation as ADDRESS with the password from SECRET.
+_pm_sieve() {
+	local address="$1"
+	local secret="$2"
+	shift 2
+	_pm_require python3 || return 1
+	"$PM_SECRET_HELPER" "$secret" -- "$PM_SELF" __sieve "$secret" "$address" "$@"
+	return $?
+}
+
+_pm_sieve_list_or_fail() {
+	local address="$1"
+	local secret="$2"
+	_pm_sieve "$address" "$secret" list && return 0
+	print_error "ManageSieve failed for $address (needs the mailbox password or an app password with SIEVE scope)"
+	return 1
+}
+
+# The keep-and-copy script in Roundcube's format, so it shows and stays
+# editable under webmail Settings > Filters.
+_pm_sieve_copy_script() {
+	local target="$1"
+	printf 'require ["copy"];\n# rule:[Copy to owner]\nif true\n{\n\tredirect :copy "%s";\n}\n' "$target"
+	return 0
+}
+
+# Succeed when two scripts match, ignoring CR and trailing newlines.
+_pm_sieve_same() {
+	local left="$1"
+	local right="$2"
+	[[ "$(tr -d '\r' <<<"$left")" == "$(tr -d '\r' <<<"$right")" ]] && return 0
+	return 1
+}
+
+# Print the target of an unedited helper copy script; fail for anything else.
+_pm_sieve_copy_target() {
+	local script="$1"
+	local re='redirect :copy "([^"]+)";'
+	[[ "$script" =~ $re ]] || return 1
+	local target="${BASH_REMATCH[1]}"
+	_pm_sieve_same "$script" "$(_pm_sieve_copy_script "$target")" || return 1
+	printf '%s\n' "$target"
+	return 0
+}
+
+cmd_sieve_list() {
+	local address="${1:-}"
+	local secret="${2:-}"
+	_pm_valid_address "$address" || return 1
+	_pm_valid_secret_name "$secret" || return 1
+	local scripts
+	scripts=$(_pm_sieve_list_or_fail "$address" "$secret") || return 1
+	if [[ -z "$scripts" ]]; then
+		print_info "No Sieve scripts on $address"
+		return 0
+	fi
+	printf '%s\n' "$scripts"
+	return 0
+}
+
+cmd_copy_to() {
+	local address="${1:-}"
+	local secret="${2:-}"
+	local target="${3:-}"
+	local option="${4:-}"
+	_pm_valid_address "$address" || return 1
+	_pm_valid_secret_name "$secret" || return 1
+	_pm_valid_address "$target" || return 1
+	if [[ -n "$option" && "$option" != "--dry-run" ]]; then
+		print_error "Usage: copy-to <addr> <secret-name> <target> [--dry-run]"
+		return 1
+	fi
+	local script scripts names current
+	script=$(_pm_sieve_copy_script "$target")
+	if [[ "$option" == "--dry-run" ]]; then
+		print_info "Would set Sieve script '$PM_SIEVE_SCRIPT' on $address and make it active:"
+		printf '%s\n' "$script"
+		return 0
+	fi
+	scripts=$(_pm_sieve_list_or_fail "$address" "$secret") || return 1
+	names=$(cut -f1 <<<"$scripts")
+	if [[ -n "$scripts" && "$names" != "$PM_SIEVE_SCRIPT" ]]; then
+		print_error "$address already has Sieve scripts: $(tr '\n' ' ' <<<"$names")"
+		print_info "Edit them in webmail (Settings > Filters) instead; see: sieve-list $address $secret"
+		return 1
+	fi
+	if [[ -n "$scripts" ]]; then
+		current=$(_pm_sieve "$address" "$secret" get "$PM_SIEVE_SCRIPT") || return 1
+		if ! _pm_sieve_same "$current" "$script"; then
+			print_error "$address has a different '$PM_SIEVE_SCRIPT' script; edit it in webmail or run copy-to-remove first"
+			return 1
+		fi
+		if [[ "$scripts" == "${PM_SIEVE_SCRIPT}"$'\t'"active" ]]; then
+			print_info "No change: $address already keeps its mail and copies to $target"
+			return 0
+		fi
+	fi
+	if ! _pm_sieve "$address" "$secret" install "$PM_SIEVE_SCRIPT" "$script"; then
+		print_error "Could not set the Sieve script on $address"
+		return 1
+	fi
+	print_success "$address keeps its mail and sends a copy to $target (script read back and active)"
+	return 0
+}
+
+cmd_copy_to_remove() {
+	local address="${1:-}"
+	local secret="${2:-}"
+	local confirm="${3:-}"
+	_pm_valid_address "$address" || return 1
+	_pm_valid_secret_name "$secret" || return 1
+	local scripts current target
+	scripts=$(_pm_sieve_list_or_fail "$address" "$secret") || return 1
+	if ! cut -f1 <<<"$scripts" | grep -qxF -- "$PM_SIEVE_SCRIPT"; then
+		print_info "No '$PM_SIEVE_SCRIPT' Sieve script on $address; nothing to remove"
+		return 0
+	fi
+	current=$(_pm_sieve "$address" "$secret" get "$PM_SIEVE_SCRIPT") || return 1
+	if ! target=$(_pm_sieve_copy_target "$current"); then
+		print_error "The '$PM_SIEVE_SCRIPT' script on $address is not the helper's copy script; change it in webmail instead"
+		return 1
+	fi
+	if [[ "$confirm" != "--yes" ]]; then
+		print_info "Re-run with --yes to stop copying $address to $target"
+		return 0
+	fi
+	if ! _pm_sieve "$address" "$secret" remove "$PM_SIEVE_SCRIPT"; then
+		print_error "Could not remove the Sieve script on $address"
+		return 1
+	fi
+	print_success "Removed the copy to $target from $address"
+	return 0
+}
+
 cmd_help() {
 	cat <<EOF
 Purelymail helper (docs: services/email/purelymail.md)
@@ -880,6 +1032,11 @@ Mailboxes and routing
   routes [domain]                           List routing rules
   route-add <alias@domain> <target>...      Route an alias (identical rule = no change)
   route-delete <rule-id> --yes              Delete a routing rule
+  sieve-list <addr> <secret-name>           List the mailbox's Sieve scripts (read only)
+  copy-to <addr> <secret-name> <target> [--dry-run]
+                                            Keep mail and copy it to target (Sieve filter)
+  copy-to-remove <addr> <secret-name> [--yes]
+                                            Remove the copy-to filter
 
 Checks
   imap-check <addr> <secret-name>           IMAP login + EXAMINE INBOX
@@ -907,6 +1064,9 @@ main() {
 	routes) cmd_routes "$@" ;;
 	route-add) cmd_route_add "$@" ;;
 	route-delete) cmd_route_delete "$@" ;;
+	sieve-list) cmd_sieve_list "$@" ;;
+	copy-to) cmd_copy_to "$@" ;;
+	copy-to-remove) cmd_copy_to_remove "$@" ;;
 	imap-check) cmd_imap_check "$@" ;;
 	auth-results) cmd_auth_results "$@" ;;
 	# Internal: invoked by secret-helper.sh with secrets in the environment.
@@ -915,6 +1075,7 @@ main() {
 	__app-password) _pm_inner_app_password "$@" ;;
 	__cf) _pm_inner_cf "$@" ;;
 	__imap) _pm_inner_imap "$@" ;;
+	__sieve) _pm_inner_sieve "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		print_error "Unknown command: $command"
