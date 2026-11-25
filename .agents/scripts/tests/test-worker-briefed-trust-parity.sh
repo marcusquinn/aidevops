@@ -92,8 +92,18 @@ gh() {
 		payload="$PR_FILES"
 		;;
 	repos/owner/repo/pulls/100)
+		[[ "${SERVICES_HEAD_FAIL:-0}" == 0 ]] || return 1
 		payload="$ROUTINE_META"
 		[[ -n "$payload" ]] || payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
+		if [[ "${SERVICES_HEAD_RACE:-0}" == 1 ]]; then
+			local reads=0
+			[[ ! -f "${TEST_ROOT}/head-reads" ]] || read -r reads <"${TEST_ROOT}/head-reads"
+			reads=$((reads + 1))
+			printf '%s\n' "$reads" >"${TEST_ROOT}/head-reads"
+			if [[ "$((reads % 2))" == 0 ]]; then
+				payload='{"head":{"sha":"3333333333333333333333333333333333333333"}}'
+			fi
+		fi
 		;;
 	# Only SHA-pinned reads are answered: an unpinned diff read fails the test.
 	repos/owner/repo/compare/"${ROUTINE_BASE}...${ROUTINE_HEAD}?per_page=1")
@@ -261,8 +271,31 @@ ISSUE_TYPE=Bot
 ISSUE_TITLE='Sync site services list with upstream aidevops (a1b2c3d)'
 ISSUE_LABELS='[{"name":"origin:worker"},{"name":"auto-dispatch"}]'
 ISSUE_BODY=$'Sync the list.\n\n<!-- aidevops:generator=services-sync-check -->'
+WORKER_BRIEFED_EXPECTED_HEAD=0123456789abcdef0123456789abcdef01234567
+FULL_LOOP_EXPECTED_PR_HEAD_SHA="$WORKER_BRIEFED_EXPECTED_HEAD"
 PR_FILES='[{"filename":"data/services-sync.json","status":"modified"}]'
 expect_parity 0 'services-sync brief with json-only diff allowed on both paths'
+unset WORKER_BRIEFED_EXPECTED_HEAD
+expect_parity 0 'services-sync full-loop pin alone binds scope on both paths'
+FULL_LOOP_EXPECTED_PR_HEAD_SHA=3333333333333333333333333333333333333333
+expect_parity 1 'services-sync full-loop pin mismatch denied on both paths'
+WORKER_BRIEFED_EXPECTED_HEAD="$FULL_LOOP_EXPECTED_PR_HEAD_SHA"
+expect_parity 1 'services-sync Pulse pin mismatch denied on both paths'
+unset WORKER_BRIEFED_EXPECTED_HEAD FULL_LOOP_EXPECTED_PR_HEAD_SHA
+expect_parity 1 'services-sync missing pin denied on both paths'
+_merge_worker_briefed_gate_pinned 100 owner/repo 1
+[[ "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" == 0123456789abcdef0123456789abcdef01234567 ]]
+printf 'PASS services-sync scope publishes the verified head as the full-loop merge pin\n'
+WORKER_BRIEFED_EXPECTED_HEAD=0123456789abcdef0123456789abcdef01234567
+FULL_LOOP_EXPECTED_PR_HEAD_SHA="$WORKER_BRIEFED_EXPECTED_HEAD"
+SERVICES_HEAD_RACE=1
+expect_parity 1 'services-sync head changes during scope read denied on both paths'
+SERVICES_HEAD_RACE=0
+SERVICES_HEAD_FAIL=1
+expect_parity 1 'services-sync head read failure denied on both paths'
+SERVICES_HEAD_FAIL=0
+PR_FILES='[{"filename":"index.html\ndata/services-sync.json","status":"modified"}]'
+expect_parity 1 'services-sync newline-containing filename denied on both paths'
 PR_FILES='[{"filename":"data/services-sync.json","status":"modified"},{"filename":"index.html","status":"modified"}]'
 expect_parity 0 'services-sync brief with index.html and json diff allowed on both paths'
 PR_FILES='[{"filename":"data/services-sync.json","status":"modified"},{"filename":".agents/scripts/example.sh","status":"modified"}]'
@@ -287,6 +320,7 @@ ISSUE_LABELS='[]'
 ISSUE_BODY=''
 PR_FILES='[{"filename":".agents/scripts/example.sh","status":"modified"}]'
 printf 'PASS services-sync scoped trust has Pulse and full-loop parity\n'
+unset WORKER_BRIEFED_EXPECTED_HEAD FULL_LOOP_EXPECTED_PR_HEAD_SHA
 
 : >"${TEST_ROOT}/comments.jsonl"
 USER_API_FAIL=1

@@ -1158,6 +1158,7 @@ test_starter_sync_refusal_named() {
 #       $5=issue user type, $6=issue body, $7=PR files JSON
 _run_services_sync_case() {
 	local label="$1" expect="$2" title="$3" labels="$4" utype="$5" body="$6" files="$7"
+	local WORKER_BRIEFED_EXPECTED_HEAD=0123456789abcdef0123456789abcdef01234567
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
 	jq -n --arg t "$title" --argjson l "$labels" --arg ty "$utype" --arg body "$body" \
@@ -1188,6 +1189,8 @@ test_services_sync_scoped_trust() {
 	local p="services-sync:"
 	_run_services_sync_case "$p json-only diff passes" pass "$ok_title" "$ok_labels" Bot "$ok_body" "$json_file"
 	_run_services_sync_case "$p index.html + json diff passes" pass "$ok_title" "$ok_labels" Bot "$ok_body" "$both_files"
+	_run_services_sync_case "$p newline-containing filename blocked" block "$ok_title" "$ok_labels" Bot "$ok_body" \
+		'[{"filename":"index.html\ndata/services-sync.json","status":"modified"}]'
 	_run_services_sync_case "$p third file blocked" block "$ok_title" "$ok_labels" Bot "$ok_body" \
 		'[{"filename":"data/services-sync.json","status":"modified"},{"filename":"index.html","status":"modified"},{"filename":"about.html","status":"modified"}]'
 	_run_services_sync_case "$p out-of-scope file blocked" block "$ok_title" "$ok_labels" Bot "$ok_body" \
