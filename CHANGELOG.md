@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.281] - 2026-11-25
+
+### Added
+
+- retry sessions stopped by provider Overloaded errors after 60 s (GH#40283)
+- own Docker image and build cache lifecycle in aidevops cleanup; escalate npm cache advisory on low disk (GH#40282) (#40289)
+
+### Changed
+
+- Maintenance: mark t19367 complete (pr:#40325 completed:2026-11-25) (#40318)
+- Maintenance: mark t19363 complete (pr:#40299 completed:2026-11-25) (#40300)
+- Refactor: split opencode-db-maintenance-helper.sh into subcommand modules (GH#40304) (#40306)
+
+### Fixed
+
+- playwright-runtime reports not ready when a pin bump leaves browser builds missing (GH#40313) (#40314)
+- wait for the SQLite lock in the sqliteExec exit test read
+- rerun failed plugin validator tests serialized and report flaky passes
+- repair pulse and worker lifecycle suite drift (GH#40285) (#40294)
+- accept same-major Node patch in quickfile-mcp-launcher (#40311)
+- avoid grep -q after pipe under pipefail (SC2337) in tests (#40301)
+- give the serialized plugin test phase a timeout it can finish inside
+- support the session_inbox schema generation (#40284)
+- npm-cache-helper reports completed clean/verify outcomes (GH#40290) (#40292)
+- index compaction reservation lookups so journal maintenance stops refusing hook admission with database-locked
+- repair matterbridge stale assertions and duplicate GUI CSS selector
+
 ## [3.39.280] - 2026-11-25
 
 ### Added
