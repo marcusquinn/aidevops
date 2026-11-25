@@ -6149,4 +6149,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t19347 fix(pulse): report the configured interval and live worker cap in pulse start #bug ref:GH#40198 pr:#40258 completed:2026-11-25
 
-- [ ] t19346 fix(pulse): break early in stats quarantine scan and prune the backlog #bug ref:GH#40197
+- [x] t19346 fix(pulse): break early in stats quarantine scan and prune the backlog #bug ref:GH#40197 pr:#40265 completed:2026-11-25
