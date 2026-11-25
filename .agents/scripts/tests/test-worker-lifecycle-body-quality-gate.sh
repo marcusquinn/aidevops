@@ -8,7 +8,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-LIFECYCLE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common.sh"
+# GH#40351: the body-gate helpers live in this worker-lifecycle-common module.
+LIFECYCLE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-escalation-gate.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0

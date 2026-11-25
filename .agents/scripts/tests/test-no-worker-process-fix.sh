@@ -41,6 +41,8 @@ HEADLESS_LIB="${AGENT_SCRIPT_DIR}/headless-runtime-lib.sh"
 CANARY_LIB="${AGENT_SCRIPT_DIR}/headless-runtime-canary.sh"
 PULSE_ENGINE="${AGENT_SCRIPT_DIR}/pulse-dispatch-engine-launch.sh"
 WORKER_LIFECYCLE="${AGENT_SCRIPT_DIR}/worker-lifecycle-common.sh"
+# GH#40351: _worker_failure_reason_is_launch_preflight lives in this module.
+WORKER_LIFECYCLE_GATE="${AGENT_SCRIPT_DIR}/worker-lifecycle-common-escalation-gate.sh"
 DEDUP_LAYERS="${AGENT_SCRIPT_DIR}/pulse-dispatch-dedup-layers.sh"
 
 readonly TEST_RED='\033[0;31m'
@@ -611,8 +613,8 @@ test_failure_classification_distinct() {
 }
 
 test_worker_worktree_live_owner_skips_fast_fail_state() {
-	if grep -q 'worker_worktree_live_owner' "$WORKER_LIFECYCLE" \
-		&& grep -q 'worker_worktree_continuation_' "$WORKER_LIFECYCLE"; then
+	if grep -q 'worker_worktree_live_owner' "$WORKER_LIFECYCLE_GATE" \
+		&& grep -q 'worker_worktree_continuation_' "$WORKER_LIFECYCLE_GATE"; then
 		print_result "invariant: worktree owner reasons are treated as prelaunch control failures" 0
 		return 0
 	fi
@@ -733,7 +735,7 @@ test_claim_lock_errors_fail_closed() {
 main_test() {
 	# Verify the target files exist before running tests
 	local f
-	for f in "$PULSE_CLEANUP" "$WORKER_LAUNCH" "$HEADLESS_LIB" "$PULSE_ENGINE" "$WORKER_LIFECYCLE" "$DEDUP_LAYERS"; do
+	for f in "$PULSE_CLEANUP" "$WORKER_LAUNCH" "$HEADLESS_LIB" "$PULSE_ENGINE" "$WORKER_LIFECYCLE" "$WORKER_LIFECYCLE_GATE" "$DEDUP_LAYERS"; do
 		if [[ ! -f "$f" ]]; then
 			printf 'FATAL: target file missing: %s\n' "$f" >&2
 			return 2

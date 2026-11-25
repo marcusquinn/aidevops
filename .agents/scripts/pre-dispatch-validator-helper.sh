@@ -102,6 +102,7 @@ _load_self_hosting_patterns() {
 			"headless-runtime-helper.sh"
 			"headless-runtime-lib.sh"
 			"worker-lifecycle-common.sh"
+			"worker-lifecycle-common-"
 			"shared-dispatch-dedup.sh"
 			"shared-claim-lifecycle.sh"
 			"worker-activity-watchdog.sh"
@@ -425,7 +426,7 @@ _validator_ratchet_down() {
 	# ratchet-check exits 0 with output when proposals available,
 	# exits non-zero when thresholds are already tight (no proposals).
 	# Both cases: check the output text for the no-op sentinel.
-	if printf '%s' "$ratchet_output" | grep -q "No ratchet-down available"; then
+	if grep -q "No ratchet-down available" <<<"$ratchet_output"; then
 		_log "INFO" "ratchet-down validator: premise falsified — no ratchet-down available"
 		return 10
 	fi
@@ -734,7 +735,7 @@ _sht_match_dispatch_pattern() {
 	local pattern
 
 	for pattern in "${_SELF_HOSTING_PATTERNS[@]}"; do
-		if printf '%s' "$scan_target" | grep -qF "$pattern"; then
+		if grep -qF "$pattern" <<<"$scan_target"; then
 			printf '%s' "$pattern"
 			return 0
 		fi
@@ -999,8 +1000,8 @@ _rf_extract_keywords() {
 _rf_has_routed_review_evidence() {
 	local issue_body="$1"
 
-	if printf '%s\n' "$issue_body" | grep -Eq \
-		'^[[:space:]]*<!--[[:space:]]feedback-route:(start|complete):review:PR[0-9]+:SHA[^[:space:]>]+[[:space:]]*-->[[:space:]]*$|^##[[:space:]]+Review Feedback routed from PR[[:space:]]+#[0-9]+([[:space:]].*)?$'; then
+	if grep -Eq \
+		'^[[:space:]]*<!--[[:space:]]feedback-route:(start|complete):review:PR[0-9]+:SHA[^[:space:]>]+[[:space:]]*-->[[:space:]]*$|^##[[:space:]]+Review Feedback routed from PR[[:space:]]+#[0-9]+([[:space:]].*)?$' <<<"$issue_body"; then
 		return 0
 	fi
 
@@ -1027,12 +1028,12 @@ _rf_issue_in_supersession_scope() {
 		;;
 	esac
 
-	if printf '%s' "$issue_body" | grep -Eq '<!-- (source:review-feedback|source:review-scanner|review-followup:PR)'; then
+	if grep -Eq '<!-- (source:review-feedback|source:review-scanner|review-followup:PR)' <<<"$issue_body"; then
 		return 0
 	fi
 
 	title_lc=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')
-	if printf '%s' "$title_lc" | grep -Eq '(^|[^[:alnum:]-])(quality-debt|review-feedback|review feedback|review-followup|review followup)([^[:alnum:]-]|$)'; then
+	if grep -Eq '(^|[^[:alnum:]-])(quality-debt|review-feedback|review feedback|review-followup|review followup)([^[:alnum:]-]|$)' <<<"$title_lc"; then
 		return 0
 	fi
 
@@ -1250,7 +1251,7 @@ _rf_score_keywords() {
 	evidence_lc=$(printf '%s' "$evidence" | tr '[:upper:]' '[:lower:]')
 	while IFS= read -r keyword; do
 		[[ -z "$keyword" ]] && continue
-		if printf '%s' "$evidence_lc" | grep -qwF "$keyword"; then
+		if grep -qwF "$keyword" <<<"$evidence_lc"; then
 			score=$((score + 1))
 			matched="${matched}${keyword}"$'\n'
 		fi
@@ -1267,7 +1268,7 @@ _rf_pr_references_issue() {
 	local evidence_lc=""
 
 	evidence_lc=$(printf '%s' "$evidence" | tr '[:upper:]' '[:lower:]')
-	if printf '%s' "$evidence_lc" | grep -Eq "(^|[^0-9])#${issue_number}([^0-9]|$)|gh#${issue_number}([^0-9]|$)"; then
+	if grep -Eq "(^|[^0-9])#${issue_number}([^0-9]|$)|gh#${issue_number}([^0-9]|$)" <<<"$evidence_lc"; then
 		return 0
 	fi
 
@@ -1602,7 +1603,7 @@ _detect_review_feedback_supersession() {
 	local labels=""
 	issue_meta=$(gh api "$issue_api_path" --jq '[.created_at // "", .title // "", ([.labels[]?.name] | join(","))] | @tsv' 2>/dev/null) || {
 		if _rf_has_routed_review_evidence "$issue_body" ||
-			printf '%s' "$issue_body" | grep -Eq 'aidevops:generator=review-followup|source:review-scanner|review-followup:PR|Unaddressed review bot suggestions'; then
+			grep -Eq 'aidevops:generator=review-followup|source:review-scanner|review-followup:PR|Unaddressed review bot suggestions' <<<"$issue_body"; then
 			_log "WARN" "#${issue_number}: review-followup metadata lookup failed — dispatch blocked for this cycle"
 			return 30
 		fi
@@ -1744,7 +1745,7 @@ _rf_canonicalize_review_followup_duplicates() {
 
 	local canonical_number=""
 	canonical_number=$(printf '%s' "$matching_numbers" | grep -E '^[0-9]+$' | sort -n | head -1 || true)
-	if ! printf '%s' "$matching_numbers" | grep -qxF "$issue_number"; then
+	if ! grep -qxF "$issue_number" <<<"$matching_numbers"; then
 		_log "WARN" "#${issue_number}: current review-followup absent from duplicate enumeration — dispatch blocked"
 		return 30
 	fi

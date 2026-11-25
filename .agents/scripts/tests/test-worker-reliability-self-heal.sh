@@ -41,6 +41,19 @@ HEADLESS_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-helper.sh"
 HEADLESS_WORKER_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-worker.sh"
 HEADLESS_INVOCATION_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-worker-invocation.sh"
 LIFECYCLE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common.sh"
+# GH#40351: worker-lifecycle-common.sh is a thin orchestrator; these modules
+# define the escalation functions this test inspects as source text.
+LIFECYCLE_ESCALATION_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-escalation.sh"
+LIFECYCLE_GATE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-escalation-gate.sh"
+LIFECYCLE_ALL_SCRIPTS=(
+	"$LIFECYCLE_SCRIPT"
+	"${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-attempt.sh"
+	"${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-process.sh"
+	"${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-session.sh"
+	"${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-metrics.sh"
+	"$LIFECYCLE_GATE_SCRIPT"
+	"$LIFECYCLE_ESCALATION_SCRIPT"
+)
 SCHEDULERS_SCRIPT="${REPO_ROOT}/.agents/scripts/setup/modules/schedulers.sh"
 
 readonly TEST_RED='\033[0;31m'
@@ -299,7 +312,7 @@ test_escalate_skips_body_gate_on_no_work() {
 	local fn_src
 	fn_src=$(awk '
 		/^escalate_issue_tier\(\) \{/,/^}$/ { print }
-	' "$LIFECYCLE_SCRIPT")
+	' "$LIFECYCLE_ESCALATION_SCRIPT")
 
 	if [[ -z "$fn_src" ]]; then
 		print_result "escalate: no_work guard present (structural)" 1 \
@@ -338,7 +351,7 @@ test_escalate_skips_tier_cascade_on_no_work() {
 	local fn_src
 	fn_src=$(awk '
 		/^escalate_issue_tier\(\) \{/,/^}$/ { print }
-	' "$LIFECYCLE_SCRIPT")
+	' "$LIFECYCLE_ESCALATION_SCRIPT")
 
 	if [[ -z "$fn_src" ]]; then
 		print_result "escalate: no_work tier-cascade skip (t2387)" 1 \
@@ -400,17 +413,17 @@ test_escalate_skips_tier_cascade_on_no_work() {
 
 test_log_no_work_skip_escalation_helper_exists() {
 	# The helper _log_no_work_skip_escalation must exist as a function
-	# definition in worker-lifecycle-common.sh. This guards against the
-	# guard-only form being added without the accompanying helper.
-	if ! grep -qE '^_log_no_work_skip_escalation\(\) \{' "$LIFECYCLE_SCRIPT"; then
+	# definition in the worker-lifecycle-common escalation-gate module. This guards
+	# against the guard-only form being added without the accompanying helper.
+	if ! grep -qE '^_log_no_work_skip_escalation\(\) \{' "$LIFECYCLE_GATE_SCRIPT"; then
 		print_result "escalate: _log_no_work_skip_escalation helper defined" 1 \
-			"function definition not found in $LIFECYCLE_SCRIPT"
+			"function definition not found in $LIFECYCLE_GATE_SCRIPT"
 		return 0
 	fi
 
 	# The helper must emit the <!-- no-work-escalation-skip --> marker so
 	# idempotency checks and operator searches can find it.
-	if ! grep -q 'no-work-escalation-skip' "$LIFECYCLE_SCRIPT"; then
+	if ! grep -q 'no-work-escalation-skip' "$LIFECYCLE_GATE_SCRIPT"; then
 		print_result "escalate: _log_no_work_skip_escalation helper defined" 1 \
 			"marker 'no-work-escalation-skip' not found"
 		return 0
@@ -435,10 +448,10 @@ test_no_work_circuit_breaker_threshold_guard() {
 
 	# Assertion 1: NO_WORK_NMR_THRESHOLD is referenced in the function body.
 	local fn_src
-	fn_src=$(awk '/^_log_no_work_skip_escalation\(\) \{/,/^\}/' "$LIFECYCLE_SCRIPT" 2>/dev/null)
+	fn_src=$(awk '/^_log_no_work_skip_escalation\(\) \{/,/^\}/' "$LIFECYCLE_GATE_SCRIPT" 2>/dev/null)
 	if [[ -z "$fn_src" ]]; then
 		print_result "t2769: no_work circuit breaker threshold guard" 1 \
-			"_log_no_work_skip_escalation not found in $LIFECYCLE_SCRIPT"
+			"_log_no_work_skip_escalation not found in $LIFECYCLE_GATE_SCRIPT"
 		return 0
 	fi
 
@@ -480,8 +493,8 @@ test_no_work_circuit_breaker_marker_posted() {
 	# explanatory prose must not quote it and contaminate reason classification.
 
 	local breaker_src="" skip_src=""
-	breaker_src=$(awk '/^_apply_no_work_nmr_breaker\(\) \{/,/^\}/' "$LIFECYCLE_SCRIPT" 2>/dev/null)
-	skip_src=$(awk '/^_log_no_work_skip_escalation\(\) \{/,/^\}/' "$LIFECYCLE_SCRIPT" 2>/dev/null)
+	breaker_src=$(awk '/^_apply_no_work_nmr_breaker\(\) \{/,/^\}/' "$LIFECYCLE_GATE_SCRIPT" 2>/dev/null)
+	skip_src=$(awk '/^_log_no_work_skip_escalation\(\) \{/,/^\}/' "$LIFECYCLE_GATE_SCRIPT" 2>/dev/null)
 	if [[ -z "$breaker_src" || -z "$skip_src" ]]; then
 		print_result "t2769: no_work circuit breaker marker posted" 1 \
 			"no_work breaker or below-threshold diagnostic function not found"
@@ -537,9 +550,16 @@ test_no_work_false_claim_comment_removed() {
 	# would apply NMR must no longer be present in worker-lifecycle-common.sh.
 	# Acceptance criterion 3 from GH#20639.
 
-	if grep -q 'cost-circuit-breaker-helper\.sh' "$LIFECYCLE_SCRIPT"; then
+	local scan_status=0
+	# Do not use -q: it can mask read errors once another input matches.
+	grep 'cost-circuit-breaker-helper\.sh' "${LIFECYCLE_ALL_SCRIPTS[@]}" >/dev/null || scan_status=$?
+	if [[ "$scan_status" -eq 0 ]]; then
 		print_result "t2769: false claim comment removed (AC3)" 1 \
-			"'cost-circuit-breaker-helper.sh' still referenced in $LIFECYCLE_SCRIPT"
+			"'cost-circuit-breaker-helper.sh' still referenced in worker-lifecycle-common*.sh"
+		return 0
+	elif [[ "$scan_status" -ne 1 ]]; then
+		print_result "t2769: false claim comment removed (AC3)" 1 \
+			"required lifecycle file scan failed (grep status $scan_status)"
 		return 0
 	fi
 
