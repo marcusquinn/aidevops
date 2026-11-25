@@ -299,6 +299,66 @@ _pm_starter_sync_issue_scope_has() {
 }
 
 #######################################
+# Check whether a linked issue is a scheduled site services-sync brief and the
+# PR stays inside that brief's two-file scope (GH#40239).
+#
+#aidevops:trust-boundary — the site repository's services-sync workflow files
+# one issue per upstream change as github-actions[bot] (author_association
+# CONTRIBUTOR), titled exactly "Sync site services list with upstream aidevops
+# (<7-hex sha>)", labelled origin:worker, with the generator marker in the
+# body. Trust is bound to that exact issue shape AND the PR diff: 1-2 changed
+# files, each exactly index.html or data/services-sync.json, no renames, every
+# filename a string. API errors, a non-array file list, a body that is not a
+# string or a truncated list fail closed. This is deliberately NOT a general
+# github-actions[bot] exception. All other merge gates (checks, reviews,
+# review-bot, NMR) still apply. Pulse and full-loop share this predicate through
+# _worker_briefed_trust_check, pinned by tests/test-worker-briefed-trust-parity.sh.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=issue API path
+# Returns: 0=trusted services-sync brief with in-scope diff, 1=not trusted
+#######################################
+_is_trusted_services_sync_issue_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local issue_api="$3"
+	local issue_meta title files_json file_count path
+	local re_title='^Sync site services list with upstream aidevops \([0-9a-f]{7}\)$'
+	local marker='<!-- aidevops:generator=services-sync-check -->'
+	local files_api
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$issue_api" ]] || return 1
+	files_api=$(printf 'repos/%s/pulls/%s/files?per_page=100' "$repo_slug" "$pr_number") || return 1
+	issue_meta=$(gh api "$issue_api" 2>/dev/null) || return 1
+	# One predicate: a real issue (not a PR) with a string body, the exact bot
+	# identity, the generator marker and the origin:worker label. Anything else
+	# fails closed.
+	jq -e --arg bot "$_PM_WORKFLOW_BOT_LOGIN" --arg marker "$marker" \
+		'.pull_request == null and ([.body | strings] | length == 1) and .user.login == $bot and
+		.user.type == "Bot" and (.body | contains($marker)) and any(.labels[]?; .name == "origin:worker")' \
+		<<<"$issue_meta" >/dev/null 2>&1 || return 1
+	title=$(jq -r '.title // ""' <<<"$issue_meta") || return 1
+	[[ "$title" =~ $re_title ]] || return 1
+
+	files_json=$(gh api "$files_api" 2>/dev/null) || return 1
+	# `arrays` emits nothing for non-array payloads, so the integer check fails closed.
+	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 1
+	[[ "$file_count" =~ ^[0-9]+$ ]] || return 1
+	[[ "$file_count" -ge 1 && "$file_count" -le 2 ]] || return 1
+	jq -e --arg renamed renamed 'all(.[]; .status != $renamed and ([.filename | strings] | length == 1))' <<<"$files_json" >/dev/null 2>&1 || return 1
+
+	while IFS= read -r path; do
+		case "$path" in
+		"index.html" | "data/services-sync.json") ;;
+		*)
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — services-sync PR changes out-of-scope file ${path} (GH#40239)" >>"$LOGFILE"
+			return 1
+			;;
+		esac
+	done < <(printf '%s' "$files_json" | jq -r '.[].filename')
+	return 0
+}
+
+#######################################
 # Check whether an issue author has maintainer-equivalent repository access.
 #
 # GitHub can expose maintainer-operated issues/PRs as COLLABORATOR rather than
@@ -583,6 +643,8 @@ _worker_briefed_trust_check() {
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a scheduled OpenCode pin-canary brief and the diff stays in canary scope (GH#35752)" >>"$LOGFILE"
 		elif _is_trusted_starter_sync_issue_pr "$pr_number" "$repo_slug" "$_issue_api"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a starter-sync issue and the diff stays within scripts/core-files.txt (GH#37289)" >>"$LOGFILE"
+		elif _is_trusted_services_sync_issue_pr "$pr_number" "$repo_slug" "$_issue_api"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a services-sync brief and the diff stays within index.html/data/services-sync.json (GH#40239)" >>"$LOGFILE"
 		elif [[ "$_has_crypto" != "$_true_status" ]]; then
 			WORKER_BRIEFED_TRUST_REASON="linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)"
 			# GH#39910: name the scoped refusal, so the fix is not mistaken for an approval.

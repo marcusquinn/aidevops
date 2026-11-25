@@ -28,6 +28,9 @@ ISSUE_LOGIN=outsider
 ISSUE_PERMISSION="read"
 ISSUE_STATE=open
 ISSUE_LABELS='[]'
+ISSUE_TYPE=User
+ISSUE_TITLE='Generated service sync'
+ISSUE_BODY=''
 PR_BODY='Resolves #42'
 PR_LABELS='[{"name":"origin:worker"}]'
 CRYPTO_APPROVED=0
@@ -120,7 +123,8 @@ gh() {
 	repos/owner/repo/issues/42)
 		payload=$(jq -n --arg assoc "$ISSUE_ASSOC" --arg login "$ISSUE_LOGIN" --arg state "$ISSUE_STATE" \
 			--argjson labels "$ISSUE_LABELS" \
-			'{number:42,author_association:$assoc,user:{login:$login,type:"User"},state:$state,labels:$labels,title:"Generated service sync"}')
+			--arg type "$ISSUE_TYPE" --arg title "$ISSUE_TITLE" --arg body "$ISSUE_BODY" \
+			'{number:42,author_association:$assoc,user:{login:$login,type:$type},state:$state,labels:$labels,title:$title,body:$body}')
 		;;
 	repos/marcusquinn/aidevops/contents/.agents/templates/workflows/*) payload="$ROUTINE_TEMPLATE_CONTENT" ;;
 	repos/owner/repo) payload='{"permissions":{"push":true},"default_branch":"main"}' ;;
@@ -250,6 +254,39 @@ expect_parity 1 'repeated workflow-bot denial does not duplicate comment'
 [[ "$(jq -s 'length' "${TEST_ROOT}/comments.jsonl")" == 1 ]]
 jq -es '.[0].body | contains("sudo aidevops approve issue 42")' "${TEST_ROOT}/comments.jsonl" >/dev/null
 printf 'PASS exactly one workflow-bot decision with the approval command\n'
+
+# GH#40239: the scoped services-sync brief is admitted identically by Pulse and
+# full-loop; any deviation in issue shape or diff scope keeps the bot denied.
+ISSUE_TYPE=Bot
+ISSUE_TITLE='Sync site services list with upstream aidevops (a1b2c3d)'
+ISSUE_LABELS='[{"name":"origin:worker"},{"name":"auto-dispatch"}]'
+ISSUE_BODY=$'Sync the list.\n\n<!-- aidevops:generator=services-sync-check -->'
+PR_FILES='[{"filename":"data/services-sync.json","status":"modified"}]'
+expect_parity 0 'services-sync brief with json-only diff allowed on both paths'
+PR_FILES='[{"filename":"data/services-sync.json","status":"modified"},{"filename":"index.html","status":"modified"}]'
+expect_parity 0 'services-sync brief with index.html and json diff allowed on both paths'
+PR_FILES='[{"filename":"data/services-sync.json","status":"modified"},{"filename":".agents/scripts/example.sh","status":"modified"}]'
+expect_parity 1 'services-sync brief with an out-of-scope file denied on both paths'
+PR_FILES='[{"filename":"data/services-sync.json","status":"renamed","previous_filename":"x.json"}]'
+expect_parity 1 'services-sync brief with a rename denied on both paths'
+PR_FILES='[{"filename":"data/services-sync.json","status":"modified"}]'
+PR_FILES_API_FAIL=1
+expect_parity 1 'services-sync file list API failure denied on both paths'
+PR_FILES_API_FAIL=0
+ISSUE_TYPE=User
+expect_parity 1 'services-sync shape from a non-bot account denied on both paths'
+ISSUE_TYPE=Bot
+ISSUE_LOGIN=outsider
+expect_parity 1 'services-sync shape from a different login denied on both paths'
+ISSUE_LOGIN='github-actions[bot]'
+ISSUE_BODY='Sync the list without the generator marker'
+expect_parity 1 'services-sync shape without the generator marker denied on both paths'
+ISSUE_TYPE=User
+ISSUE_TITLE='Generated service sync'
+ISSUE_LABELS='[]'
+ISSUE_BODY=''
+PR_FILES='[{"filename":".agents/scripts/example.sh","status":"modified"}]'
+printf 'PASS services-sync scoped trust has Pulse and full-loop parity\n'
 
 : >"${TEST_ROOT}/comments.jsonl"
 USER_API_FAIL=1

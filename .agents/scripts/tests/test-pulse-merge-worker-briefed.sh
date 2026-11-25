@@ -225,6 +225,7 @@ define_helpers_under_test() {
 		/^_is_trusted_opencode_canary_issue_pr\(\) \{/,/^\}$/ { print }
 		/^_is_trusted_starter_sync_issue_pr\(\) \{/,/^\}$/ { print }
 		/^_pm_starter_sync_issue_scope_has\(\) \{/,/^\}$/ { print }
+		/^_is_trusted_services_sync_issue_pr\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
 		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
@@ -1151,6 +1152,64 @@ test_starter_sync_refusal_named() {
 }
 
 # =============================================================================
+# GH#40239: scoped services-sync bot-issue trust
+# =============================================================================
+# Args: $1=label, $2=expect pass|block, $3=issue title, $4=labels JSON array,
+#       $5=issue user type, $6=issue body, $7=PR files JSON
+_run_services_sync_case() {
+	local label="$1" expect="$2" title="$3" labels="$4" utype="$5" body="$6" files="$7"
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	jq -n --arg t "$title" --argjson l "$labels" --arg ty "$utype" --arg body "$body" \
+		'{author_association:"CONTRIBUTOR",user:{login:"github-actions[bot]",type:$ty},title:$t,labels:$l,body:$body}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	printf '%s' "$files" >"${TEST_ROOT}/pr-files.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "104" "owner/repo" "origin:worker" "false" "46" && result=0 || result=$?
+	if [[ "$expect" == "pass" && "$result" -eq 0 ]] && grep -q "is a services-sync brief" "$LOGFILE"; then
+		print_result "$label" 0
+	elif [[ "$expect" == "block" && "$result" -ne 0 ]] && ! grep -q "is a services-sync brief" "$LOGFILE"; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "expected ${expect}, exit=${result}"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_services_sync_scoped_trust() {
+	local ok_title="Sync site services list with upstream aidevops (a1b2c3d)"
+	local ok_labels='[{"name":"origin:worker"},{"name":"auto-dispatch"}]'
+	local ok_body=$'Sync the list.\n\n<!-- aidevops:generator=services-sync-check -->\n'
+	local json_file='[{"filename":"data/services-sync.json","status":"modified"}]'
+	local both_files='[{"filename":"data/services-sync.json","status":"modified"},{"filename":"index.html","status":"modified"}]'
+	local p="services-sync:"
+	_run_services_sync_case "$p json-only diff passes" pass "$ok_title" "$ok_labels" Bot "$ok_body" "$json_file"
+	_run_services_sync_case "$p index.html + json diff passes" pass "$ok_title" "$ok_labels" Bot "$ok_body" "$both_files"
+	_run_services_sync_case "$p third file blocked" block "$ok_title" "$ok_labels" Bot "$ok_body" \
+		'[{"filename":"data/services-sync.json","status":"modified"},{"filename":"index.html","status":"modified"},{"filename":"about.html","status":"modified"}]'
+	_run_services_sync_case "$p out-of-scope file blocked" block "$ok_title" "$ok_labels" Bot "$ok_body" \
+		'[{"filename":"data/services-sync.json","status":"modified"},{"filename":".github/workflows/ci.yml","status":"modified"}]'
+	_run_services_sync_case "$p sibling path blocked" block "$ok_title" "$ok_labels" Bot "$ok_body" \
+		'[{"filename":"data/services-sync.json.bak","status":"added"}]'
+	_run_services_sync_case "$p renamed file blocked" block "$ok_title" "$ok_labels" Bot "$ok_body" \
+		'[{"filename":"data/services-sync.json","status":"renamed","previous_filename":"src/x.json"}]'
+	_run_services_sync_case "$p empty file list blocked" block "$ok_title" "$ok_labels" Bot "$ok_body" '[]'
+	_run_services_sync_case "$p non-array file payload blocked" block "$ok_title" "$ok_labels" Bot "$ok_body" '{"message":"error"}'
+	_run_services_sync_case "$p non-Bot author blocked" block "$ok_title" "$ok_labels" User "$ok_body" "$json_file"
+	_run_services_sync_case "$p wrong title blocked" block "Something else" "$ok_labels" Bot "$ok_body" "$json_file"
+	_run_services_sync_case "$p long sha in title blocked" block "Sync site services list with upstream aidevops (a1b2c3d4)" "$ok_labels" Bot "$ok_body" "$json_file"
+	_run_services_sync_case "$p uppercase sha in title blocked" block "Sync site services list with upstream aidevops (A1B2C3D)" "$ok_labels" Bot "$ok_body" "$json_file"
+	_run_services_sync_case "$p title suffix blocked" block "${ok_title} extra" "$ok_labels" Bot "$ok_body" "$json_file"
+	_run_services_sync_case "$p missing origin:worker label blocked" block "$ok_title" '[{"name":"auto-dispatch"}]' Bot "$ok_body" "$json_file"
+	_run_services_sync_case "$p missing generator marker blocked" block "$ok_title" "$ok_labels" Bot "No marker here" "$json_file"
+	_run_services_sync_case "$p other generator marker blocked" block "$ok_title" "$ok_labels" Bot "<!-- aidevops:generator=other -->" "$json_file"
+	return 0
+}
+
+# =============================================================================
 # GH#37373: starter-sync trust replaces ONLY the linked-issue author check.
 # Runs the REAL gate chain (_check_pr_merge_gates and its _pm_gate_* stages plus
 # the final trust gate's live-state check) around a starter-sync-trusted fixture
@@ -1334,6 +1393,7 @@ main() {
 	test_non_closing_reference_gates
 	test_parent_planning_checkpoint_gates
 	test_starter_sync_scoped_trust
+	test_services_sync_scoped_trust
 	test_starter_sync_does_not_bypass_other_gates
 
 	echo ""
