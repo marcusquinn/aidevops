@@ -32,7 +32,7 @@ export const API_IMAGE_MODELS = Object.freeze([
 ]);
 // Planning complexity and background are only sent for the 2.6 family.
 export const API_IMAGE_EXTENDED_MODELS = Object.freeze(["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"]);
-export const IMAGE_COMPLEXITIES = Object.freeze(["low", "medium", "high", "auto"]);
+export const IMAGE_COMPLEXITIES = Object.freeze(["low", "medium", "high"]);
 export const IMAGE_BACKGROUNDS = Object.freeze(["transparent", "opaque", "auto"]);
 
 function imageToolArgs(args) {

@@ -95,7 +95,7 @@ from a subscription to API credits. Never paste an API key into chat.
 | `auth` | oauth, api | OAuth is the default; API billing must be explicit |
 | `account` | OAuth email or API alias | Exact selection only; no silent account substitution |
 | `model` | gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-image-2.6-flare, gpt-image-2.6-sunburst | API-only; defaults to `gpt-image-2` for compatibility |
-| `complexity` | low, medium, high, auto | API-only; requires a `gpt-image-2.6-*` model; omitted unless set |
+| `complexity` | low, medium, high | API-only; requires a `gpt-image-2.6-*` model; omitted unless set |
 | `background` | transparent, opaque, auto | API-only; requires a `gpt-image-2.6-*` model; `transparent` needs `png` or `webp` (rejected for `jpeg`) |
 
 #### Requesting and verifying transparency
