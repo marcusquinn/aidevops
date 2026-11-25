@@ -325,6 +325,49 @@ non-`local_only` registered repo to its orphan `aidevops/issues-archive` branch.
 Enable it on one pulse host per repo so there is a single writer. Details:
 `reference/forge-portability.md` "Issue and PR discussion archive".
 
+### macOS launchd and privacy permissions
+
+A launchd job does not inherit the terminal app's TCC (privacy) grants. A
+successful terminal dry run, even under `env -i`, is not evidence of scheduled
+access: clearing environment variables keeps the terminal's TCC attribution.
+For example, read-only SQLite access to Mail's Envelope Index can succeed in a
+terminal with Full Disk Access but fail under launchd with `unable to open
+database file`.
+
+Before installing a routine that reads protected Mail (`~/Library/Mail`),
+Messages, Safari, Photos, Calendar or Contacts stores, or sends Apple Events,
+verify access with a **one-shot launchd probe**:
+
+1. Create a temporary plist with a unique label, `RunAtLoad=true`, no recurring
+   schedule or `KeepAlive`, and the same `ProgramArguments[0]` as the planned
+   job. Preserve its interpreter/child-process chain, arguments affecting that
+   chain, working directory and relevant environment; replace the workload with
+   a bounded read-only subset exercising the required access.
+2. Load it with `launchctl bootstrap` in the same user/domain as the planned
+   job, not from a terminal-only invocation of the script. Capture exit status
+   and sanitized success/error results in a private temporary file; do not dump
+   protected records or raw TCC rows. An Apple Event probe can prompt for consent
+   even when read-only: do not automate approval or treat a prompt as success.
+3. Inspect the results before installing the recurring job. In cleanup, run
+   `launchctl bootout` for this probe only, including after failure, then remove
+   its temporary plist and output after recording sanitized evidence. A failed
+   probe requires resolving the specific permission and repeating the probe;
+   terminal success is not a substitute.
+
+Prefer per-app Automation (Apple Events), when it supplies the required data,
+over Full Disk Access on `/bin/bash` or `/bin/zsh`: a shell-wide grant extends
+to every script that shell runs. Grants require explicit user action; do not
+programmatically grant permissions or reset TCC as a diagnostic shortcut.
+
+For non-bundled interpreters, Automation and Full Disk Access grants can be
+attributed to the resolved binary path rather than the wrapper shell or stable
+symlink. For example, Python spawning `osascript` to control Mail can receive
+the Automation grant at its Homebrew Cellar Python path, not `/bin/bash`.
+Homebrew Python or Node upgrades change that resolved path, so previous grants
+may stop applying and consent may be requested again. Re-run the launchd probe
+after interpreter upgrades and verify the actual attributed binary rather than
+assuming the wrapper's permissions cover it.
+
 ## Anti-patterns
 
 - Separate routine registry outside `TODO.md`

@@ -78,6 +78,11 @@ headless-runtime-helper.sh run --role worker --session-key routine-dry-run \
 
 Verify: output format stable and client-safe, no cross-client data leakage, retry/timeout behavior acceptable, human review exists for outbound communication.
 
+Before installing a macOS launchd routine that accesses TCC-protected stores or
+sends Apple Events, run the [one-shot launchd probe](../reference/routines.md#macos-launchd-and-privacy-permissions)
+with the planned executable and interpreter chain. Terminal or `env -i` dry runs
+do not verify launchd's privacy grants; repeat the probe after interpreter upgrades.
+
 ### Step 4: Pilot rollout
 
 Roll out in order: internal/self → single client → small cohort → full target set. Do not skip stages for outbound routines.
