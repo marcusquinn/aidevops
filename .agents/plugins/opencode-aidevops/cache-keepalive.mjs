@@ -42,20 +42,75 @@ function positiveInt(value, fallback) {
  * @returns {string|null}
  */
 export function buildKeepaliveBody(rawBody) {
-  if (typeof rawBody !== "string" || rawBody.length === 0) return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(rawBody);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(parsed?.tools) || parsed.tools.length === 0) return null;
-  if (!Array.isArray(parsed?.messages) || parsed.messages.length === 0) return null;
-  if (parsed.stream !== true) return null;
-  if (parsed.thinking?.type === "enabled") return null;
+  const parsed = parseJsonObject(rawBody);
+  if (!isRefreshableAgentRequest(parsed)) return null;
   parsed.max_tokens = 1;
   parsed.stream = false;
   return JSON.stringify(parsed);
+}
+
+function parseJsonObject(rawBody) {
+  if (typeof rawBody !== "string" || rawBody.length === 0) return null;
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    return null;
+  }
+}
+
+function nonEmptyArray(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+/** Streamed, tool-bearing agent request without a fixed thinking budget. */
+function isRefreshableAgentRequest(parsed) {
+  return Boolean(parsed)
+    && nonEmptyArray(parsed.tools)
+    && nonEmptyArray(parsed.messages)
+    && parsed.stream === true
+    && parsed.thinking?.type !== "enabled";
+}
+
+/**
+ * Resolve scheduler settings. globalThis lookups keep module creation safe in
+ * isolated VM contexts (oauth-pool-rotation-probe.mjs) without timers/process.
+ */
+function resolveSettings(options) {
+  const env = globalThis.process?.env ?? {};
+  const setTimer = options.setTimer ?? globalThis.setTimeout;
+  return {
+    send: options.send,
+    setTimer,
+    clearTimer: options.clearTimer ?? globalThis.clearTimeout,
+    enabled: options.enabled ?? (() => env.AIDEVOPS_CACHE_KEEPALIVE !== "0" && typeof setTimer === "function"),
+    log: options.log ?? ((line) => globalThis.console?.error(line)),
+    intervalMs: options.intervalMs ?? positiveInt(env.AIDEVOPS_CACHE_KEEPALIVE_INTERVAL_MS, DEFAULT_INTERVAL_MS),
+    maxRefreshes: options.maxRefreshes ?? positiveInt(env.AIDEVOPS_CACHE_KEEPALIVE_MAX_REFRESHES, DEFAULT_MAX_REFRESHES),
+    maxSessions: options.maxSessions ?? DEFAULT_MAX_SESSIONS,
+  };
+}
+
+async function readUsage(response) {
+  try {
+    return (await response.json())?.usage ?? null;
+  } catch {
+    return null; // Usage is diagnostics only.
+  }
+}
+
+/**
+ * Send one refresh. Returns true when keep-warm may continue for this gap.
+ */
+async function sendRefresh(settings, sessionID, entry) {
+  try {
+    const response = await settings.send(entry.request, entry.body);
+    const usage = await readUsage(response);
+    settings.log(`[aidevops] cache-keepalive: session=${sessionID} refresh=${entry.refreshes}/${settings.maxRefreshes} status=${response.status} cache_read=${usage?.cache_read_input_tokens ?? "?"} cache_write=${usage?.cache_creation_input_tokens ?? "?"} running_tools=${entry.tools.size}`);
+    return response.ok;
+  } catch (err) {
+    settings.log(`[aidevops] cache-keepalive: session=${sessionID} refresh failed: ${err?.message ?? err}`);
+    return false;
+  }
 }
 
 /**
@@ -71,60 +126,42 @@ export function buildKeepaliveBody(rawBody) {
  * }} options
  */
 export function createCacheKeepalive(options) {
-  const send = options.send;
-  // globalThis lookups keep module creation safe in isolated VM contexts
-  // (oauth-pool-rotation-probe.mjs) that expose no timers or process.
-  const env = globalThis.process?.env ?? {};
-  const setTimer = options.setTimer ?? globalThis.setTimeout;
-  const clearTimer = options.clearTimer ?? globalThis.clearTimeout;
-  const enabled = options.enabled ?? (() => env.AIDEVOPS_CACHE_KEEPALIVE !== "0" && typeof setTimer === "function");
-  const log = options.log ?? ((line) => globalThis.console?.error(line));
-  const intervalMs = options.intervalMs ?? positiveInt(env.AIDEVOPS_CACHE_KEEPALIVE_INTERVAL_MS, DEFAULT_INTERVAL_MS);
-  const maxRefreshes = options.maxRefreshes ?? positiveInt(env.AIDEVOPS_CACHE_KEEPALIVE_MAX_REFRESHES, DEFAULT_MAX_REFRESHES);
-  const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
+  const settings = resolveSettings(options);
   /** @type {Map<string, { request: object, body: string, tools: Set<string>, refreshes: number, timer: any }>} */
   const sessions = new Map();
 
   function stop(sessionID) {
     const entry = sessions.get(sessionID);
-    if (entry?.timer) clearTimer?.(entry.timer);
+    if (entry?.timer) settings.clearTimer?.(entry.timer);
     sessions.delete(sessionID);
   }
 
   function arm(sessionID, entry) {
-    entry.timer = setTimer(() => {
+    entry.timer = settings.setTimer(() => {
       entry.timer = null;
       void refresh(sessionID, entry);
-    }, intervalMs);
+    }, settings.intervalMs);
     entry.timer?.unref?.();
+  }
+
+  function shouldRefresh(entry) {
+    return settings.enabled() && entry.tools.size > 0 && entry.refreshes < settings.maxRefreshes;
   }
 
   async function refresh(sessionID, entry) {
     if (sessions.get(sessionID) !== entry) return;
-    if (!enabled() || entry.tools.size === 0 || entry.refreshes >= maxRefreshes) {
+    if (!shouldRefresh(entry)) {
       stop(sessionID);
       return;
     }
     entry.refreshes += 1;
-    try {
-      const response = await send(entry.request, entry.body);
-      let usage = null;
-      try {
-        usage = (await response.json())?.usage ?? null;
-      } catch {
-        // Usage is diagnostics only.
-      }
-      log(`[aidevops] cache-keepalive: session=${sessionID} refresh=${entry.refreshes}/${maxRefreshes} status=${response.status} cache_read=${usage?.cache_read_input_tokens ?? "?"} cache_write=${usage?.cache_creation_input_tokens ?? "?"} running_tools=${entry.tools.size}`);
-      if (!response.ok) {
-        stop(sessionID);
-        return;
-      }
-    } catch (err) {
-      log(`[aidevops] cache-keepalive: session=${sessionID} refresh failed: ${err?.message ?? err}`);
-      stop(sessionID);
-      return;
-    }
-    if (sessions.get(sessionID) === entry) arm(sessionID, entry);
+    const ok = await sendRefresh(settings, sessionID, entry);
+    if (!ok) stop(sessionID);
+    else if (sessions.get(sessionID) === entry) arm(sessionID, entry);
+  }
+
+  function entryFor(sessionID) {
+    return sessionID ? sessions.get(sessionID) : null;
   }
 
   return {
@@ -140,24 +177,22 @@ export function createCacheKeepalive(options) {
       try {
         if (!sessionID) return;
         stop(sessionID);
-        if (!enabled() || status < 200 || status >= 300) return;
-        const body = buildKeepaliveBody(rawBody);
+        const ok = status >= 200 && status < 300 && settings.enabled();
+        const body = ok ? buildKeepaliveBody(rawBody) : null;
         if (!body) return;
         const entry = { request, body, tools: new Set(), refreshes: 0, timer: null };
         sessions.set(sessionID, entry);
-        while (sessions.size > maxSessions) stop(sessions.keys().next().value);
+        while (sessions.size > settings.maxSessions) stop(sessions.keys().next().value);
         arm(sessionID, entry);
       } catch {
         // fail open
       }
     },
     toolStarted(sessionID, callID) {
-      const entry = sessionID ? sessions.get(sessionID) : null;
-      if (entry) entry.tools.add(String(callID ?? "tool"));
+      entryFor(sessionID)?.tools.add(String(callID ?? "tool"));
     },
     toolFinished(sessionID, callID) {
-      const entry = sessionID ? sessions.get(sessionID) : null;
-      if (entry) entry.tools.delete(String(callID ?? "tool"));
+      entryFor(sessionID)?.tools.delete(String(callID ?? "tool"));
     },
     /** Test/diagnostic view. */
     state(sessionID) {
