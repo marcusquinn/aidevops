@@ -83,7 +83,7 @@ body_with_lines='- `EDIT: scripts/helper.sh:1477` — fix bug
 
 result=$(_footprint_extract_paths "$body_with_lines")
 # Should NOT contain :1477 or :221-253
-if printf '%s' "$result" | grep -q ":[0-9]"; then
+if grep -q ":[0-9]" <<<"$result"; then
 	print_result "extract_paths: strips line qualifiers" 1 "(line qualifiers still present: ${result})"
 else
 	print_result "extract_paths: strips line qualifiers" 0
@@ -219,7 +219,7 @@ candidate_body='## Files to Modify
 signal=""
 overlap_rc=1
 signal=$(_footprint_check_overlap "200" "test/repo" "$candidate_body") && overlap_rc=0 || overlap_rc=$?
-if [[ "$overlap_rc" -eq 0 ]] && printf '%s' "$signal" | grep -q "FOOTPRINT_OVERLAP"; then
+if [[ "$overlap_rc" -eq 0 ]] && grep -q "FOOTPRINT_OVERLAP" <<<"$signal"; then
 	print_result "check_overlap: detects overlapping files with in-flight issue" 0
 else
 	print_result "check_overlap: detects overlapping files with in-flight issue" 1 "(rc=${overlap_rc}, signal=${signal})"
@@ -262,7 +262,7 @@ normalise_body='## Files to Modify
 signal=""
 overlap_rc=1
 signal=$(_footprint_check_overlap "202" "test/repo" "$normalise_body") && overlap_rc=0 || overlap_rc=$?
-if [[ "$overlap_rc" -eq 0 ]] && printf '%s' "$signal" | grep -q "FOOTPRINT_OVERLAP"; then
+if [[ "$overlap_rc" -eq 0 ]] && grep -q "FOOTPRINT_OVERLAP" <<<"$signal"; then
 	print_result "check_overlap: handles .agents/ prefix normalisation" 0
 else
 	print_result "check_overlap: handles .agents/ prefix normalisation" 1 "(rc=${overlap_rc}, signal=${signal})"
@@ -342,8 +342,8 @@ _FOOTPRINT_CACHE_EPOCH=0
 
 result=$(_footprint_get_inflight "test/repo" "999")
 PATH="$OLD_PATH"
-if printf '%s' "$result" | grep -q "pulse-wrapper.sh|401" &&
-	! printf '%s' "$result" | grep -q "docs/gui/control-plane.md|400"; then
+if grep -q "pulse-wrapper.sh|401" <<<"$result" &&
+	! grep -q "docs/gui/control-plane.md|400" <<<"$result"; then
 	print_result "get_inflight: excludes parent-task coordination footprints" 0
 else
 	print_result "get_inflight: excludes parent-task coordination footprints" 1 "(got: ${result})"
@@ -397,8 +397,8 @@ _FOOTPRINT_CACHE_EPOCH=0
 
 result=$(_footprint_get_inflight "test/repo" "999")
 PATH="$OLD_PATH"
-if ! printf '%s' "$result" | grep -q "docs/runbook.md|402" &&
-	printf '%s' "$result" | grep -q "docs/other-runbook.md|403"; then
+if ! grep -q "docs/runbook.md|402" <<<"$result" &&
+	grep -q "docs/other-runbook.md|403" <<<"$result"; then
 	print_result "get_inflight: skips claimed no-auto-dispatch coordinator without evidence, keeps one with a linked PR" 0
 else
 	print_result "get_inflight: skips claimed no-auto-dispatch coordinator without evidence, keeps one with a linked PR" 1 "(got: ${result})"
