@@ -127,17 +127,31 @@ def main():
         cwd = root / 'project'
         cwd.mkdir()
         for name in ('agent', 'command', 'tool', 'skills', 'themes', 'node_modules',
-                     'package.json', 'bun.lock', 'AGENTS.md', 'tui.json'):
+                     'bun.lock', 'AGENTS.md', 'tui.json'):
             source = config_home / 'opencode' / name
             if source.exists():
                 (cfg / name).symlink_to(source.resolve(), target_is_directory=source.is_dir())
+        # Private manifest copy: dependency installs must never write the shared file.
+        manifest = config_home / 'opencode' / 'package.json'
+        if manifest.is_file():
+            shutil.copyfile(str(manifest), str(cfg / 'package.json'))
         (root / 'cfg/aidevops').symlink_to(config_home / 'aidevops', target_is_directory=True)
         # jq preserves all existing provider and permission settings, replacing plugins only.
         code, output, _ = run(['jq', '--arg', 'p', plugin_url, '.plugin = [$p]', str(config)],
                               cwd, os.environ.copy(), 30)
         if code:
             raise RuntimeError('global configuration is not valid JSON')
-        (cfg / 'opencode.json').write_bytes(output)
+        base_dir = config.resolve().parent
+
+        def absolutize(match):
+            ref = match.group(1)
+            if ref.startswith(('/', '~')):
+                return match.group(0)
+            return '{file:' + str(base_dir / ref) + '}'
+
+        # Relative {file:...} references resolve beside the config; keep them pointing at the original.
+        text = re.sub(r'\{file:([^}]+)\}', absolutize, output.decode('utf-8'))
+        (cfg / 'opencode.json').write_bytes(text.encode('utf-8'))
         auth = data_home / 'opencode/auth.json'
         if auth.is_file():
             shutil.copyfile(str(auth), str(data / 'auth.json'))
