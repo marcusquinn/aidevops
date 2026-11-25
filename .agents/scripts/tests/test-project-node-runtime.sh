@@ -89,21 +89,37 @@ for profile in "$root/nix-home/.nix-profile" "$root/nix-state/nix/profiles/profi
 		cp "$root/sys/bin/npm" "$profile/bin/$tool"
 	done
 	actual=$(PATH="$root/active:$PATH" FNM_DIR="$root/missing" AIDEVOPS_NODE_NIX_PROFILES="$root/missing $profile" AIDEVOPS_TEMP_DIR="$root/tmp" _project_node_bin "$root/project" packages/app)
-	[[ -n "$actual" && "$actual" == "$root/tmp/"* && "$actual" != "$profile/bin" ]] || { printf 'FAIL Nix shared bin returned: %s\n' "$actual"; exit 1; }
-	[[ "$("$actual/node" --version)" == v24.18.0 ]] || { printf 'FAIL Nix Node version\n'; exit 1; }
+	[[ -n "$actual" && "$actual" == "$root/tmp/"* && "$actual" != "$profile/bin" ]] || {
+		printf 'FAIL Nix shared bin returned: %s\n' "$actual"
+		exit 1
+	}
+	[[ "$("$actual/node" --version)" == v24.18.0 ]] || {
+		printf 'FAIL Nix Node version\n'
+		exit 1
+	}
 	for tool in node npm npx corepack; do
-		[[ -L "$actual/$tool" ]] || { printf 'FAIL missing Nix toolchain link: %s\n' "$tool"; exit 1; }
+		[[ -L "$actual/$tool" ]] || {
+			printf 'FAIL missing Nix toolchain link: %s\n' "$tool"
+			exit 1
+		}
 	done
 	for tool in git gh jq python3; do
-		[[ ! -e "$actual/$tool" && "$(PATH="$actual:$PATH" command -v "$tool")" == "$(command -v "$tool")" ]] || { printf 'FAIL Nix reordered tool: %s\n' "$tool"; exit 1; }
+		[[ ! -e "$actual/$tool" && "$(PATH="$actual:$PATH" command -v "$tool")" == "$(command -v "$tool")" ]] || {
+			printf 'FAIL Nix reordered tool: %s\n' "$tool"
+			exit 1
+		}
 	done
 done
 printf 'PASS Nix profile layouts resolve without reordering unrelated tools\n'
 if PATH="$root/active:$PATH" FNM_DIR="$root/missing" AIDEVOPS_NODE_NIX_PROFILES="$root/sys26" \
 	_project_node_bin "$root/project" packages/app >"$root/output" 2>"$root/error"; then
-	printf 'FAIL Nix Node with another major accepted\n'; exit 1
+	printf 'FAIL Nix Node with another major accepted\n'
+	exit 1
 fi
-rg -q 'Install a matching Node.*Nix' "$root/error" || { printf 'FAIL missing Nix installation diagnostic\n'; exit 1; }
+rg -q 'Install a matching Node.*Nix' "$root/error" || {
+	printf 'FAIL missing Nix installation diagnostic\n'
+	exit 1
+}
 printf 'PASS incompatible Nix Node fails closed with actionable diagnostic\n'
 
 # Exercise the worker preparation path without a live dispatch claim.
