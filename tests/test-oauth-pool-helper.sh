@@ -305,6 +305,104 @@ PY
 run_test_set_priority
 run_test_priority_rotation_sort
 
+# Exercise the real CLI in a new session so /dev/tty cannot consume test input.
+# Empty authorization input stops callback enrollment before any token exchange.
+run_test_openai_add_routing() {
+	local test_home
+	test_home="$(mktemp -d)"
+	trap 'rm -rf "$test_home"' RETURN
+
+	printf '\n=== OpenAI add-mode routing ===\n'
+	if python3 - "$SCRIPT_PATH" "$test_home" <<'PY'; then
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+script, root = sys.argv[1:]
+cases = [
+    ("v1-device", "1.19.6", "device", False, True, False),
+    ("v2-callback", "2.3.2", "device", False, False, False),
+    ("explicit-callback", "2.3.2", "callback", False, False, False),
+    ("v1-fallback", "1.19.6", "device", True, False, True),
+    ("invalid-mode", "2.3.2", "invalid", False, False, False),
+    ("unknown-version", "unknown", "device", True, False, True),
+    ("failed-version", "failed", "device", True, False, True),
+]
+for name, version, mode, device_fails, success, fallback in cases:
+    for prefilled in (False, True):
+        home = Path(root) / (name + ("-prefilled" if prefilled else "-prompt"))
+        bin_dir = home / "bin"
+        bin_dir.mkdir(parents=True)
+        auth_dir = home / ".local/share/opencode"
+        auth_dir.mkdir(parents=True)
+        (auth_dir / "auth.json").write_text(json.dumps({"openai": {
+            "type": "oauth", "access": "test-access", "refresh": "test-refresh",
+            "expires": 4102444800000, "accountId": "test-account"
+        }}))
+        stub = bin_dir / "opencode"
+        stub.write_text('''#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$HOME/opencode-calls"
+if [[ "${1:-}" == "--version" ]]; then
+    [[ "$TEST_VERSION" != failed ]] || exit 1
+    printf '%s\\n' "$TEST_VERSION"
+    exit 0
+fi
+[[ "$*" == 'providers login -p OpenAI -m ChatGPT Pro/Plus (headless)' ]] || exit 99
+[[ "$TEST_DEVICE_FAILS" != 1 ]] || exit 1
+exit 0
+''')
+        stub.chmod(0o700)
+        # macOS permits GUI launching even when display variables are empty.
+        launcher = bin_dir / "open"
+        launcher.write_text("#!/usr/bin/env bash\nexit 0\n")
+        launcher.chmod(0o700)
+        env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(home / ".local/share"),
+                   PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
+                   AIDEVOPS_OAUTH_POOL_FILE=str(home / "pool.json"),
+                   AIDEVOPS_OPENAI_ADD_MODE=mode, TEST_VERSION=version,
+                   TEST_DEVICE_FAILS=str(int(device_fails)), DISPLAY="",
+                   WAYLAND_DISPLAY="", WSL_DISTRO_NAME="")
+        args = ["bash", script, "add", "openai"]
+        if prefilled:
+            args.append("routing@example.com")
+        stdin = "" if mode == "invalid" else ('\n' if prefilled else "routing@example.com\n\n")
+        result = subprocess.run(args, env=env, input=stdin, text=True,
+                                capture_output=True, start_new_session=True, timeout=20)
+        output = result.stdout + result.stderr
+        calls_file = home / "opencode-calls"
+        calls = calls_file.read_text().splitlines() if calls_file.exists() else []
+        label = f"{name} (prefilled={prefilled})"
+        assert result.returncode == (0 if success else 1), (label, output)
+        assert output.count("Account email: ") == int(not prefilled and mode != "invalid"), (label, output)
+        assert output.count("Using email: routing@example.com") == int(prefilled and mode != "invalid"), (label, output)
+        assert output.count("falling back to callback URL flow") == int(fallback), (label, output)
+        auto = name == "v2-callback"
+        assert output.count("OpenCode 2 (version 2 or later) detected; using callback URL flow") == int(auto), (label, output)
+        login = "providers login -p OpenAI -m ChatGPT Pro/Plus (headless)"
+        assert calls.count(login) == int(success or fallback), (label, calls)
+        if mode != "device":
+            assert not calls, (label, calls)
+        if mode == "invalid":
+            assert "Invalid AIDEVOPS_OPENAI_ADD_MODE: invalid (valid: device, callback)" in output
+        elif not success:
+            assert "No authorization code provided" in output, (label, output)
+            assert not (home / "pool.json").exists(), label
+        else:
+            pool = json.loads((home / "pool.json").read_text())
+            assert pool["openai"][0]["email"] == "routing@example.com", label
+        print(f"  verified {label}")
+PY
+		pass "OpenAI add routing, single email resolution and accurate messages"
+	else
+		fail "OpenAI add routing regression"
+	fi
+	return 0
+}
+
+run_test_openai_add_routing
+
 printf "\nSummary: %s passed, %s failed\n" "$PASS_COUNT" "$FAIL_COUNT"
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
 	exit 1

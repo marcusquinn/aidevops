@@ -227,8 +227,12 @@ AIDEVOPS_OAUTH_POOL_FILE="$HOME/.aidevops/runtimes/opencode-v2/auth/oauth-pool.j
   "$HOME/.aidevops/agents/scripts/oauth-pool-helper.sh" status all
 ```
 
-OpenAI's default pool-helper device flow invokes V1 `opencode providers login`
-and reads V1's auth file; the callback mode above avoids touching V1. Restart
+When `opencode` itself is version 2 or later, OpenAI pool enrollment automatically
+selects callback mode. With V1 `opencode`, the default device flow invokes
+`opencode providers login` and reads V1's auth file. The explicit
+`AIDEVOPS_OPENAI_ADD_MODE=callback` above is therefore still required when enrolling
+into the V2 companion pool from a V1 host: it avoids importing V1 credentials.
+Restart
 the managed `~/.local/bin/opencode2` launcher after adding accounts. V2's
 `auth login` and `auth list` refer to its separate native integration credentials,
 not aidevops pool enrollment: the V2 adapter currently registers request hooks
