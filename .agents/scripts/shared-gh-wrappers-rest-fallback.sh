@@ -389,14 +389,14 @@ _rest_should_fallback_write() {
 # Rate-limit errors are deliberately left to the existing quota classifier.
 _rest_create_failure_is_fatal() {
 	local diagnostics="$1"
-	if printf '%s\n' "$diagnostics" | grep -Eiq 'authentication|bad credentials|validation|could not resolve|not authorized|resource not accessible'; then
+	if grep -Eiq 'authentication|bad credentials|validation|could not resolve|not authorized|resource not accessible' <<<"$diagnostics"; then
 		return 0
 	fi
 	# Preserve the established quota-exhaustion path, including HTTP 403/429.
-	if printf '%s\n' "$diagnostics" | grep -Eiq 'rate limit|rate_limit'; then
+	if grep -Eiq 'rate limit|rate_limit' <<<"$diagnostics"; then
 		return 1
 	fi
-	if printf '%s\n' "$diagnostics" | grep -Eiq 'HTTP[^[:space:]]*[[:space:]]+4[0-9]{2}|forbidden'; then
+	if grep -Eiq 'HTTP[^[:space:]]*[[:space:]]+4[0-9]{2}|forbidden' <<<"$diagnostics"; then
 		return 0
 	fi
 	return 1
@@ -407,7 +407,7 @@ _rest_create_failure_is_fatal() {
 _rest_create_failure_is_transient() {
 	local diagnostics="$1"
 	_rest_create_failure_is_fatal "$diagnostics" && return 1
-	if printf '%s\n' "$diagnostics" | grep -Eiq 'GraphQL: Something went wrong while executing your query|HTTP[^[:space:]]*[[:space:]]+50[234]|GraphQL:.*(timeout|timed out)'; then
+	if grep -Eiq 'GraphQL: Something went wrong while executing your query|HTTP[^[:space:]]*[[:space:]]+50[234]|GraphQL:.*(timeout|timed out)' <<<"$diagnostics"; then
 		return 0
 	fi
 	return 1
