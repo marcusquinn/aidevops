@@ -39,13 +39,26 @@ function linuxSnapshot() {
 // every lstart row, so a ~1,000-process read took ~0.6 s wall (~1 s under load,
 // at this 1 s timeout) instead of ~40 ms. Identities only compare within one
 // tracker, so the zone only has to be consistent.
+// GH#40309: a listing that overruns its bound on a loaded host is a delayed
+// tick, not missing attribution (timer ticks carry no latency guarantee
+// either). Retry a timed-out read once with a longer bound; only an inventory
+// that stays unavailable marks containment incomplete.
+const PS_SNAPSHOT_TIMEOUTS_MS = [1000, 5000];
+
+function psSnapshot() {
+  for (const timeout of PS_SNAPSHOT_TIMEOUTS_MS) {
+    const result = spawnSync("ps", ["-ax", "-o", "pid=,ppid=,pgid=,stat=,lstart="], {
+      detached: true, encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC0" }, timeout,
+    });
+    if (result.status === 0) return { entries: parseProcessSnapshot(result.stdout), psPid: result.pid };
+    if (result.error?.code !== "ETIMEDOUT") return null;
+  }
+  return null;
+}
+
 export function processSnapshot() {
   try {
-    if (process.platform === "linux") return linuxSnapshot();
-    const result = spawnSync("ps", ["-ax", "-o", "pid=,ppid=,pgid=,stat=,lstart="], {
-      detached: true, encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC0" }, timeout: 1000,
-    });
-    return result.status === 0 ? { entries: parseProcessSnapshot(result.stdout), psPid: result.pid } : null;
+    return process.platform === "linux" ? linuxSnapshot() : psSnapshot();
   } catch { return null; }
 }
 
@@ -58,9 +71,13 @@ function hasLinuxMarker(pid, operationID) {
 
 function darwinOperationPids(operationID) {
   const pids = new Set();
-  const result = spawnSync("ps", ["axeww", "-o", "uid=,pid=,command="], {
-    encoding: "utf8", timeout: 1000, maxBuffer: 8 * 1024 * 1024,
-  });
+  let result;
+  for (const timeout of PS_SNAPSHOT_TIMEOUTS_MS) {
+    result = spawnSync("ps", ["axeww", "-o", "uid=,pid=,command="], {
+      encoding: "utf8", timeout, maxBuffer: 8 * 1024 * 1024,
+    });
+    if (result.error?.code !== "ETIMEDOUT") break;
+  }
   if (result.status !== 0) return pids;
   for (const line of result.stdout.split("\n")) {
     const [uid, pid, ...tokens] = line.trim().split(/\s+/);

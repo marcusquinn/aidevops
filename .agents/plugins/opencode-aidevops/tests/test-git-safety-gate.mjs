@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -290,11 +291,13 @@ test("uses the plugin repository directory when mutation tools omit workdir", as
 
     // SIGKILL: a supervisor wedged in exit never runs its SIGTERM handler, so
     // the default kill signal would leave this synchronous call blocked.
-    const runOperation = (operationID) => execFileSync(process.execPath, [
+    // GH#40309: operation IDs are same-user ownership markers; a fixed ID let a
+    // concurrent run of this test adopt and SIGKILL this command as its own.
+    const runOperation = (label) => execFileSync(process.execPath, [
       join(here, "..", "bounded-operation-supervisor.mjs"),
     ], {
       cwd: linked, detached: true, encoding: "utf8", timeout: 10000, killSignal: "SIGKILL",
-      input: JSON.stringify({ operationID, command: [process.execPath, "-e", "process.stdout.write('operation-executed')"] }),
+      input: JSON.stringify({ operationID: `${label}-${randomUUID()}`, command: [process.execPath, "-e", "process.stdout.write('operation-executed')"] }),
     }).trim();
     assert.equal(runOperation("fixture-operation"), "operation-executed");
 
