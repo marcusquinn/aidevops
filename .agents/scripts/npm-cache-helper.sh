@@ -254,6 +254,9 @@ _npm_cache_status() {
 	critical)
 		print_error "npm cache exceeds the $(_npm_cache_format_bytes "$warn_bytes") advisory threshold and the disk has only $(printf '%s' "$report" | jq -r '.disk_free_percent')% free"
 		printf 'Reclaim now: npm-cache-helper.sh verify, then npm-cache-helper.sh clean --apply --confirm clean-npm-cache\n'
+		if command -v tmutil >/dev/null 2>&1; then
+			printf 'macOS: if free space does not recover, local Time Machine snapshots may hold it (tmutil listlocalsnapshots /; compare with tmutil latestbackup)\n'
+		fi
 		;;
 	ok) print_success "npm cache is below the advisory threshold" ;;
 	*) print_warning "npm cache size is unavailable${error:+ ($error)}" ;;
