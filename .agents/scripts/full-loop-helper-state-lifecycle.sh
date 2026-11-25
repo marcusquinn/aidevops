@@ -108,6 +108,33 @@ _issue_thread_is_trusted_maintainer_only() {
 	return 1
 }
 
+# GH#40288: durable gate-blocked marker for interactive worktrees. Best-effort;
+# headless workers discard their worktree, so they never write it.
+_linked_issue_gate_marker() {
+	local marker_helper="${SCRIPT_DIR}/gate-blocked-marker-helper.sh"
+	if is_headless || [[ ! -x "$marker_helper" ]]; then
+		return 0
+	fi
+	"$marker_helper" "$@" >/dev/null 2>&1 || true
+	return 0
+}
+
+# Resolve write authority with one retry: an api-failure lookup is "unknown",
+# not "untrusted" (GH#40288).
+_linked_issue_resolve_authority() {
+	local repo="$1"
+	local login="$2"
+	local association="$3"
+	local rc=0
+	_gh_actor_has_repo_write_authority "$repo" "$login" "$association" || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		sleep "${AIDEVOPS_GATE_LOOKUP_RETRY_DELAY:-2}"
+		rc=0
+		_gh_actor_has_repo_write_authority "$repo" "$login" "$association" || rc=$?
+	fi
+	return "$rc"
+}
+
 _linked_issue_author_allows_start() {
 	local issue_num="$1"
 	local repo="$2"
@@ -127,7 +154,7 @@ _linked_issue_author_allows_start() {
 	local authority_rc=1
 	if [[ "$external_source" != "$_FULL_LOOP_BOOL_TRUE" ]] && declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1; then
 		authority_rc=0
-		_gh_actor_has_repo_write_authority "$repo" "$author_login" "$author_association" || authority_rc=$?
+		_linked_issue_resolve_authority "$repo" "$author_login" "$author_association" || authority_rc=$?
 	elif [[ "$external_source" != "$_FULL_LOOP_BOOL_TRUE" ]]; then
 		authority_rc=2
 	fi
@@ -143,7 +170,9 @@ _linked_issue_author_allows_start() {
 	if [[ "$verification" == "VERIFIED" ]]; then
 		return 0
 	fi
-	if [[ "$verification" == "NO_APPROVAL" ]]; then
+	# authority_rc 2 = lookup failure (unknown): fail closed but never apply the
+	# containment label, so a transient failure cannot become a permanent hold.
+	if [[ "$verification" == "NO_APPROVAL" && "$authority_rc" -ne 2 ]]; then
 		#aidevops:trust-boundary -- containment is best-effort; this live gate is authoritative.
 		# shellcheck source=protected-label-guard.sh
 		source "${SCRIPT_DIR}/protected-label-guard.sh"
@@ -292,13 +321,14 @@ _check_linked_issue_gate() {
 		return 0
 	fi
 
-	local blocked=false reasons=""
+	local blocked=false reasons="" trust_blocked=false
 
 	# Check 1: labels are advisory; author authority or signed approval is also
 	# required when the creation-time review label is absent.
 	if _linked_issue_trust_blocks_start "$issue_num" "$repo" "$raw_issue" \
 		"$labels" "$issue_author_association"; then
 		blocked=true
+		trust_blocked=true
 		reasons="${reasons}${_FULL_LOOP_LINKED_TRUST_BLOCKER_REASON}"
 	fi
 
@@ -336,9 +366,13 @@ _check_linked_issue_gate() {
 		print_error "Maintainer gate pre-check BLOCKED — cannot start work:"
 		printf '%b' "$reasons" >&2
 		printf "To unblock: address the blocker labels above; use signed approval only for \`needs-maintainer-review\`, and remove \`hold-for-review\` only when the maintainer hold is resolved.\n" >&2
+		if [[ "$trust_blocked" == "$_FULL_LOOP_BOOL_TRUE" ]]; then
+			_linked_issue_gate_marker set "$issue_num" "$repo" "Issue #${issue_num} failed the trusted-author or approval gate"
+		fi
 		return 1
 	fi
 
+	_linked_issue_gate_marker clear
 	return 0
 }
 

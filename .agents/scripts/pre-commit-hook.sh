@@ -1540,6 +1540,16 @@ main_pre_commit() {
 	echo -e "${BLUE}Pre-commit Quality Validation${NC}" >&2
 	echo -e "${BLUE}================================${NC}" >&2
 
+	# GH#40288: refuse commits in a worktree left by a blocked maintainer gate.
+	if [[ -x "${SCRIPT_DIR}/gate-blocked-marker-helper.sh" ]]; then
+		local gate_marker_output=""
+		gate_marker_output=$("${SCRIPT_DIR}/gate-blocked-marker-helper.sh" check . 2>&1) || {
+			printf '%s\n' "$gate_marker_output" >&2
+			print_error "Commit rejected: maintainer gate blocked this worktree"
+			exit 1
+		}
+	fi
+
 	# Always run TODO.md validation (even if no shell files changed)
 	validate_duplicate_task_ids || {
 		print_error "Commit rejected: duplicate task IDs"
