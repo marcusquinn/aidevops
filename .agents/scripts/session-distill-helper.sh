@@ -102,14 +102,10 @@ privacy_redact() {
 # Redact a single path value in full, including spaces in the path.
 privacy_redact_path() {
 	local value="$1"
-	local tilde='~'
-	case "$value" in
-	/Users/* | /home/* | /private/var/* | /var/folders/* | /var/tmp/* | /tmp/* | "$tilde"/*)
-		printf '%s' "[local-path]"
-		return 0
-		;;
-	esac
-	privacy_redact "$value"
+	local roots='Users|home|private/var|var/folders|var/tmp|tmp'
+	local redacted=""
+	redacted=$(printf '%s' "$value" | sed -E "s#^(/(${roots})|~)/.*#[local-path]#")
+	privacy_redact "$redacted"
 	return 0
 }
 
