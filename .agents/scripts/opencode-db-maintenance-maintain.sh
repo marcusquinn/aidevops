@@ -76,16 +76,20 @@ _maintain_should_vacuum() {
 # _maintain_vacuum_basis_bytes <before_bytes> <freelist_count> <page_count>
 # Echoes the byte count VACUUM rewrites: live pages, (page_count - freelist) *
 # page_size. Free pages are dropped, so they need no temporary copy or WAL
-# space (GH#40439). Falls back to the file size when any pragma is unusable.
+# space (GH#40439). Pending checkpoint growth, page_count * page_size beyond
+# the main file, is added: the pre-VACUUM checkpoint materializes it first.
+# Falls back to the file size when any pragma is unusable.
 _maintain_vacuum_basis_bytes() {
 	local before_bytes="$1"
 	local freelist_count="$2"
 	local page_count="$3"
-	local page_size=""
+	local page_size="" growth=0
 	page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
-	if [[ "$freelist_count" =~ ^[0-9]+$ && "$page_count" =~ ^[0-9]+$ && "$page_size" =~ ^[1-9][0-9]*$ ]] &&
+	if [[ "$freelist_count" =~ ^[0-9]+$ && "$page_count" =~ ^[0-9]+$ && "$page_size" =~ ^[1-9][0-9]*$ && "$before_bytes" =~ ^[0-9]+$ ]] &&
 		[[ "$freelist_count" -le "$page_count" ]]; then
-		printf '%s' "$(((page_count - freelist_count) * page_size))"
+		growth=$((page_count * page_size - before_bytes))
+		[[ "$growth" -gt 0 ]] || growth=0
+		printf '%s' "$(((page_count - freelist_count) * page_size + growth))"
 		return 0
 	fi
 	printf '%s' "$before_bytes"
