@@ -260,7 +260,10 @@ fi
 printf '{"alpha":{"tokens":"global-a"}}\n' >"${home_dir}/.local/share/opencode/mcp-auth.json"
 mcp_output=$(_run_mcp_seed)
 mcp_seeded=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
-mcp_mode=$(stat -f '%Lp' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || stat -c '%a' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+mcp_mode=$(stat -c '%a' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+if [[ -z "${mcp_mode}" ]]; then
+    mcp_mode=$(stat -f '%Lp' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+fi
 if [[ "${mcp_seeded}" == '{"alpha":{"tokens":"global-a"}}' && "${mcp_mode}" == "600" && "${mcp_output}" != *"global-a"* ]]; then
     _pass "launcher seeds a missing session mcp-auth.json from the global store (GH#40451)"
 else
