@@ -90,7 +90,7 @@ def registry(path):
         slug = entry.get("slug", "")
         if entry.get("local_only") is True or entry.get("role", "maintainer") != "maintainer":
             continue
-        if not slug or "/" not in slug:
+        if "/" not in slug:
             continue
         if not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+", slug):
             raise ValueError("Invalid repository slug in registry")
@@ -116,10 +116,10 @@ def ratio(numerator, denominator):
 
 def percentiles(values):
     ordered = sorted(values)
+    if not ordered:
+        return {"n": 0, "p50_hours": None, "p90_hours": None}
     # Linear interpolation, including the single-sample case.
     def percentile(fraction):
-        if not ordered:
-            return None
         index = (len(ordered) - 1) * fraction
         lower = math.floor(index)
         upper = math.ceil(index)
