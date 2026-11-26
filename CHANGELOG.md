@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.288] - 2026-11-26
+
+### Fixed
+
+- point CodeFactor failure guidance at check-run annotations (#40496)
+
 ## [3.39.287] - 2026-11-26
 
 ### Added
