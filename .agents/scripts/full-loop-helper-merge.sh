@@ -1043,6 +1043,7 @@ _merge_execute() {
 	local merge_body_file="${6:-}"
 	_merge_check_admin_capability "$pr_number" "$repo" "$has_admin" || return 1
 	_merge_verify_rbg_override_approval "$pr_number" "$repo" || return 1
+	_merge_verify_runtime_waiver_approval "$pr_number" "$repo" || return 1
 	squash_subject=$(_merge_resolve_subject_for_method "$pr_number" "$repo" "$merge_method") || return 1
 	local merge_flags=()
 	[[ "$has_admin" -eq 1 ]] && merge_flags+=("--admin")
@@ -1405,6 +1406,7 @@ _merge_parse_command_args() {
 	FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE=0
 	FULL_LOOP_MERGE_PARSED_BODY_FILE=""
 	FULL_LOOP_MERGE_PARSED_RBG_OVERRIDE_REASON=""
+	FULL_LOOP_MERGE_PARSED_RUNTIME_WAIVER_REASON=""
 	local arg=""
 	while [[ $# -gt 0 ]]; do
 		arg="$1"
@@ -1422,6 +1424,17 @@ _merge_parse_command_args() {
 			;;
 		--override-review-bot-gate)
 			print_error "Use --override-review-bot-gate=\"<reason, 20+ characters>\""
+			return 1
+			;;
+		--waive-runtime-verification=*)
+			if [[ -n "$FULL_LOOP_MERGE_PARSED_RUNTIME_WAIVER_REASON" || -z "${arg#--waive-runtime-verification=}" ]]; then
+				print_error "--waive-runtime-verification=REASON requires exactly one non-empty reason"
+				return 1
+			fi
+			FULL_LOOP_MERGE_PARSED_RUNTIME_WAIVER_REASON="${arg#--waive-runtime-verification=}"
+			;;
+		--waive-runtime-verification)
+			print_error "Use --waive-runtime-verification=\"<reason, 20+ characters>\""
 			return 1
 			;;
 		--admin)
@@ -1466,6 +1479,7 @@ _merge_parse_command_args() {
 		return 1
 	fi
 	_merge_prepare_rbg_override "$FULL_LOOP_MERGE_PARSED_RBG_OVERRIDE_REASON" || return 1
+	_merge_prepare_runtime_waiver "$FULL_LOOP_MERGE_PARSED_RUNTIME_WAIVER_REASON" || return 1
 	return 0
 }
 
@@ -1723,10 +1737,89 @@ ${sig_footer}"
 	return 0
 }
 
+#aidevops:trust-boundary GH#40444 -- a waiver accepts missing runtime evidence,
+# never malformed metadata, other holds, CI failures, or review/authority gates.
+_merge_prepare_runtime_waiver() {
+	local reason="$1"
+	_FULL_LOOP_RUNTIME_WAIVER_REASON=""
+	[[ -n "$reason" ]] || return 0
+	if _merge_is_headless_session; then
+		print_error "--waive-runtime-verification is interactive-only"
+		return 1
+	fi
+	if [[ "${#reason}" -lt 20 || -z "${reason//[[:space:]]/}" ]]; then
+		print_error "--waive-runtime-verification reason must be at least 20 characters and not blank"
+		return 1
+	fi
+	if [[ "$FULL_LOOP_MERGE_PARSED_AUTO" -eq 1 ]]; then
+		print_error "--waive-runtime-verification cannot queue --auto; approval must verify at merge time"
+		return 1
+	fi
+	_FULL_LOOP_RUNTIME_WAIVER_REASON="$reason"
+	return 0
+}
+
+_merge_verify_runtime_waiver_approval() {
+	local pr_number="$1" repo="$2"
+	local verdict="" head=""
+	[[ -n "${_FULL_LOOP_RUNTIME_WAIVER_REASON:-}" ]] || return 0
+	_merge_is_headless_session && return 1
+	head=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid') || return 1
+	[[ "$head" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+	if [[ -n "${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}" && "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" != "$head" ]]; then
+		print_error "Runtime waiver refused: PR #${pr_number} head moved"
+		return 1
+	fi
+	verdict=$("${SCRIPT_DIR}/approval-helper.sh" verify pr "$pr_number" "$repo" --expect-head "$head" 2>/dev/null | tail -1) || verdict=""
+	if [[ "$verdict" != VERIFIED ]]; then
+		print_error "Runtime waiver refused: PR #${pr_number} approval is ${verdict:-unverifiable}; run: $(approval_cli_prefix) approve pr ${pr_number} ${repo}"
+		return 1
+	fi
+	FULL_LOOP_EXPECTED_PR_HEAD_SHA="$head"
+	export FULL_LOOP_EXPECTED_PR_HEAD_SHA
+	return 0
+}
+
+# Reuse the verifier's trusted scope, linked PR-only contract and head-race
+# checks without rewriting runtime metadata or claiming a live test occurred.
+_merge_lift_runtime_waiver_hold() {
+	local pr_number="$1" repo="$2"
+	[[ -n "${_FULL_LOOP_RUNTIME_WAIVER_REASON:-}" ]] || return 0
+	_merge_verify_runtime_waiver_approval "$pr_number" "$repo" || return 1
+	local vr_pr="$pr_number" vr_head="$FULL_LOOP_EXPECTED_PR_HEAD_SHA"
+	_verify_runtime_lift_hold "$repo" || return 1
+	return 0
+}
+
+_merge_record_runtime_waiver() {
+	local pr_number="$1" repo="$2" merge_sha="$3"
+	local head_sha="${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-$FULL_LOOP_EXPECTED_PR_HEAD_SHA}"
+	local reason="$_FULL_LOOP_RUNTIME_WAIVER_REASON" body="" sig_footer=""
+	sig_footer=$(gh-signature-helper.sh footer --model "${AIDEVOPS_MODEL:-unknown}" 2>/dev/null) || sig_footer=""
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+## Runtime-verification maintainer waiver (GH#40444)
+
+An interactive maintainer accepted missing live runtime verification. Cryptographic PR approval verified; the declared risk and verification metadata were not changed.
+
+**PR:** ${repo}#${pr_number}
+**Head:** \`${head_sha}\`
+**Merge commit:** \`${merge_sha}\`
+**Reason:** ${reason}
+<!-- ops:end -->
+${sig_footer}"
+	gh_pr_comment "$pr_number" --repo "$repo" --body "$body" >/dev/null 2>&1 ||
+		print_warning "Failed to post runtime-verification waiver comment on PR #${pr_number}"
+	"${SCRIPT_DIR}/audit-log-helper.sh" log security.event \
+		"runtime-verification maintainer waiver: PR #${pr_number} in ${repo} head ${head_sha} merge ${merge_sha}" \
+		--detail "reason=${reason}" 2>/dev/null || print_warning "Audit log entry for runtime-verification waiver failed"
+	return 0
+}
+
 # Best-effort post-merge records; never change the merge outcome.
 _merge_record_post_merge_audits() {
 	local pr_number="$1" repo="$2" merge_sha="$3"
 	[[ -z "${_FULL_LOOP_RBG_OVERRIDE_REASON:-}" ]] || _merge_record_rbg_override "$pr_number" "$repo" "$merge_sha"
+	[[ -z "${_FULL_LOOP_RUNTIME_WAIVER_REASON:-}" ]] || _merge_record_runtime_waiver "$pr_number" "$repo" "$merge_sha"
 	_merge_record_qlty_billing_skips "$pr_number" "$repo"
 	return 0
 }
@@ -1821,7 +1914,11 @@ _merge_check_parent_task_keywords() {
 # verifier records evidence. The hold-for-review label is checked separately.
 _merge_check_runtime_evidence() {
 	local pr_number="$1" repo="$2" metadata="${3:-}"
-	local runtime_metadata="" reason=""
+	local runtime_metadata="" reason="" runtime_waived=false
+	if [[ -n "${_FULL_LOOP_RUNTIME_WAIVER_REASON:-}" ]]; then
+		_merge_verify_runtime_waiver_approval "$pr_number" "$repo" || return 1
+		runtime_waived=true
+	fi
 	if [[ -z "$metadata" ]]; then
 		metadata=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body) || {
 			print_error "Merge blocked for PR #${pr_number}: runtime testing metadata unavailable"
@@ -1833,7 +1930,7 @@ _merge_check_runtime_evidence() {
 		print_error "Merge blocked for PR #${pr_number}: runtime testing metadata unreadable"
 		return 1
 	fi
-	if ! reason=$(_runtime_testing_merge_refusal "$runtime_metadata"); then
+	if ! reason=$(_runtime_testing_merge_refusal "$runtime_metadata" "$runtime_waived"); then
 		print_error "Merge blocked for PR #${pr_number}: ${reason}"
 		return 1
 	fi
@@ -1890,6 +1987,7 @@ cmd_merge() {
 	fi
 
 	_merge_check_closing_guards "$pr_number" "$repo" || return 1
+	_merge_lift_runtime_waiver_hold "$pr_number" "$repo" || return 1
 
 	# t2449: use the deterministic worker-briefed linked-issue trust verdict
 	# before pre-merge checks or any native/admin merge transport.
