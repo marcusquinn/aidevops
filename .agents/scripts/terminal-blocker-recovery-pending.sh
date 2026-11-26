@@ -119,6 +119,24 @@ _tbr_pending_tier_stop() {
 	return 3
 }
 
+# GH#40471: returns 0 when entry $1 does not belong to scan pass $2. Passes 1
+# and 2 take entries after / up to the cursor $3; pass 3 takes only entries
+# that timed out on an earlier pass, so they run after everything else.
+_tbr_pending_pass_skip() {
+	local name="$1" pass="$2" cursor="$3"
+	if [[ -f "${TBR_ROOT}/entry_timeouts/${name}" ]]; then
+		[[ "$pass" -eq 3 ]] || return 0
+		return 1
+	fi
+	[[ "$pass" -ne 3 ]] || return 0
+	if [[ "$pass" -eq 1 ]]; then
+		[[ "$name" > "$cursor" ]] || return 0
+	else
+		[[ "$name" > "$cursor" ]] && return 0
+	fi
+	return 1
+}
+
 # Scan one queue tier for tbr_pending; runs inside its scope (mode, entry_mode,
 # cursor_name, count, incomplete, observed, self_resolved, decided_set,
 # tier0_deadline). Resume in sorted order, then wrap, skipping entries already
@@ -148,22 +166,11 @@ _tbr_pending_scan_tier() {
 		for file in "${TBR_ROOT}"/queue/*.json; do
 			[[ -f "$file" ]] || continue
 			name="${file##*/}"
-			if [[ -f "${TBR_ROOT}/entry_timeouts/${name}" ]]; then
-				[[ "$pass" -eq 3 ]] || continue
-			else
-				[[ "$pass" -ne 3 ]] || continue
-			fi
+			_tbr_pending_pass_skip "$name" "$pass" "$cursor" && continue
 			decided=0
 			case "$decided_set" in *";${name};"*) decided=1 ;; esac
 			[[ "$decided" -eq "$tier" ]] || continue
 			case "$observed" in *";${name};"*) continue ;; esac
-			if [[ "$pass" -eq 3 ]]; then
-				:
-			elif [[ "$pass" -eq 1 ]]; then
-				[[ "${file##*/}" > "$cursor" ]] || continue
-			else
-				[[ "${file##*/}" > "$cursor" ]] && continue
-			fi
 			if [[ "$SECONDS" -ge "$deadline" ]]; then
 				_tbr_pending_tier_stop "$deadline" "$queue_deadline"
 				return $?
