@@ -24,6 +24,38 @@ readonly DEFAULT_ROUTINE_TITLE="GH failed notifications: systemic triage"
 readonly JQ_COUNT='length'
 readonly INFRA_REASON_ALL_CHECKS_FAILED='all_checks_failed'
 
+# jq definitions shared by render_issue_body_markdown and build_systemic_issue_body
+# so both issue-body renderers show the same Evidence lines and CodeFactor guidance
+# (GH#40495). Prepend to a jq program: jq -r "${JQ_ISSUE_BODY_SHARED_DEFS}"'...'.
+# shellcheck disable=SC2016 # literal jq program: $example is a jq variable
+readonly JQ_ISSUE_BODY_SHARED_DEFS='
+		def affected_paths_line($example):
+			if (($example.affected_paths // []) | length) > 0 then
+				"\n  affected files: " + (($example.affected_paths // []) | .[0:8] | join(", ")) +
+				(if (($example.affected_paths // []) | length) > 8 then ", ..." else "" end)
+			else "" end;
+		def annotations_line($example):
+			if (($example.annotations // []) | length) > 0 then
+				"\n  reported findings: " + (($example.annotations // []) | .[0:3] | map(
+					((.path // "unreported") + (if (.start_line // null) != null then ":" + ((.start_line // 0) | tostring) else "" end) +
+					(if ((.title // "") | length) > 0 then " — " + .title elif ((.message // "") | length) > 0 then " — " + .message else "" end))
+				) | join("; ")) +
+				(if (($example.annotations // []) | length) > 3 then "; ..." else "" end)
+			else "" end;
+		def codefactor_fix_guidance:
+			"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; the file, line, and rule are GitHub check-run annotations (listed as `reported findings` in Evidence when the miner fetched them).\n" +
+			"- Read all annotations for the exact failed check run. A native check-run link in Evidence (`https://github.com/<owner>/<repo>/runs/<check-run-id>`, with no `/actions/` segment) ends with its id, and `gh api --paginate \"repos/<owner>/<repo>/check-runs/<check-run-id>/annotations?per_page=100\" --jq \"map({path, start_line, title, message})\"` reads every annotation page.\n" +
+			"- An `/actions/runs/<run-id>` link holds a workflow-run id, not a check-run id; get the commit it ran on with `gh api \"repos/<owner>/<repo>/actions/runs/<run-id>\" --jq .head_sha`. With that SHA, or when Evidence has no run link, find the check-run id from the commit that failed: `gh api \"repos/<owner>/<repo>/commits/<failing-sha>/check-runs?check_name=CodeFactor\" --jq \".check_runs[].id\"` (use the failing SHA, not a newer PR head).\n" +
+			"- The CodeFactor details URL renders client-side, so fetching it usually returns no findings. Open it in a browser only when no check run exists (CodeFactor reporting through commit statuses) or the annotations are empty.\n" +
+			"- If neither the annotations nor the details URL are accessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
+			"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
+			"- A ShellCheck code (`SC####`) that local ShellCheck does not report can come from a newer ShellCheck release; fix the cited pattern at the cited line rather than guessing at nearby code.\n" +
+			"\n## Worker Guidance\n" +
+			"1. Read the CodeFactor check-run annotations first (`reported findings` in Evidence, or the annotations API above); do not infer the reported file/rule from the GitHub run alone.\n" +
+			"2. If CodeFactor details are unavailable from both the annotations API and the details URL, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
+			"3. Run the focused guard plus the nearest local linter before opening a PR.\n";
+'
+
 print_usage() {
 	cat <<'EOF'
 gh-failure-miner-helper.sh - Mine GitHub failed CI notifications for root causes
@@ -1038,12 +1070,7 @@ render_report_markdown() {
 render_issue_body_markdown() {
 	local events_json="$1"
 	local systemic_threshold="$2"
-	classify_pr_specific_failures_json "$events_json" | jq -r '
-		def affected_paths_line($example):
-			if (($example.affected_paths // []) | length) > 0 then
-				"\n  affected files: " + (($example.affected_paths // []) | .[0:8] | join(", ")) +
-				(if (($example.affected_paths // []) | length) > 8 then ", ..." else "" end)
-			else "" end;
+	classify_pr_specific_failures_json "$events_json" | jq -r "${JQ_ISSUE_BODY_SHARED_DEFS}"'
 		def qlty_empty_sarif_signature($check_name; $signature):
 			((($check_name // "") | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
 				 and (($signature // "") | test("empty[[:space:]-]*SARIF"; "i")));
@@ -1052,13 +1079,7 @@ render_issue_body_markdown() {
 				 or (($signature // "") | test("Pulse[[:space:]]+unbound-var[[:space:]]+violations[[:space:]]+found|multi-var[[:space:]]+local[[:space:]]+without[[:space:]]+init|pulse-unbound-var"; "i")));
 		def systemic_fix_guidance($check_name; $signature):
 			if ((($check_name // "") | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
-				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
-				"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
-				"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
-				"\n## Worker Guidance\n" +
-				"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
-				"2. If CodeFactor details are unavailable, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
-				"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
+				codefactor_fix_guidance
 			elif qlty_empty_sarif_signature($check_name; $signature) then
 				"- Qlty Smell Threshold empty-SARIF failures are shared tooling failures, not PR-specific smell regressions.\n" +
 				"- Harden the absolute threshold workflow/helper so empty `qlty smells --all --sarif` output emits diagnostic warning context and does not block unrelated PRs.\n" +
@@ -1109,7 +1130,8 @@ render_issue_body_markdown() {
 			  (if .source_url != null then " - " + .source_url else "" end) +
 			  (if .run_url != null then " - " + .run_url else "" end) +
 			  (if .details_url != null then " - " + .details_url else "" end) +
-			  affected_paths_line(.)
+			  affected_paths_line(.) +
+			  annotations_line(.)
 			) | join("\n")) + "\n\n" +
 			"## Root Cause Hypothesis\n" +
 			"- Workflow/config regression or shared dependency/integration break in `" + $top.check_name + "`.\n\n" +
@@ -1242,20 +1264,7 @@ build_systemic_issue_body() {
 	local pattern_id="$2"
 	local threshold="$3"
 
-	printf '%s\n' "$cluster_json" | jq -r '
-		def affected_paths_line($example):
-			if (($example.affected_paths // []) | length) > 0 then
-				"\n  affected files: " + (($example.affected_paths // []) | .[0:8] | join(", ")) +
-				(if (($example.affected_paths // []) | length) > 8 then ", ..." else "" end)
-			else "" end;
-		def annotations_line($example):
-			if (($example.annotations // []) | length) > 0 then
-				"\n  reported findings: " + (($example.annotations // []) | .[0:3] | map(
-					((.path // "unreported") + (if (.start_line // null) != null then ":" + ((.start_line // 0) | tostring) else "" end) +
-					(if ((.title // "") | length) > 0 then " — " + .title elif ((.message // "") | length) > 0 then " — " + .message else "" end))
-				) | join("; ")) +
-				(if (($example.annotations // []) | length) > 3 then "; ..." else "" end)
-			else "" end;
+	printf '%s\n' "$cluster_json" | jq -r "${JQ_ISSUE_BODY_SHARED_DEFS}"'
 		def qlty_empty_sarif_signature($check_name; $signature):
 			((($check_name // "") | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
 				 and (($signature // "") | test("empty[[:space:]-]*SARIF"; "i")));
@@ -1264,14 +1273,7 @@ build_systemic_issue_body() {
 				 or (($signature // "") | test("Pulse[[:space:]]+unbound-var[[:space:]]+violations[[:space:]]+found|multi-var[[:space:]]+local[[:space:]]+without[[:space:]]+init|pulse-unbound-var"; "i")));
 		def systemic_fix_guidance($check_name; $signature):
 			if ((($check_name // "") | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
-				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
-				"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
-				"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
-				"\n" +
-				"## Worker Guidance\n" +
-				"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
-				"2. If CodeFactor details are unavailable, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
-				"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
+				codefactor_fix_guidance
 			elif qlty_empty_sarif_signature($check_name; $signature) then
 				"- Qlty Smell Threshold empty-SARIF failures are shared tooling failures, not PR-specific smell regressions.\n" +
 				"- Harden the absolute threshold workflow/helper so empty `qlty smells --all --sarif` output emits diagnostic warning context and does not block unrelated PRs.\n" +

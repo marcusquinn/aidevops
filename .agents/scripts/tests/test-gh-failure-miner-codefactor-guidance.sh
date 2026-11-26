@@ -278,7 +278,8 @@ shellcheck_paths_json=$(printf '%s\n' "$mined_events_json" | jq -c '.[1].affecte
 rm -f "$event_file"
 
 assert_contains "build_issue_body includes Worker Guidance" "## Worker Guidance" "$body"
-assert_contains "build_issue_body directs workers to CodeFactor details" "Open the CodeFactor details URL from Evidence first" "$body"
+assert_contains "build_issue_body directs workers to CodeFactor annotations first" "Read the CodeFactor check-run annotations first" "$body"
+assert_contains "build_issue_body names the paginated check-run annotations API" "gh api --paginate \"repos/<owner>/<repo>/check-runs/<check-run-id>/annotations" "$body"
 assert_contains "build_issue_body includes affected file fallback" "affected files: .agents/scripts/vault-crypto-helper.py, .agents/scripts/vault-helper.sh" "$body"
 assert_contains "build_issue_body includes CodeFactor annotations" "reported findings: .agents/scripts/vault-crypto-helper.py:119 — Bandit B603" "$body"
 assert_contains "build_issue_body handles unavailable details" "If CodeFactor details are unavailable" "$body"
@@ -294,6 +295,8 @@ assert_equals "create_or_preview_issue rejects no-evidence clusters" "1" "$empty
 assert_contains "create_or_preview_issue explains no-evidence skip" "no evidence examples" "$empty_evidence_output"
 assert_contains "render_issue_body_markdown includes Worker Guidance" "## Worker Guidance" "$legacy_body"
 assert_contains "render_issue_body_markdown directs workers to provider details" "details URL" "$legacy_body"
+assert_contains "render_issue_body_markdown names the paginated check-run annotations API" "gh api --paginate \"repos/<owner>/<repo>/check-runs/<check-run-id>/annotations" "$legacy_body"
+assert_contains "render_issue_body_markdown includes CodeFactor annotations" "reported findings: .agents/scripts/vault-crypto-helper.py:119 — Bandit B603" "$legacy_body"
 assert_contains "render_issue_body_markdown includes affected file fallback" "affected files: .agents/scripts/vault-crypto-helper.py, .agents/scripts/vault-helper.sh" "$legacy_body"
 assert_contains "render_issue_body_markdown classifies decorated qlty empty SARIF" "empty-SARIF failures are shared tooling failures" "$legacy_qlty_body"
 assert_contains "render_issue_body_markdown qlty guidance points at helper" ".agents/scripts/qlty-smell-threshold-helper.sh" "$legacy_qlty_body"
