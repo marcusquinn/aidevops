@@ -47,6 +47,10 @@ export OPENCODE_DB_HEADLESS_LEDGER="${SANDBOX}/headless-ledger.db"
 # Batch-adaptation state (GH#38590) must never touch the host's real logs dir.
 export OPENCODE_DB_ARCHIVE_STATE_DIR="${SANDBOX}/archive-state"
 
+# Never scan the host's live pulse worker logs for active sessions (GH#40443):
+# on a busy host that scan made every archive call slower and host-dependent.
+export AIDEVOPS_PULSE_TMP_DIR="${SANDBOX}/pulse"
+
 _reset_dbs() {
 	rm -rf "$OPENCODE_DB_ARCHIVE_STATE_DIR"
 	rm -f "$ACTIVE_DB" "$ARCHIVE_DB" "${ACTIVE_DB}-wal" "${ACTIVE_DB}-shm" "${ARCHIVE_DB}-wal" "${ARCHIVE_DB}-shm"
