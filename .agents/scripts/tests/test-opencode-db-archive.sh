@@ -1278,26 +1278,31 @@ export OPENCODE_DB_HOLDER_COMMAND="$inbox_no_holder"
 
 # Inject delays into actual SQLite candidate execution and between durable
 # copy/delete commits. Only this fixture-local executable is interposed.
+# GH#40452: the helper makes ~90 sqlite3 calls before its first copy commit.
+# A Python interposer paid interpreter start-up on each one, which on a loaded
+# host alone exhausted the 10 s budget. Pass through from Bash with exec and
+# start Python only for the stdin SQL rewrite.
 sqlite_bin=$(command -v sqlite3)
 mkdir -p "$SANDBOX/slow-sqlite"
-cat >"$SANDBOX/slow-sqlite/sqlite3" <<'PY'
-#!/usr/bin/env python3
-import os
-from pathlib import Path
-import subprocess
-import sys
-args = sys.argv[1:]
-real = os.environ["TEST_REAL_SQLITE"]
-if os.environ["TEST_SQLITE_STAGE"] == "candidate":
-    if any(arg.startswith("SELECT COUNT(*) FROM session WHERE") for arg in args):
-        Path(os.environ["TEST_SQLITE_MARKER"]).touch()
-        os.execv(real, [real, args[0], "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n;"])
-elif len(args) == 1:
-    sql = sys.stdin.read()
-    sql = sql.replace("COMMIT;\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard", "COMMIT;\n.shell sleep 30\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard")
-    sys.exit(subprocess.run([real, *args], input=sql, text=True).returncode)
-os.execv(real, [real, *args])
-PY
+cat >"$SANDBOX/slow-sqlite/sqlite3" <<'SH'
+#!/usr/bin/env bash
+real="$TEST_REAL_SQLITE"
+if [[ "$TEST_SQLITE_STAGE" == candidate ]]; then
+	for arg in "$@"; do
+		if [[ "$arg" == "SELECT COUNT(*) FROM session WHERE"* ]]; then
+			: >>"$TEST_SQLITE_MARKER"
+			exec "$real" "$1" "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n;"
+		fi
+	done
+elif [[ $# -eq 1 ]]; then
+	exec python3 -c '
+import subprocess, sys
+sql = sys.stdin.read().replace("COMMIT;\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard", "COMMIT;\n.shell sleep 30\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard")
+sys.exit(subprocess.run(sys.argv[1:], input=sql, text=True).returncode)
+' "$real" "$@"
+fi
+exec "$real" "$@"
+SH
 chmod +x "$SANDBOX/slow-sqlite/sqlite3"
 for sql_stage in candidate commit_gap; do
 	_reset_dbs
