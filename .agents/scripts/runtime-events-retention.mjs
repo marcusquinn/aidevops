@@ -28,6 +28,7 @@ import { buildRuntimeEventRetentionInventory } from "./runtime-events-retention-
 import { runRuntimeEventMaintenance } from "./runtime-events-retention-maintenance.mjs";
 import { isProtectedRuntimeEvent } from "./runtime-events-retention-policy.mjs";
 import { verifyArchiveArtifacts } from "./runtime-events-retention-verification.mjs";
+import { reclaimAfterArchive } from "./runtime-events-retention-space.mjs";
 import { retentionStages, sqlite, sqliteRows } from "./runtime-events-retention-sqlite.mjs";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
 
@@ -387,9 +388,17 @@ export function archiveRuntimeEvents(options = {}) {
   });
 }
 
+/** After verified deletes: prune tool_calls, then return free pages (GH#40498). */
+function reclaimSpace(options) {
+  const dbPath = canonicalizeSqliteDbPath(options.dbPath || resolveRuntimeEventsDbPath());
+  if (!existsSync(dbPath)) return {};
+  return reclaimAfterArchive(dbPath, normalizedCutoff(options.cutoff, options), options, sqlEscape);
+}
+
 /** Apply verified partitions until caught up or an explicit work bound is reached. */
 export function maintainRuntimeEvents(options = {}) {
   return runRuntimeEventMaintenance(options, {
+    reclaim: reclaimSpace,
     archive: archiveRuntimeEvents,
     maxDurationSecondsDefault: RUNTIME_EVENT_MAINTENANCE_MAX_DURATION_SECONDS_DEFAULT,
     maxPartitionsDefault: RUNTIME_EVENT_MAINTENANCE_MAX_PARTITIONS_DEFAULT,
