@@ -37,6 +37,48 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+_PROFILE_DATA_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_PROFILE_DATA_LIB_DIR" != "${BASH_SOURCE[0]}" ]] || _PROFILE_DATA_LIB_DIR="."
+
+# --- Resolve OpenCode archive segments for ATTACH (GH#40419 phase 1) ---
+# Sets _PROFILE_ARCHIVE_ATTACH_SQL (ATTACH statements) and
+# _PROFILE_ARCHIVE_ALIASES (space-separated schema aliases: archive,
+# archive_1, ...). Both are empty when no archive segment exists. SQLite allows
+# 10 attached databases by default, so at most 9 segments (oldest first) attach.
+_PROFILE_ARCHIVE_ATTACH_SQL=""
+_PROFILE_ARCHIVE_ALIASES=""
+_profile_archive_attach_init() {
+	local seg="" alias_name="" escaped="" count=0
+	_PROFILE_ARCHIVE_ATTACH_SQL=""
+	_PROFILE_ARCHIVE_ALIASES=""
+	# Lazy source (fixtures copy only some libs); fall back to the single
+	# legacy archive file when the segments library is not beside this one.
+	if ! declare -F opencode_archive_segments >/dev/null 2>&1; then
+		if [[ -f "${_PROFILE_DATA_LIB_DIR}/opencode-db-archive-segments-lib.sh" ]]; then
+			# shellcheck source=opencode-db-archive-segments-lib.sh
+			source "${_PROFILE_DATA_LIB_DIR}/opencode-db-archive-segments-lib.sh"
+		else
+			opencode_archive_segments() {
+				local legacy="$1"
+				[[ -f "$legacy" ]] && printf '%s\n' "$legacy"
+				return 0
+			}
+		fi
+	fi
+	while IFS= read -r seg; do
+		[[ -n "$seg" ]] || continue
+		[[ "$count" -lt 9 ]] || break
+		alias_name="archive"
+		[[ "$count" -eq 0 ]] || alias_name="archive_${count}"
+		escaped="${seg//\'/\'\'}"
+		_PROFILE_ARCHIVE_ATTACH_SQL="${_PROFILE_ARCHIVE_ATTACH_SQL}ATTACH DATABASE '${escaped}' AS ${alias_name};
+"
+		_PROFILE_ARCHIVE_ALIASES="${_PROFILE_ARCHIVE_ALIASES:+${_PROFILE_ARCHIVE_ALIASES} }${alias_name}"
+		count=$((count + 1))
+	done < <(opencode_archive_segments "$OPENCODE_ARCHIVE_DB_FILE")
+	return 0
+}
+
 PROFILE_EPOCH_DATE="1970-01-01"
 PROFILE_RATE_OPUS="15.0|75.0|1.50"
 PROFILE_RATE_SONNET="3.0|15.0|0.30"
@@ -370,12 +412,14 @@ _get_model_usage_from_opencode() {
 	local attach_clause=""
 	local assistant_rows_sql=""
 	assistant_rows_sql=$(_opencode_assistant_rows_sql message)
-	if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
-		attach_clause="ATTACH DATABASE '${OPENCODE_ARCHIVE_DB_FILE}' AS archive;"
+	local _alias=""
+	_profile_archive_attach_init
+	attach_clause="$_PROFILE_ARCHIVE_ATTACH_SQL"
+	for _alias in $_PROFILE_ARCHIVE_ALIASES; do
 		assistant_rows_sql="${assistant_rows_sql}
 UNION ALL
-$(_opencode_assistant_rows_sql archive.message)"
-	fi
+$(_opencode_assistant_rows_sql "${_alias}.message")"
+	done
 	raw_json=$(_profile_sqlite_read "$OPENCODE_DB_FILE" "
 		${attach_clause}
 		WITH assistant_messages_raw AS (
@@ -685,16 +729,19 @@ _token_totals_from_opencode_db() {
 	fi
 
 	local _totals_attach="" _totals_union=""
-	if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
-		_totals_attach="ATTACH DATABASE '${OPENCODE_ARCHIVE_DB_FILE}' AS archive;"
-		_totals_union="UNION ALL
+	local _alias=""
+	_profile_archive_attach_init
+	_totals_attach="$_PROFILE_ARCHIVE_ATTACH_SQL"
+	for _alias in $_PROFILE_ARCHIVE_ALIASES; do
+		_totals_union="${_totals_union}
+			UNION ALL
 			SELECT json_extract(data, '\$.tokens.input'),
 				json_extract(data, '\$.tokens.output'),
 				json_extract(data, '\$.tokens.cache.read'),
 				json_extract(data, '\$.tokens.cache.write')
-			FROM archive.message
+			FROM ${_alias}.message
 			WHERE json_extract(data, '\$.role') = 'assistant'"
-	fi
+	done
 
 	local oc_stats total_input total_output total_cache_read total_cache_write
 	oc_stats=$(_profile_sqlite_read "$OPENCODE_DB_FILE" "
