@@ -30,7 +30,10 @@ function maintenanceConfig(options, dependencies) {
   delete archiveOptions.clock;
   delete archiveOptions.maxDurationSeconds;
   delete archiveOptions.maxPartitions;
-  return { archiveOptions, clock, maxDurationSeconds, maxPartitions };
+  const reclaim = typeof dependencies.reclaim === "function"
+    ? (deadline) => dependencies.reclaim({ ...archiveOptions, clock, deadline })
+    : null;
+  return { archiveOptions, clock, maxDurationSeconds, maxPartitions, reclaim };
 }
 
 function planMaintenance(config, archive) {
@@ -109,7 +112,9 @@ function applyMaintenance(config, archive) {
       break;
     }
   }
-  return maintenanceSummary(totals, config, stopReason, lastResult);
+  const summary = maintenanceSummary(totals, config, stopReason, lastResult);
+  const space = config.reclaim ? config.reclaim(startedAt + config.maxDurationSeconds * 1000) : {};
+  return Object.freeze({ ...summary, ...space });
 }
 
 export function runRuntimeEventMaintenance(options, dependencies) {

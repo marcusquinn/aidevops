@@ -21,6 +21,10 @@ function parseCli(argv) {
       continue;
     }
     if (argument === "--json") continue;
+    if (argument === "--enable-incremental-vacuum") {
+      options.enableIncrementalVacuum = true;
+      continue;
+    }
     const optionKey = VALUE_OPTION_KEYS.get(argument);
     if (!optionKey) throw new TypeError(`unknown retention argument: ${argument}`);
     const value = argv[++index];
