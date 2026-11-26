@@ -56,8 +56,14 @@ Commands:
   prune [--dry-run] [--force] [--retention-days N]
       Remove only acknowledged/restored backups that are terminal or stale.
       Dry-run is the default; --dry-run always overrides --force.
+      --force also removes stale .capture.*/.verify.* scratch directories.
   delete --backup ID --confirm DELETE_DIRTY_WORKTREE_BACKUP [--dry-run]
       Remove one acknowledged/restored backup (no .keep marker) by ID.
+  orphans [--repo PATH] [--dry-run]
+      List backup refs whose backup directory (manifest.tsv) no longer exists.
+  delete-orphan --repo PATH --ref REF --confirm DELETE_ORPHAN_DIRTY_BACKUP_REF
+      Compare-and-delete one orphan backup ref. Confirmation may be omitted only
+      when the snapshot adds nothing but zero-byte untracked files.
 
 Environment:
   AIDEVOPS_DIRTY_BACKUP_ROOT            Override backup directory.
@@ -1242,6 +1248,177 @@ cmd_prune() {
 			remove_backup_dir "$backup_dir" "$force" "age ${age_days}d >= ${retention_days}d" || return 1
 		fi
 	done
+	prune_scratch_dirs "$force" "$retention_days" || return 1
+	return 0
+}
+
+# Remove interrupted .capture.*/.verify.* scratch directories past retention.
+prune_scratch_dirs() {
+	local force="$1"
+	local retention_days="$2"
+	local scratch_dir=""
+	local age_days=""
+	for scratch_dir in "$BACKUP_ROOT"/.capture.* "$BACKUP_ROOT"/.verify.*; do
+		[[ -d "$scratch_dir" && ! -L "$scratch_dir" ]] || continue
+		age_days=$(backup_age_days "$scratch_dir")
+		[[ "$age_days" -ge "$retention_days" ]] || continue
+		if [[ "$force" != true ]]; then
+			print_info "[dry-run] Would remove scratch dir (age ${age_days}d): $(basename "$scratch_dir")"
+			continue
+		fi
+		rm -rf "$scratch_dir"
+		print_info "Removed scratch dir (age ${age_days}d): $(basename "$scratch_dir")"
+	done
+	return 0
+}
+
+ORPHAN_REF_PREFIX="refs/aidevops/dirty-worktree-backups/"
+EMPTY_BLOB_SHA="e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+EMPTY_TREE_SHA="4b825dc642cb6eb9a060e54bf8d69288fbb2cd1b"
+
+# Snapshot layout: HEAD <- index commit <- worktree commit (the ref).
+orphan_base_commit() {
+	local repo_path="$1"
+	local sha="$2"
+	local base=""
+	base=$("$REAL_GIT" -C "$repo_path" rev-parse --verify -q "${sha}^^" 2>/dev/null) ||
+		base=$("$REAL_GIT" -C "$repo_path" rev-parse --verify -q "${sha}^" 2>/dev/null) ||
+		base="$EMPTY_TREE_SHA"
+	printf '%s\n' "$base"
+	return 0
+}
+
+# Echo "<sha> <date> <paths>" for an orphan ref; return 1 if it is not orphaned.
+orphan_ref_info() {
+	local repo_path="$1"
+	local ref_name="$2"
+	local backup_id="${ref_name#"$ORPHAN_REF_PREFIX"}"
+	local sha=""
+	local base=""
+	local date_str=""
+	local count=""
+	[[ "$ref_name" == "$ORPHAN_REF_PREFIX"* && -n "$backup_id" ]] || return 1
+	[[ "$backup_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+	[[ -f "$BACKUP_ROOT/$backup_id/manifest.tsv" ]] && return 1
+	sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify -q "${ref_name}^{commit}") || return 1
+	date_str=$("$REAL_GIT" -C "$repo_path" log -1 --format=%cI "$sha" 2>/dev/null || true)
+	base=$(orphan_base_commit "$repo_path" "$sha")
+	count=$("$REAL_GIT" -C "$repo_path" diff-tree -r --no-commit-id --name-only "$base" "$sha" 2>/dev/null | wc -l | tr -d ' ')
+	printf '%s %s %s\n' "$sha" "${date_str:-unknown}" "${count:-0}"
+	return 0
+}
+
+# True when the snapshot only adds zero-byte files relative to its base.
+orphan_is_empty_untracked_only() {
+	local repo_path="$1"
+	local sha="$2"
+	local base=""
+	local line=""
+	local found=false
+	local old_mode="" new_mode="" old_sha="" new_sha="" status=""
+	base=$(orphan_base_commit "$repo_path" "$sha")
+	while IFS=$'\t' read -r line _; do
+		[[ -n "$line" ]] || continue
+		found=true
+		read -r old_mode new_mode old_sha new_sha status <<<"$line"
+		[[ "$status" == "A" && "$new_sha" == "$EMPTY_BLOB_SHA" ]] || return 1
+	done < <("$REAL_GIT" -C "$repo_path" diff-tree -r --no-commit-id --raw "$base" "$sha" 2>/dev/null)
+	[[ "$found" == true ]] || return 1
+	return 0
+}
+
+cmd_orphans() {
+	local repo_arg="."
+	local dry_run=false
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--repo)
+			repo_arg="${2:-}"
+			shift 2
+			;;
+		--dry-run)
+			dry_run=true
+			shift
+			;;
+		*)
+			print_error "Unknown orphans option: $arg"
+			return 1
+			;;
+		esac
+	done
+	local repo_path=""
+	repo_path=$(resolve_repo_path "$repo_arg") || {
+		print_error "Invalid repo path"
+		return 1
+	}
+	local ref_name=""
+	local info=""
+	local sha=""
+	local date_str=""
+	local count=""
+	local found=0
+	while IFS= read -r ref_name; do
+		[[ -n "$ref_name" ]] || continue
+		info=$(orphan_ref_info "$repo_path" "$ref_name") || continue
+		read -r sha date_str count <<<"$info"
+		found=$((found + 1))
+		printf '%s\tsha=%s\tdate=%s\tpaths=%s\n' "$ref_name" "$sha" "$date_str" "$count"
+	done < <("$REAL_GIT" -C "$repo_path" for-each-ref --format='%(refname)' "$ORPHAN_REF_PREFIX")
+	if [[ "$dry_run" == true ]]; then
+		print_info "[dry-run] orphans only lists; nothing is modified"
+	fi
+	if [[ "$found" -eq 0 ]]; then
+		print_info "No orphan dirty-worktree backup refs found."
+	fi
+	return 0
+}
+
+cmd_delete_orphan() {
+	local repo_arg=""
+	local ref_name=""
+	local confirmation=""
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--repo)
+			repo_arg="${2:-}"
+			shift 2
+			;;
+		--ref)
+			ref_name="${2:-}"
+			shift 2
+			;;
+		--confirm)
+			confirmation="${2:-}"
+			shift 2
+			;;
+		*)
+			print_error "Unknown delete-orphan option: $arg"
+			return 1
+			;;
+		esac
+	done
+	local repo_path=""
+	repo_path=$(resolve_repo_path "$repo_arg") || {
+		print_error "delete-orphan requires a valid --repo"
+		return 1
+	}
+	local info=""
+	local sha=""
+	info=$(orphan_ref_info "$repo_path" "$ref_name") || {
+		print_error "Not an orphan dirty-worktree backup ref (or its backup directory exists): $ref_name"
+		return 1
+	}
+	sha="${info%% *}"
+	if [[ "$confirmation" != "DELETE_ORPHAN_DIRTY_BACKUP_REF" ]]; then
+		if [[ -n "$confirmation" ]] || ! orphan_is_empty_untracked_only "$repo_path" "$sha"; then
+			print_error "delete-orphan requires --confirm DELETE_ORPHAN_DIRTY_BACKUP_REF"
+			return 1
+		fi
+	fi
+	"$REAL_GIT" -C "$repo_path" update-ref -d "$ref_name" "$sha" || return 1
+	print_info "Removed orphan backup ref: $ref_name"
 	return 0
 }
 
@@ -1343,6 +1520,14 @@ main() {
 		;;
 	delete)
 		cmd_delete "$@"
+		return $?
+		;;
+	orphans)
+		cmd_orphans "$@"
+		return $?
+		;;
+	delete-orphan)
+		cmd_delete_orphan "$@"
 		return $?
 		;;
 	help | --help | -h)
