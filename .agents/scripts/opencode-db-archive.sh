@@ -102,6 +102,8 @@ source "${_oda_dir}/opencode-db-archive-segments-lib.sh"
 source "${_oda_dir}/opencode-db-archive-seal-lib.sh"
 # shellcheck source=opencode-db-archive-migrate-lib.sh
 source "${_oda_dir}/opencode-db-archive-migrate-lib.sh"
+# shellcheck source=opencode-db-archive-index-lib.sh
+source "${_oda_dir}/opencode-db-archive-index-lib.sh"
 ARCHIVE_LEGACY_DB="$ARCHIVE_DB"
 if [[ "${OPENCODE_ARCHIVE_SEGMENTED:-0}" == "1" ]]; then
 	ARCHIVE_DB=$(opencode_archive_current_segment "$ARCHIVE_LEGACY_DB")
@@ -1587,6 +1589,9 @@ _archive_finish() {
 	# Fast-path explicit cleanup: checkpoint archive WAL before vacuum.
 	# Marks done so the RETURN trap does not double-run.
 	_checkpoint_archive_db "$ARCHIVE_DB"
+	if [[ "${OPENCODE_ARCHIVE_SEGMENTED:-0}" == "1" ]]; then
+		opencode_archive_index_record "$ARCHIVE_LEGACY_DB" "$ARCHIVE_DB" || print_warning "Archive index update failed; segments remain authoritative"
+	fi
 
 	local compact_rc=0
 	_archive_compact_unless_held || compact_rc=$?

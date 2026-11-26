@@ -253,6 +253,7 @@ RESTORE_SQL
 			return 1
 		fi
 	done
+	opencode_archive_index_mark_restored "$ARCHIVE_LEGACY_DB" "$session_id" || print_warning "Archive index not updated for ${session_id}"
 	print_success "Restored ${#restore_segments[@]} session(s) (${session_id} and subagent children) to ${ACTIVE_DB}"
 	return 0
 }

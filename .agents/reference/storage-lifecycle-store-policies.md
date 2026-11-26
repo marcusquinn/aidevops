@@ -160,3 +160,8 @@ monthly segments by UTC `time_updated` (dry run by default). It refuses when a
 target segment exists or a populated table has no session linkage, verifies
 `quick_check` and per-table row counts, then moves the original (and WAL/SHM) to
 `OPENCODE_ARCHIVE_TRASH_DIR` (default `~/.Trash`), never `rm`. Run `seal` after.
+
+`opencode-archive-index.db` (`session_id -> segment, restored_at`) is the only
+archive-side file that changes after sealing. Segmented archive passes record
+their sessions in it; restore sets `restored_at` there, never in a sealed
+segment; re-archiving replaces the row so the newest copy wins.
