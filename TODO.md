@@ -2543,6 +2543,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t19410 fix: brand guideline swatches ignore DESIGN.md token colours #bug ref:GH#40508
 - [x] t19411 fix: generated _reports artifacts misclassified as Critical runtime risk #bug ref:GH#40511 pr:#40512 completed:2026-11-26
 
+- [ ] t19413 fix: keywords issue sweep refiles not-planned closures on undefined-product repos #bug ref:GH#40513
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
