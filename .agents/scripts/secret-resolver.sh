@@ -34,10 +34,17 @@ _aidevops_credential_file_value() {
 	local cred_file="${HOME}/.config/aidevops/credentials.sh"
 	[[ -f "$cred_file" ]] || return 1
 	local value=""
+	local lib_dir="${BASH_SOURCE[0]%/*}"
+	[[ "$lib_dir" == "${BASH_SOURCE[0]}" ]] && lib_dir="."
+	local lint_lib="${lib_dir}/credentials-lint-lib.sh"
+	# GH#40479: parse, never execute, so a malformed line cannot redirect into
+	# the caller's cwd. Without the library, resolve nothing from the file.
+	[[ -f "$lint_lib" ]] || return 1
 	value=$(
 		set +eu
-		# shellcheck source=/dev/null
-		source "$cred_file" >/dev/null 2>&1
+		# shellcheck source=credentials-lint-lib.sh
+		source "$lint_lib" >/dev/null 2>&1 || exit 0
+		credentials_load_safe "$cred_file" >/dev/null 2>&1
 		printf '%s' "${!name:-}"
 	) || value=""
 	[[ -n "$value" ]] || return 1

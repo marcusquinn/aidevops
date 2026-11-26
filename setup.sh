@@ -500,6 +500,18 @@ _setup_print_header() {
 		echo "Mode: Update (will check for tool updates after setup)"
 	fi
 	echo ""
+	warn_malformed_credentials
+	return 0
+}
+
+# GH#40479: warn (never fail) when credentials.sh has unquoted values with shell
+# metacharacters. Parsed, not sourced; prints names and line numbers only.
+warn_malformed_credentials() {
+	local helper="${BASH_SOURCE[0]%/*}/.agents/scripts/secret-helper.sh"
+	[[ -f "$helper" ]] || helper="$HOME/.aidevops/agents/scripts/secret-helper.sh"
+	[[ -f "$helper" ]] || return 0
+	[[ -f "$HOME/.config/aidevops/credentials.sh" ]] || return 0
+	bash "$helper" credentials-lint || true
 	return 0
 }
 

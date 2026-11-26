@@ -5,13 +5,16 @@
 # Supports: code analysis, dependency scanning, git history, AI CLI configs
 set -euo pipefail
 
-# shellcheck source=/dev/null
-[[ -f "${HOME}/.config/aidevops/credentials.sh" ]] && source "${HOME}/.config/aidevops/credentials.sh"
-
 # Script directory (exported for subprocesses)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 export SCRIPT_DIR
 readonly SCRIPT_DIR
+
+# GH#40479: parse credentials.sh instead of sourcing it, so a malformed
+# unquoted value cannot run as a redirection in the caller's directory.
+# shellcheck source=credentials-lint-lib.sh
+source "$SCRIPT_DIR/credentials-lint-lib.sh"
+credentials_load_safe "${HOME}/.config/aidevops/credentials.sh" || true
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly OUTPUT_DIR=".security-analysis"
 readonly VERSION="1.0.0"
@@ -40,6 +43,7 @@ Usage: $(basename "$0") <command> [options]
 
 Commands:
   status                    Check installation status of security tools
+  credentials-lint          Flag malformed credentials.sh lines (names and line numbers only)
   analyze [scope]           Analyze code for vulnerabilities
                             Scopes: diff (default), staged, branch, full
   history [commits|range]   Scan git history for vulnerabilities
@@ -135,9 +139,41 @@ print_status() {
 	fi
 }
 
+# Lint credentials files without executing them. Reports variable names and
+# line numbers only; repair route is `aidevops secret set NAME`.
+cmd_credentials_lint() {
+	local config_dir="${HOME}/.config/aidevops"
+	local file="" report="" rc=0 line=""
+	local -a files=("$config_dir/credentials.sh")
+	local tenant_file=""
+	for tenant_file in "$config_dir"/tenants/*/credentials.sh; do
+		[[ -f "$tenant_file" ]] && files+=("$tenant_file")
+	done
+	for file in "${files[@]}"; do
+		[[ -f "$file" ]] || continue
+		report=$(credentials_lint_file "$file") || true
+		if [[ -n "$report" ]]; then
+			rc=1
+			echo -e "${YELLOW}[WARN]${NC} malformed lines in ${file}:"
+			while IFS= read -r line; do
+				printf '  %s\n' "$line"
+			done <<<"$report"
+		fi
+	done
+	if [[ "$rc" -ne 0 ]]; then
+		echo "Repair: aidevops secret set NAME (rewrites the line safely quoted)"
+		return 1
+	fi
+	echo -e "${GREEN}[OK]${NC} credentials files: no malformed export lines"
+	return 0
+}
+
 cmd_status() {
 	print_header
 	echo -e "${BLUE}Security Tools Status:${NC}"
+	echo ""
+
+	cmd_credentials_lint || true
 	echo ""
 
 	# OSV-Scanner
@@ -1139,6 +1175,9 @@ main() {
 	case "$command" in
 	status)
 		cmd_status "$@"
+		;;
+	credentials-lint)
+		cmd_credentials_lint "$@"
 		;;
 	analyze)
 		cmd_analyze "$@"
