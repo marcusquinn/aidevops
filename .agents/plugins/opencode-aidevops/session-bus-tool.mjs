@@ -68,16 +68,26 @@ function idleNote(type, record, sender) {
   return `${state} the question wakes it (at most ${store.LIMITS.wakesPerHour} wakes per hour). Its reply arrives in this session.`;
 }
 
+const ACTIVE_STATUSES = new Set(["busy", "permission"]);
+
+/** Classify a recipient for delivery notes: offline, worker, active, or idle. */
+function recipientKind(record) {
+  if (!record) return "offline";
+  if (store.isWorker(record)) return "worker";
+  return ACTIVE_STATUSES.has(record.status) ? "active" : "idle";
+}
+
 /** GH#40449: a remote-hosted sender's ask to an idle local session cannot wake it, so a reply wait cannot help. */
 function remoteAskToIdle(record, sender) {
-  if (!record || record.interface || store.isWorker(record) || record.status === "busy" || record.status === "permission") return false;
+  if (recipientKind(record) !== "idle" || record.interface) return false;
   return Boolean(remoteSenderApp(sender));
 }
 
 function deliveryNote(type, record, sender) {
-  if (!record) return OFFLINE_NOTE;
-  if (store.isWorker(record)) return workerNote(type, record);
-  if (record.status === "busy" || record.status === "permission") return `${record.handle} is ${record.status}; it sees the message at its next tool result.`;
+  const kind = recipientKind(record);
+  if (kind === "offline") return OFFLINE_NOTE;
+  if (kind === "worker") return workerNote(type, record);
+  if (kind === "active") return `${record.handle} is ${record.status}; it sees the message at its next tool result.`;
   return idleNote(type, record, sender);
 }
 
