@@ -1195,6 +1195,23 @@ _pc_orphan_sibling_name_allowed() {
 }
 
 #######################################
+# Linked-worktree bases examined by the orphan sibling scan: the configured
+# base first, then legacy bases left by a base move (GH#40476). Relocation
+# deliberately does not use this list; it stays repo-parent scoped.
+#
+# Outputs: one base path per line (may not exist; callers check)
+# Returns: 0 always
+#######################################
+_pc_orphan_scan_bases() {
+	if declare -F aidevops_worktree_base_dirs >/dev/null 2>&1; then
+		aidevops_worktree_base_dirs
+	elif declare -F aidevops_worktree_base_dir_configured >/dev/null 2>&1; then
+		aidevops_worktree_base_dir_configured
+	fi
+	return 0
+}
+
+#######################################
 # Safely classify an unregistered sibling directory for trash cleanup.
 #
 # Args:
@@ -1210,25 +1227,23 @@ _pc_classify_orphan_sibling_dir() {
 	local now_epoch="$3"
 	[[ -d "$candidate_path" ]] || return 1
 
-	local repo_parent="" central_base=""
+	local repo_parent="" central_base="" in_scope=0
 	repo_parent=$(dirname "$rp_orphan")
-	central_base=""
-	if declare -F aidevops_worktree_base_dir_configured >/dev/null 2>&1; then
-		central_base=$(aidevops_worktree_base_dir_configured)
-	fi
 	case "$candidate_path" in
-	"$repo_parent"/*) : ;;
+	"$repo_parent"/*) in_scope=1 ;;
 	*)
-		if [[ -n "$central_base" ]]; then
+		while IFS= read -r central_base; do
+			[[ -n "$central_base" ]] || continue
 			case "$candidate_path" in
-			"$central_base"/*) : ;;
-			*) return 1 ;;
+			"$central_base"/*)
+				in_scope=1
+				break
+				;;
 			esac
-		else
-			return 1
-		fi
+		done < <(_pc_orphan_scan_bases)
 		;;
 	esac
+	[[ "$in_scope" -eq 1 ]] || return 1
 
 	if command -v is_registered_canonical >/dev/null 2>&1; then
 		is_registered_canonical "$candidate_path" && return 1
@@ -1313,6 +1328,13 @@ _pc_cleanup_orphan_sibling_dirs() {
 	local repo_records_orphan
 	repo_records_orphan=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | [(.path // ""), (.slug // "")] | @tsv' "$repos_json" 2>/dev/null || printf '')
 
+	# Configured and legacy bases (GH#40476), resolved once per pass.
+	local scan_base=""
+	local -a scan_bases=()
+	while IFS= read -r scan_base; do
+		[[ -n "$scan_base" ]] && scan_bases+=("$scan_base")
+	done < <(_pc_orphan_scan_bases)
+
 	local rp_orphan="" repo_slug_orphan=""
 	while IFS=$'\t' read -r rp_orphan repo_slug_orphan; do
 		[[ -z "$rp_orphan" ]] && continue
@@ -1320,10 +1342,6 @@ _pc_cleanup_orphan_sibling_dirs() {
 		local repo_parent="" repo_name="" candidate_path="" candidate_name="" reason="" central_base=""
 		repo_parent=$(dirname "$rp_orphan")
 		repo_name=$(basename "$rp_orphan")
-		central_base=""
-		if declare -F aidevops_worktree_base_dir_configured >/dev/null 2>&1; then
-			central_base=$(aidevops_worktree_base_dir_configured)
-		fi
 		[[ -d "$repo_parent" && -n "$repo_name" ]] || continue
 		for candidate_path in "$repo_parent/$repo_name"-* "$repo_parent/$repo_name".*; do
 			[[ -d "$candidate_path" ]] || continue
@@ -1342,7 +1360,8 @@ _pc_cleanup_orphan_sibling_dirs() {
 				fi
 			fi
 		done
-		if [[ -n "$central_base" && -d "$central_base" && "$central_base" != "$repo_parent" ]]; then
+		for central_base in ${scan_bases[@]+"${scan_bases[@]}"}; do
+			[[ -d "$central_base" && "$central_base" != "$repo_parent" ]] || continue
 			for candidate_path in "$central_base/$repo_name"-* "$central_base/$repo_name".*; do
 				[[ -d "$candidate_path" ]] || continue
 				candidate_name=$(basename "$candidate_path")
@@ -1360,7 +1379,7 @@ _pc_cleanup_orphan_sibling_dirs() {
 					fi
 				fi
 			done
-		fi
+		done
 	done <<<"$repo_records_orphan"
 
 	echo "$moved_count"

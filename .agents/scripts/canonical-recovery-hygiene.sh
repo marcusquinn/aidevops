@@ -23,7 +23,8 @@
 # was last written and targets this repository. Apply re-checks every gate under
 # the canonical recovery lock, verifies the tamper-evident audit chain first,
 # and records each removal's intent and outcome (relative path, size, mtime;
-# never a repository path or name).
+# never a repository path or name). The summary also reports TMP_PACK_BYTES and
+# TMP_PACK_YOUNG_BYTES (kept by the age gate) so accumulation stays visible.
 
 CGH_REPAIR_CMD="repair-stale-locks"
 CGH_GC_CMD="maintenance-gc"
@@ -40,6 +41,9 @@ CGH_PID_VERDICTS=" "
 CGH_LOCK_DIR=""
 CGH_EVAL_REASON=""
 CGH_EVAL_IDENTITY=""
+# Byte size from the last evaluation's stat, also when it was skipped, so
+# pack temporaries younger than the age gate stay visible (GH#40476).
+CGH_EVAL_SIZE=""
 CGH_LOCK_HELD=0
 # Resolved in cgh_main once SCRIPT_DIR is known.
 CGH_AUDIT_TOOL=""
@@ -227,6 +231,7 @@ _cgh_evaluate() {
 
 	CGH_EVAL_REASON=""
 	CGH_EVAL_IDENTITY=""
+	CGH_EVAL_SIZE=""
 	if [[ -L "$path" || ! -f "$path" ]]; then
 		CGH_EVAL_REASON="not-regular"
 		return 1
@@ -243,6 +248,7 @@ _cgh_evaluate() {
 		CGH_EVAL_REASON="stat-failed"
 		return 1
 	fi
+	CGH_EVAL_SIZE="$size"
 	# Holder and process checks only see this user's processes.
 	if [[ "$owner" != "$(id -u)" ]]; then
 		CGH_EVAL_REASON="foreign-owner"
@@ -392,6 +398,7 @@ _cgh_repair() {
 	local operation="$6"
 	local now="" kind="" path="" relative="" min_age=0 size="" mtime="" step_rc=0
 	local lock_candidates=0 tmp_candidates=0 skipped=0 removed=0 failed=0 repo_id=""
+	local tmp_bytes=0 tmp_young_bytes=0 size_field=""
 	local -a plan_kinds=() plan_paths=() plan_identities=()
 	local i=0
 
@@ -402,7 +409,16 @@ _cgh_repair() {
 		relative="${path#"${common}/"}"
 		min_age="$lock_age"
 		[[ "$kind" == "$CGH_KIND_TMP_PACK" ]] && min_age="$tmp_age"
-		if _cgh_evaluate "$path" "$min_age" "$common" "$repo" "$now"; then
+		step_rc=0
+		_cgh_evaluate "$path" "$min_age" "$common" "$repo" "$now" || step_rc=$?
+		# Size every scoped pack temporary, candidate or not (GH#40476).
+		size_field=""
+		if [[ "$kind" == "$CGH_KIND_TMP_PACK" && "$CGH_EVAL_SIZE" =~ ^[0-9]+$ ]]; then
+			tmp_bytes=$((tmp_bytes + CGH_EVAL_SIZE))
+			[[ "$CGH_EVAL_REASON" == "fresh" ]] && tmp_young_bytes=$((tmp_young_bytes + CGH_EVAL_SIZE))
+			size_field=" size=${CGH_EVAL_SIZE}"
+		fi
+		if [[ "$step_rc" -eq 0 ]]; then
 			IFS=' ' read -r _ size mtime _ <<<"$CGH_EVAL_IDENTITY"
 			printf 'CANDIDATE kind=%s path=%s size=%s mtime=%s age_minutes=%s\n' \
 				"$kind" "$relative" "$size" "$mtime" "$(((now - mtime) / 60))"
@@ -415,12 +431,14 @@ _cgh_repair() {
 				lock_candidates=$((lock_candidates + 1))
 			fi
 		else
-			printf 'SKIP reason=%s kind=%s path=%s\n' "$CGH_EVAL_REASON" "$kind" "$relative"
+			printf 'SKIP reason=%s kind=%s path=%s%s\n' "$CGH_EVAL_REASON" "$kind" "$relative" "$size_field"
 			skipped=$((skipped + 1))
 		fi
 	done < <(_cgh_scope_paths "$common")
 	printf 'STALE_LOCK_CANDIDATES=%s\nTMP_PACK_CANDIDATES=%s\nSKIPPED=%s\n' \
 		"$lock_candidates" "$tmp_candidates" "$skipped"
+	# Bytes of every scoped pack temporary, and of those kept as too young.
+	printf 'TMP_PACK_BYTES=%s\nTMP_PACK_YOUNG_BYTES=%s\n' "$tmp_bytes" "$tmp_young_bytes"
 	if [[ "$apply" -ne 1 ]]; then
 		printf 'MODE=dry-run\n'
 		return 0
