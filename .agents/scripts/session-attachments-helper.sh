@@ -36,6 +36,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=opencode-db-inventory-lib.sh
 source "${SCRIPT_DIR}/opencode-db-inventory-lib.sh"
+# shellcheck source=opencode-db-archive-segments-lib.sh
+source "${SCRIPT_DIR}/opencode-db-archive-segments-lib.sh"
 
 set -euo pipefail
 
@@ -119,8 +121,10 @@ collect_dbs() {
 	while IFS= read -r -d '' db; do
 		add_db "$db"
 	done < <(opencode_db_inventory "${CURRENT_DATA_DIR}/opencode.db")
-	add_db "${CURRENT_DATA_DIR}/opencode-archive.db"
-	add_db "${SHARED_DATA_DIR}/opencode-archive.db"
+	# GH#40419: legacy archive plus monthly segments beside it.
+	while IFS= read -r db; do
+		add_db "$db"
+	done < <(opencode_archive_segments "${CURRENT_DATA_DIR}/opencode-archive.db" && opencode_archive_segments "${SHARED_DATA_DIR}/opencode-archive.db")
 	return 0
 }
 
@@ -131,7 +135,7 @@ cmd_locations() {
 	for db in "${DB_LIST[@]+"${DB_LIST[@]}"}"; do
 		[[ "$db" -ef "${CURRENT_DATA_DIR}/opencode.db" ]] && continue
 		case "$db" in
-		*opencode-archive.db) label=archive ;;
+		*opencode-archive.db | */opencode-archive-[0-9][0-9][0-9][0-9]-[0-1][0-9].db) label=archive ;;
 		"${SHARED_DATA_DIR}/opencode.db") label=shared ;;
 		*) label=isolated ;;
 		esac

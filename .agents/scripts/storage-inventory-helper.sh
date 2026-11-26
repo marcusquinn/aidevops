@@ -29,6 +29,8 @@ if [[ -f "$SCRIPT_DIR/opencode-db-safety-lib.sh" ]]; then
 	source "$SCRIPT_DIR/opencode-db-safety-lib.sh"
 	OPENCODE_STORAGE_PROBES_AVAILABLE=1
 fi
+# shellcheck source=opencode-db-archive-segments-lib.sh
+source "$SCRIPT_DIR/opencode-db-archive-segments-lib.sh"
 if [[ -f "$SCRIPT_DIR/worktree-recovery-lifecycle-helper.sh" ]]; then
 	# shellcheck source=worktree-recovery-lifecycle-helper.sh
 	source "$SCRIPT_DIR/worktree-recovery-lifecycle-helper.sh"
@@ -363,12 +365,19 @@ _storage_opencode_records() {
 	fi
 	active_measure=$(_storage_measure_group "$active_db")
 	wal_measure=$(_storage_measure_group "${active_db}-wal" "${active_db}-shm")
-	archive_measure=$(_storage_measure_group "$archive_db" "${archive_db}-wal" "${archive_db}-shm")
+	# GH#40419: monthly archive segments beside the legacy archive are archive bytes too.
+	local archive_extra=()
+	local archive_segment=""
+	while IFS= read -r archive_segment; do
+		[[ -n "$archive_segment" && "$archive_segment" != "$archive_db" ]] || continue
+		archive_extra+=("$archive_segment" "${archive_segment}-wal" "${archive_segment}-shm")
+	done < <(opencode_archive_segments "$archive_db")
+	archive_measure=$(_storage_measure_group "$archive_db" "${archive_db}-wal" "${archive_db}-shm" "${archive_extra[@]+"${archive_extra[@]}"}")
 	legacy_measure=$(_storage_measure_group "$legacy_path")
 	tool_measure=$(_storage_measure_group "$tool_path")
 	residual_measure=$(_storage_opencode_residual_measurement "$data_root" \
 		"$active_db" "${active_db}-wal" "${active_db}-shm" \
-		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
+		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "${archive_extra[@]+"${archive_extra[@]}"}" "$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
 	_storage_emit_opencode_backups "$data_root" "${backup_paths[@]+"${backup_paths[@]}"}"
 
 	if [[ "$OPENCODE_STORAGE_PROBES_AVAILABLE" -eq 1 ]]; then

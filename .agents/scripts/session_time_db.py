@@ -68,17 +68,27 @@ def readonly_connection(db_path):
     return sqlite3.connect(uri, uri=True, timeout=5)
 
 
+def archive_segments(directory):
+    """Legacy archive plus monthly segments (GH#40419), legacy first."""
+    pattern = str(directory / "opencode-archive-[0-9][0-9][0-9][0-9]-[0-1][0-9].db")
+    found = [directory / "opencode-archive.db"]
+    found.extend(Path(item) for item in sorted(glob.glob(pattern)))
+    return [item for item in found if item.is_file() and not item.is_symlink()]
+
+
 def db_paths(home, explicit):
     if explicit:
         path = Path(explicit)
         return [path] if path.is_file() else []
-    paths = [home / ".local/share/opencode/opencode.db", home / ".local/share/opencode/opencode-archive.db"]
+    data_dir = home / ".local/share/opencode"
+    paths = [data_dir / "opencode.db"] + archive_segments(data_dir)
     work = Path(os.environ.get("AIDEVOPS_WORK_DIR", home / ".aidevops/.agent-workspace/work"))
     # opencode-launcher-helper.sh isolates each TUI, desktop and server launch in
     # its own OpenCode 1 data home (GH#32744); each may also carry an archive.
     for launcher in ("opencode-interactive", "opencode-desktop", "opencode-server"):
-        for name in ("opencode.db", "opencode-archive.db"):
-            paths.extend(Path(item) for item in sorted(glob.glob(str(work / launcher / "*" / "opencode" / name))))
+        for data in sorted(glob.glob(str(work / launcher / "*" / "opencode"))):
+            paths.append(Path(data) / "opencode.db")
+            paths.extend(archive_segments(Path(data)))
     return [item for item in paths if item.is_file()]
 
 

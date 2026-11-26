@@ -144,13 +144,26 @@ _report_print_page_stats() {
 	return 0
 }
 
+# _report_archive_bytes <legacy-archive-path>: bytes of legacy archive plus monthly segments (GH#40419).
+_report_archive_bytes() {
+	local legacy="$1"
+	local segment="" total=0 bytes=""
+	while IFS= read -r segment; do
+		[[ -n "$segment" ]] || continue
+		bytes=$(_db_size_bytes "$segment")
+		[[ "$bytes" =~ ^[0-9]+$ ]] && total=$((total + bytes))
+	done < <(opencode_archive_segments "$legacy")
+	printf '%s\n' "$total"
+	return 0
+}
+
 cmd_report() {
 	local inventory_db
 	printf '\nOpenCode DB inventory (active / WAL / archive bytes):\n'
 	while IFS= read -r -d '' inventory_db; do
 		printf '  %s: %s / %s / %s\n' "$inventory_db" \
 			"$(_db_size_bytes "$inventory_db")" "$(_db_size_bytes "${inventory_db}-wal")" \
-			"$(_db_size_bytes "${inventory_db%/*}/opencode-archive.db")"
+			"$(_report_archive_bytes "${inventory_db%/*}/opencode-archive.db")"
 	done < <(opencode_db_inventory "$OPENCODE_DB")
 	# Inventory is still useful when the selected/default DB does not exist.
 	[[ -f "$OPENCODE_DB" ]] || return 0
