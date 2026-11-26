@@ -180,7 +180,9 @@ get_active_worker_sessions() {
 	# BSD find rounds the age up to whole minutes, so -61 keeps every log the
 	# old `mtime > now - 3600` check kept (GNU: at most one minute more, the
 	# protective direction). grep exits 1 when a batch has no UUID; not an error.
-	find "$pulse_tmp_root" -maxdepth 1 -type f -name 'pulse-*.log' -mmin -61 \
+	# -H follows a symlinked root (AIDEVOPS_PULSE_TMP_DIR) as the old glob did;
+	# without it find never enters the root and protects no session.
+	find -H "$pulse_tmp_root" -maxdepth 1 -type f -name 'pulse-*.log' -mmin -61 \
 		-exec grep -ohE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' {} + 2>/dev/null |
 		sort -u || true
 	return 0
