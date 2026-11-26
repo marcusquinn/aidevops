@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 
+from autonomy_attention import attention, print_attention
 from autonomy_report_text import print_text
 
 TARGET_INTERACTIVE_SHARE = 0.15
@@ -196,7 +197,7 @@ def queue_rows(scope_rows, repos, framework, totals):
     return rows
 
 
-def report(repos, framework, weeks, now):
+def report(repos, framework, weeks, now, with_attention=False):
     scope_rows = scopes(repos, framework)
     end = now.date() - timedelta(days=now.weekday())
     windows = [(end - timedelta(weeks=i + 1), end - timedelta(weeks=i))
@@ -206,7 +207,7 @@ def report(repos, framework, weeks, now):
     for row, origin in product(scope_rows, ("worker", "interactive")):
         query = scope_rows[row] + " " + WEEKLY[origin].format(span=week_span(windows[-1]))
         leads.append({"scope": row, "origin": origin, **lead_time(query)})
-    return {
+    result = {
         "window": {"start": str(windows[0][0]), "end_exclusive": str(end),
                    "weeks": weeks, "generated_at": now.isoformat()},
         "rows": weekly_rows(scope_rows, windows, totals), "lead_times": leads,
@@ -218,6 +219,9 @@ def report(repos, framework, weeks, now):
                     "blocked_stale_14d_eq": TARGET_BLOCKED_STALE_14D},
         "notes": NOTES,
     }
+    if with_attention:
+        result["attention"] = attention(result["rows"], windows, framework, ratio)
+    return result
 
 
 def main():
@@ -225,6 +229,8 @@ def main():
     parser.add_argument("--weeks", type=int, default=8, help="Completed UTC weeks (1-52; default 8)")
     parser.add_argument("--framework-repo", default="marcusquinn/aidevops")
     parser.add_argument("--json", action="store_true", help="Print one JSON object; unavailable values are null")
+    parser.add_argument("--attention", action="store_true",
+                        help="Add local OpenCode human-prompt counts per week (this machine only)")
     args = parser.parse_args()
     if not 1 <= args.weeks <= 52:
         parser.error("--weeks must be between 1 and 52")
@@ -232,7 +238,8 @@ def main():
         parser.error("--framework-repo must be owner/repo")
     try:
         path = Path(os.environ.get("REPOS_FILE", str(Path.home() / ".config/aidevops/repos.json")))
-        result = report(registry(path), args.framework_repo.lower(), args.weeks, datetime.now(timezone.utc))
+        result = report(registry(path), args.framework_repo.lower(), args.weeks, datetime.now(timezone.utc),
+                        args.attention)
     except OSError:
         print("autonomy-report: cannot read registry or execute gh", file=sys.stderr)
         return 1
@@ -246,6 +253,8 @@ def main():
         print(json.dumps(result, allow_nan=False))
     else:
         print_text(result)
+        if "attention" in result:
+            print_attention(result["attention"])
     return 0
 
 

@@ -342,8 +342,7 @@ The report is a diagnostic lead, not a policy verdict. Correlate fingerprints wi
 ### 6. Autonomy outcomes (GitHub)
 
 Run `autonomy-report-helper.sh report --weeks 2` (or add `--json`) for a read-only report from GitHub and `${REPOS_FILE:-$HOME/.config/aidevops/repos.json}`.
-The framework repository has its own row (`--framework-repo` overrides it); each other managed owner gets a row covering that owner's repositories.
-Weeks are completed Monday-Sunday UTC windows; queue health is current.
+The framework repository has its own row (`--framework-repo` overrides it); each other managed owner gets a row covering that owner's repositories. Weeks are completed Monday-Sunday UTC windows; queue health is current.
 
 - **Merged throughput:** weekly worker, interactive and total merged PRs; missing origin labels contribute only to total.
 - **Interactive share:** interactive / (worker + interactive), target **<15%**.
@@ -352,6 +351,7 @@ Weeks are completed Monday-Sunday UTC windows; queue health is current.
 - **Queue:** available auto-dispatch issues, idle 7+ days split by local pulse on/off/not registered, blocked issues and stale 14+ days, hold-for-review PRs, and needs-maintainer-review items; idle pulse-on and stale blocked targets are both **0**.
 
 Targets are initial heuristics, not gates, defined at the top of `scripts/autonomy_report.py`.
+Add `--attention` for a local per-week section (`attention` in JSON) from OpenCode session databases opened with `mode=ro`: **human prompts** are user messages with non-synthetic text in top-level sessions, excluding automated directories (temp, `-feature-auto-`, `-ci-repair-`, PR review worktrees, `.aidevops`); **nudges** are bare `continue`/`proceed`-style prompts; **framework share** is prompts in the framework repo or its linked worktrees divided by all prompts (target trending to **<=20%**); **merged PRs per prompt** divides the GitHub merged rows by prompts, with and without the framework repo. Counts only: no prompt text, titles or directories are printed. Claude Code sessions and other machines are not counted, so it is an approximation; skipped databases are reported.
 JSON has `window`, `rows`, `lead_times`, `queue`, `targets`, and `notes`; unavailable ratios/percentiles are `null`.
 Counts are point-in-time search totals (including totals above 1,000), whereas lead-time samples cap at 100. Any GitHub error fails the whole report without printing partial tables. No results are saved or posted.
 
