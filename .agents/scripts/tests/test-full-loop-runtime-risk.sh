@@ -118,6 +118,12 @@ done
 for low_path in tests/test-docs.sh foo.test.ts test_foo.py foo_test.go src/foo.test.ts pkg/foo_test.go commitlint.config.js; do
 	assert_accepted "test/lint file stays Low: ${low_path}" _runtime_path_is_low "$low_path"
 done
+for low_path in _reports/brand-guidelines/brand-guidelines.html _reports/brand-guidelines/brand-guidelines-a4.pdf site/_reports/seo/chart.svg; do
+	assert_accepted "generated report artifact is Low: ${low_path}" _runtime_path_is_low "$low_path"
+done
+for low_path in _reports/render.sh _reports/auth.js reports/page.html; do
+	assert_rejected "non-artifact or non-_reports path is not Low: ${low_path}" _runtime_path_is_low "$low_path"
+done
 assert_rejected "invalid diff base fails closed" \
 	_derive_runtime_risk "" "src/app.sh" "Adjust helper behavior" "missing-runtime-base"
 

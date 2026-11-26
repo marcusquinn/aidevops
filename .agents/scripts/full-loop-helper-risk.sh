@@ -107,6 +107,15 @@ _runtime_path_is_low() {
 		return 0
 		;;
 	esac
+	# Generated report artifacts (report-render / design guidelines) are review
+	# output, not runtime; checklist prose such as "no credentials" must not make
+	# them Critical. Extension-limited so scripts placed under _reports/ stay runtime.
+	case "$path" in
+	_reports/*.html | _reports/*.pdf | _reports/*.png | _reports/*.svg | _reports/*.csv | \
+		*/_reports/*.html | */_reports/*.pdf | */_reports/*.png | */_reports/*.svg | */_reports/*.csv)
+		return 0
+		;;
+	esac
 	# Basename-only forms: a directory or substring must not make runtime source Low.
 	local base="${path##*/}"
 	case "$base" in
