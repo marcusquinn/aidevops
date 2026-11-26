@@ -341,7 +341,7 @@ EOF
 
 	rm -rf "$tmp_repo"
 
-	if [ "$ret" -eq 0 ] && printf '%s' "$output" | grep -q 'no new repeated string literals'; then
+	if [ "$ret" -eq 0 ] && grep -q 'no new repeated string literals' <<<"$output"; then
 		print_result "local linter: pre-existing string-literal debt is non-blocking" 0
 	else
 		print_result "local linter: pre-existing string-literal debt is non-blocking" 1 \
