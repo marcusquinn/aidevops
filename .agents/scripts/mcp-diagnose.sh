@@ -410,22 +410,10 @@ except Exception:
 PYEOF
 }
 
-# Check all config files for this MCP's type.
-# Prefer 'remote' or 'sse' if found in any config (an enabled remote entry
-# takes precedence over a disabled local entry in another config).
-while IFS= read -r _diag_cfg; do
-	_mcp_type=$(_detect_mcp_type "$MCP_NAME" "$_diag_cfg" 2>/dev/null)
-	if [[ "$_mcp_type" == "$MCP_REMOTE_TYPE" || "$_mcp_type" == "sse" ]]; then
-		MCP_CONFIGURED_TYPE="$_mcp_type"
-		break
-	elif [[ -n "$_mcp_type" && -z "$MCP_CONFIGURED_TYPE" ]]; then
-		MCP_CONFIGURED_TYPE="$_mcp_type"
-	fi
-done < <(for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do printf '%s\n' "${_diag_entry#*"${MCP_CONFIG_SEPARATOR}"}"; done)
-
-# GH#40451: the plugin registry decides the runtime type for registry-only
-# servers and for entries it always overwrites (e.g. sentry replaces a legacy
-# local+token config), so a remote OAuth server is never treated as a CLI.
+# GH#40451: the OpenCode plugin registry decides the runtime type for
+# registry-only servers and for OpenCode entries it always overwrites (e.g.
+# sentry replaces a legacy local+token config), so a remote OAuth server is
+# never treated as a CLI. Other runtimes keep their configured type.
 # Prints "<type> <overwrite:0|1>", or nothing when unknown.
 _registry_mcp_type() {
 	local mcp_name="$1"
@@ -442,7 +430,24 @@ if (typeof entry?.type === "string") process.stdout.write(`${entry.type} ${entry
 }
 _registry_type="" _registry_overwrite=0
 read -r _registry_type _registry_overwrite <<<"$(_registry_mcp_type "$MCP_NAME")" || true
-if [[ -n "$_registry_type" && ("$_registry_overwrite" == "1" || -z "$MCP_CONFIGURED_TYPE") ]]; then
+
+# Check all config files for this MCP's type.
+# Prefer 'remote' or 'sse' if found in any config (an enabled remote entry
+# takes precedence over a disabled local entry in another config).
+for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do
+	if [[ "${_diag_entry%%"${MCP_CONFIG_SEPARATOR}"*}" == "opencode" && "$_registry_overwrite" == "1" && -n "$_registry_type" ]]; then
+		_mcp_type="$_registry_type"
+	else
+		_mcp_type=$(_detect_mcp_type "$MCP_NAME" "${_diag_entry#*"${MCP_CONFIG_SEPARATOR}"}" 2>/dev/null)
+	fi
+	if [[ "$_mcp_type" == "$MCP_REMOTE_TYPE" || "$_mcp_type" == "sse" ]]; then
+		MCP_CONFIGURED_TYPE="$_mcp_type"
+		break
+	elif [[ -n "$_mcp_type" && -z "$MCP_CONFIGURED_TYPE" ]]; then
+		MCP_CONFIGURED_TYPE="$_mcp_type"
+	fi
+done
+if [[ -z "$MCP_CONFIGURED_TYPE" && -n "$_registry_type" ]]; then
 	MCP_CONFIGURED_TYPE="$_registry_type"
 fi
 
@@ -856,8 +861,10 @@ PYEOF
 if [[ "$MCP_IS_REMOTE" == "true" ]]; then
 	echo -e "   ${CYAN}[remote]${NC} $MCP_NAME is a remote/SSE MCP (type: ${MCP_CONFIGURED_TYPE}) — no local command required."
 	echo "   Remote MCPs connect over the network and cannot be diagnosed locally."
-	echo "   OAuth login status for this session's credential store: opencode mcp auth list"
-	echo "   Log in (session store): ${XDG_DATA_HOME:+XDG_DATA_HOME=\"${XDG_DATA_HOME}\" }opencode mcp auth ${MCP_NAME}"
+	_store_prefix=""
+	[[ -z "${XDG_DATA_HOME:-}" ]] || _store_prefix="XDG_DATA_HOME=$(printf '%q' "$XDG_DATA_HOME") "
+	echo "   OAuth login status for this credential store: ${_store_prefix}opencode mcp auth list"
+	echo "   Log in (same store): ${_store_prefix}opencode mcp auth $(printf '%q' "$MCP_NAME")"
 	echo ""
 	echo "4. Known issues for $MCP_NAME..."
 	case "$MCP_NAME" in

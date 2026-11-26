@@ -166,26 +166,33 @@ copy_auth_json() {
 # mcp-auth.json, which a per-project XDG_DATA_HOME never reads. Merge the
 # global entries into the session store per server, keeping every entry the
 # session already has: OAuth refresh rotates tokens inside the session store,
-# and overwriting them would revoke a working login. Best-effort: invalid or
-# unreadable JSON leaves the session store untouched. Only for stores owned by
+# and overwriting them would revoke a working login. Best-effort: each file
+# must hold exactly one JSON object, otherwise the session store is untouched.
+# Skipped while any process holds the shard's database open (or holders are
+# unknown): a live OpenCode may be rotating tokens in this file, and the
+# in-session login command covers running sessions. Only for stores owned by
 # the user's interactive, desktop or server sessions, never conversation or
 # worker stores. Contents are never printed.
 seed_mcp_auth_json() {
     local target_data_dir="$1"
     local source_auth="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/mcp-auth.json"
     local target_auth="${target_data_dir}/opencode/mcp-auth.json"
-    local target_input="" temp_auth=""
+    local target_input="" temp_auth="" holder_status=0
 
     [[ -f "${source_auth}" ]] || return 0
     [[ "${source_auth}" == "${target_auth}" ]] && return 0
     command -v jq >/dev/null 2>&1 || return 0
+    server_shard_has_holders "${target_data_dir}" 2>/dev/null || holder_status=$?
+    ((holder_status == 1)) || return 0
     mkdir -p "$(dirname "${target_auth}")" || return 0
     target_input="${target_auth}"
     [[ -f "${target_auth}" ]] || target_input=/dev/null
     temp_auth=$(umask 077 && mktemp "${target_auth}.XXXXXX") || return 0
-    if jq -s 'if length == 1 then .[1] = {} else . end
-        | if (.[0] | type) == "object" and (.[1] | type) == "object" then .[0] + .[1] else error("not objects") end' \
-        "${source_auth}" "${target_input}" >"${temp_auth}" 2>/dev/null &&
+    if jq -n --slurpfile global "${source_auth}" --slurpfile session "${target_input}" '
+        if ($global | length) == 1 and ($global[0] | type) == "object"
+            and (($session | length) == 0 or (($session | length) == 1 and ($session[0] | type) == "object"))
+        then $global[0] + ($session[0] // {}) else error("expected one object per file") end' \
+        >"${temp_auth}" 2>/dev/null &&
         chmod 600 "${temp_auth}" && mv -f "${temp_auth}" "${target_auth}"; then
         return 0
     fi

@@ -256,6 +256,16 @@ if [[ "${mcp_merged}" == '{"alpha":{"tokens":"global-a"},"beta":{"tokens":"sessi
 else
     _fail "mcp-auth.json merge unexpected: merged=${mcp_merged} mode=${mcp_mode}"
 fi
+# A source holding more than one JSON value leaves the session store untouched.
+printf '{"alpha":1}\n{"beta":"global"}\n' >"${home_dir}/.local/share/opencode/mcp-auth.json"
+PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
+    "${HELPER}" --dir "${launch_dir}" --session-id mcp-auth-merge -- --version >/dev/null 2>&1 || true
+mcp_after=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+if [[ "${mcp_after}" == "${mcp_merged}" ]]; then
+    _pass "launcher leaves the session mcp-auth.json untouched when the source is not one object (GH#40451)"
+else
+    _fail "malformed global mcp-auth.json changed the session store: ${mcp_after}"
+fi
 rm -f "${home_dir}/.local/share/opencode/mcp-auth.json"
 
 output=$(env -u TMPDIR -u TMP -u TEMP PATH="${fake_bin}:$PATH" HOME="${home_dir}" \
