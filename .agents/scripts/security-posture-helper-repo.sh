@@ -602,7 +602,7 @@ _rulesets_required_check_contexts() {
 _required_check_present() {
 	local contexts="$1"
 	local required_context="$2"
-	printf '%s\n' "$contexts" | grep -qxF "$required_context" 2>/dev/null
+	grep -qxF "$required_context" <<<"$contexts" 2>/dev/null
 	return $?
 }
 
@@ -1581,14 +1581,14 @@ _detect_cross_account_inherit() {
 	decoded=$(printf '%s' "$workflow_content" | base64 -d 2>/dev/null) || return 2
 
 	# Must be a marcusquinn/aidevops reusable-workflow caller
-	if ! printf '%s' "$decoded" | grep -q 'uses:.*marcusquinn/aidevops/'; then
+	if ! grep -q 'uses:.*marcusquinn/aidevops/' <<<"$decoded"; then
 		return 1
 	fi
 
 	# Must use an active secrets:inherit key (the broken cross-account pattern).
 	# Explanatory comments in the canonical caller must not trigger the advisory.
-	if ! printf '%s' "$decoded" | grep -qE \
-		'^[[:space:]]*secrets:[[:space:]]*inherit([[:space:]]+#.*)?[[:space:]]*$'; then
+	if ! grep -qE \
+		'^[[:space:]]*secrets:[[:space:]]*inherit([[:space:]]+#.*)?[[:space:]]*$' <<<"$decoded"; then
 		return 1
 	fi
 
