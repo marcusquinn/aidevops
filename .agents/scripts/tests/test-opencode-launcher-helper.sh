@@ -11,6 +11,9 @@ unset AIDEVOPS_TEAM_INTERFACE_OVERLAY AIDEVOPS_CONVERSATION_PROJECT_ROOT \
     AIDEVOPS_CONVERSATION_RUNTIME_ROOT AIDEVOPS_SIG_MODEL BUZZ_ACP_MODEL \
     OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_DIR \
     OPENCODE_DISABLE_DEFAULT_PLUGINS OPENCODE_MODEL OPENCODE_PURE
+# GH#40451: credential sources resolve from the fixture HOME, never the
+# running session's real store.
+unset XDG_DATA_HOME
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
@@ -236,6 +239,42 @@ if [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
 else
     _fail "isolated launcher output unexpected: ${output}"
 fi
+
+# GH#40451: a terminal MCP OAuth login seeds a session store that has none,
+# and never replaces an existing (possibly refreshed) session store.
+mcp_session_dir="${work_dir}/opencode-interactive/mcp-auth-merge/opencode"
+mkdir -p "${mcp_session_dir}"
+_run_mcp_seed() {
+    PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
+        "${HELPER}" --dir "${launch_dir}" --session-id mcp-auth-merge -- --version 2>&1 || true
+    return 0
+}
+# A source holding more than one JSON value never creates a store.
+printf '{"alpha":1}\n{"beta":"global"}\n' >"${home_dir}/.local/share/opencode/mcp-auth.json"
+_run_mcp_seed >/dev/null
+if [[ ! -e "${mcp_session_dir}/mcp-auth.json" ]]; then
+    _pass "launcher does not seed mcp-auth.json from a source that is not one object (GH#40451)"
+else
+    _fail "malformed global mcp-auth.json created a session store"
+fi
+printf '{"alpha":{"tokens":"global-a"}}\n' >"${home_dir}/.local/share/opencode/mcp-auth.json"
+mcp_output=$(_run_mcp_seed)
+mcp_seeded=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+mcp_mode=$(stat -f '%Lp' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || stat -c '%a' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+if [[ "${mcp_seeded}" == '{"alpha":{"tokens":"global-a"}}' && "${mcp_mode}" == "600" && "${mcp_output}" != *"global-a"* ]]; then
+    _pass "launcher seeds a missing session mcp-auth.json from the global store (GH#40451)"
+else
+    _fail "mcp-auth.json seed unexpected: seeded=${mcp_seeded} mode=${mcp_mode}"
+fi
+printf '{"beta":{"tokens":"session-b"}}\n' >"${mcp_session_dir}/mcp-auth.json"
+_run_mcp_seed >/dev/null
+mcp_after=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+if [[ "${mcp_after}" == '{"beta":{"tokens":"session-b"}}' ]]; then
+    _pass "launcher never replaces an existing session mcp-auth.json (GH#40451)"
+else
+    _fail "existing session mcp-auth.json changed: ${mcp_after}"
+fi
+rm -f "${home_dir}/.local/share/opencode/mcp-auth.json"
 
 output=$(env -u TMPDIR -u TMP -u TEMP PATH="${fake_bin}:$PATH" HOME="${home_dir}" \
     AIDEVOPS_WORK_DIR="${work_dir}" \
