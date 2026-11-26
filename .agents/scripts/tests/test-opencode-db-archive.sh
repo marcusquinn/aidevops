@@ -1269,6 +1269,13 @@ else
 	_fail "legacy default epoch restore failed: $out"
 fi
 
+# GH#40452: the deadline cases below give the helper a 10 s budget. A real
+# `lsof` holder probe scans every process (1.4-2.7 s per call on a busy host,
+# three or more calls per run), so load alone exhausted the budget before the
+# first commit. Holder vetoes have their own cases with mock holders; here a
+# no-holder stub keeps the budget for the stages under test.
+export OPENCODE_DB_HOLDER_COMMAND="$inbox_no_holder"
+
 # Inject delays into actual SQLite candidate execution and between durable
 # copy/delete commits. Only this fixture-local executable is interposed.
 sqlite_bin=$(command -v sqlite3)
@@ -1418,6 +1425,7 @@ if [[ "$out" == *"deferring it as oversized"* && "$(sqlite3 "$ACTIVE_DB" 'SELECT
 else
 	_fail "oversized deferral mismatch: rc=$rc output=$out"
 fi
+unset OPENCODE_DB_HOLDER_COMMAND
 
 # Signal the scheduled runner, rather than its foreground SQLite child. Its
 # EXIT receipt must include the signal status and it must release its lock.
