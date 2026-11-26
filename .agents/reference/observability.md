@@ -321,20 +321,13 @@ The helper exposes data for course-correction; it does not kill the session.
 
 ### 4. Output sandbox (noisy command evidence)
 
-`output-sandbox-helper.sh` stores noisy raw command output in
-`~/.aidevops/.agent-workspace/output-sandbox/` with a SQLite index and WAL mode.
-The assistant receives a compact receipt instead of full logs: output ID,
-outcome, process/verified exit codes, decision basis, byte/line counts, and
-redaction state. Raw storage paths are never model-visible. Failure defaults to
-bounded diagnostic lines; exact evidence remains retrievable deliberately with
-`output-sandbox-helper.sh show OUTPUT_ID --offset N --limit N`.
+`output-sandbox-helper.sh` stores noisy raw command output in `~/.aidevops/.agent-workspace/output-sandbox/` with a SQLite index and WAL mode.
+The assistant receives a compact receipt instead of full logs: output ID, outcome, process/verified exit codes, decision basis, byte/line counts, and redaction state. Raw storage paths are never model-visible.
+Failure defaults to bounded diagnostic lines; exact evidence remains retrievable deliberately with `output-sandbox-helper.sh show OUTPUT_ID --offset N --limit N`.
 
-Use it for repeatable noisy flows such as diagnostics, CI logs, worker output,
-and browser/tool logs. Do not use it for file reads, JSON assertions, security
-scans, exact diffs, or credential-sensitive commands where verbatim output must
-stay directly visible or be handled by a dedicated redaction path. The helper
-also bypasses common exact-output commands and redacts simple secret patterns
-before storage.
+Use it for repeatable noisy flows such as diagnostics, CI logs, worker output, and browser/tool logs.
+Do not use it for file reads, JSON assertions, security scans, exact diffs, or credential-sensitive commands where verbatim output must stay directly visible or be handled by a dedicated redaction path.
+The helper also bypasses common exact-output commands and redacts simple secret patterns before storage.
 
 Maintenance: `output-sandbox-helper.sh cleanup --max-age-days 14` removes old
 raw files, deletes matching SQLite rows, and runs `VACUUM` to keep the local
@@ -342,45 +335,28 @@ store bounded.
 
 ### 5. Session output-efficiency evidence
 
-`session-review-helper.sh output-efficiency --session ID --json` reads the exact
-local OpenCode or Claude Code transcript through the Vault-managed history gate.
-It reports only aggregate, model-visible tool-output evidence: unchanged
-snapshots, duplicate results, repeated lines/blocks, successful oversized
-results, raw fallbacks, and exact-output bypasses. Receipt-declared background
-evidence bytes are reported separately; background content is not scanned or
-copied into model context. Inputs, commands, outputs, transcript paths, and raw
-fragments remain omitted.
+`session-review-helper.sh output-efficiency --session ID --json` reads the exact local OpenCode or Claude Code transcript through the Vault-managed history gate.
+It reports only aggregate, model-visible tool-output evidence: unchanged snapshots, duplicate results, repeated lines/blocks, successful oversized results, raw fallbacks, and exact-output bypasses.
+Receipt-declared background evidence bytes are reported separately; background content is not scanned or copied into model context. Inputs, commands, outputs, transcript paths, and raw fragments remain omitted.
 
 The report is a diagnostic lead, not a policy verdict. Correlate fingerprints
 with the conversation timeline before changing a safeguard or exact-output path.
 
 ### 6. Autonomy outcomes (GitHub)
 
-Run `autonomy-report-helper.sh report --weeks 2` (or add `--json`) for a read-only
-report from GitHub and `${REPOS_FILE:-$HOME/.config/aidevops/repos.json}`.
-The framework repository has its own row (`--framework-repo` overrides it);
-each other managed owner gets a row covering that owner's repositories.
+Run `autonomy-report-helper.sh report --weeks 2` (or add `--json`) for a read-only report from GitHub and `${REPOS_FILE:-$HOME/.config/aidevops/repos.json}`.
+The framework repository has its own row (`--framework-repo` overrides it); each other managed owner gets a row covering that owner's repositories.
 Weeks are completed Monday-Sunday UTC windows; queue health is current.
 
-- **Merged throughput:** weekly worker, interactive, other/unlabeled and total
-  merged PRs; missing origin labels contribute only to other/total.
+- **Merged throughput:** weekly worker, interactive, other/unlabeled and total merged PRs; missing origin labels contribute only to other/total.
 - **Interactive share:** interactive / (worker + interactive), target **<15%**.
-- **Worker waste:** closed-unmerged worker PRs / (merged + closed-unmerged worker
-  PRs), target **<5%**.
-- **Lead time:** latest-week issue-created → merged and PR-opened → merged
-  p50/p90 hours per origin, using at most 100 PRs and each PR's first closing
-  issue; worker issue→merge p90 target **<24h**.
-- **Queue:** available auto-dispatch issues, idle 7+ days split by local pulse
-  on/off/not registered, blocked issues and stale 14+ days, hold-for-review PRs,
-  and needs-maintainer-review items; idle pulse-on and stale blocked targets
-  are both **0**.
+- **Worker waste:** closed-unmerged worker PRs / (merged + closed-unmerged worker PRs), target **<5%**.
+- **Lead time:** latest-week issue-created → merged and PR-opened → merged p50/p90 hours per origin, using at most 100 PRs and each PR's first closing issue; worker issue→merge p90 target **<24h**.
+- **Queue:** available auto-dispatch issues, idle 7+ days split by local pulse on/off/not registered, blocked issues and stale 14+ days, hold-for-review PRs, and needs-maintainer-review items; idle pulse-on and stale blocked targets are both **0**.
 
-Targets are initial heuristics, not gates, defined at the top of
-`scripts/autonomy_report.py`. JSON has `window`, `rows`, `lead_times`, `queue`,
-`targets`, and `notes`; unavailable ratios/percentiles are `null`.
-Counts are point-in-time search totals (including totals above 1,000), whereas
-lead-time samples cap at 100. Any GitHub error fails the whole report without
-printing partial tables. No results are saved or posted.
+Targets are initial heuristics, not gates, defined at the top of `scripts/autonomy_report.py`.
+JSON has `window`, `rows`, `lead_times`, `queue`, `targets`, and `notes`; unavailable ratios/percentiles are `null`.
+Counts are point-in-time search totals (including totals above 1,000), whereas lead-time samples cap at 100. Any GitHub error fails the whole report without printing partial tables. No results are saved or posted.
 
 ## Known limitation: `run` mode does not emit per-tool OTEL spans (t2187)
 
