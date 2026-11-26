@@ -901,9 +901,20 @@ waiver_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 # The actual merge executor must reverify approval, even after earlier checks.
 _merge_check_admin_capability() { return 0; }
 _merge_verify_rbg_override_approval() { return 0; }
+_merge_resolve_subject_for_method() { printf 'feat: runtime waiver\n'; return 0; }
+_merge_describe_flags() { printf 'fixture squash\n'; return 0; }
+_merge_resolve_match_head() { printf '%s\n' "$FULL_LOOP_EXPECTED_PR_HEAD_SHA"; return 0; }
+_merge_revalidate_transport_authority() { return 0; }
+_merge_run_bounded_write() { printf '%s\n' "$*" >>"${WAIVER_LOG}.transport"; return 0; }
+print_info() { return 0; }
+print_success() { return 0; }
+FULL_LOOP_MERGE_SUBJECT_FLAG=--subject
 export WAIVER_VERDICT=STALE_APPROVAL
 assert_rejected "merge transport refuses approval invalidated after precheck" _merge_execute 7 owner/repo --squash 0 0
+assert_accepted "invalid approval reaches no transport" test ! -e "${WAIVER_LOG}.transport"
 export WAIVER_VERDICT=VERIFIED
+assert_accepted "approved waiver reaches normal merge transport" _merge_execute 7 owner/repo --squash 0 0
+assert_contains "waived merge transport binds exact head" "$(<"${WAIVER_LOG}.transport")" "--match-head-commit ${waiver_head}"
 
 # Production hold decision and lifting preserve unknown, mixed and PR-only
 # holds; no special waiver path bypasses their trust checks.
