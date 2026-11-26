@@ -41,7 +41,7 @@ NOTES = [
     "Repositories without origin labels contribute to all/other only; dual-origin PRs count in both origins.",
     "Windows are the latest completed Monday-Sunday UTC weeks; queue health is current.",
     "Owner rows cover the whole owner, including unregistered repos; only eligible registry entries define local pulse state.",
-    "Lead times use the latest merged PRs and the first closing issue, omitting missing issue references.",
+    "Lead times sample latest-updated merged PRs in the week and the first closing issue, omitting missing references.",
     "Targets are initial heuristics, not gates; missing ratios/percentiles are null (n/a in text).",
 ]
 
@@ -88,7 +88,7 @@ def registry(path):
         slug = entry.get("slug", "")
         if entry.get("local_only") is True or entry.get("role", "maintainer") != "maintainer":
             continue
-        if not slug:
+        if not slug or "/" not in slug:
             continue
         if not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+", slug):
             raise ValueError("Invalid repository slug in registry")
@@ -127,7 +127,7 @@ def percentiles(values):
 
 def lead_time(query):
     data = graphql(
-        "query{search(type:ISSUE,query:" + json.dumps(query + " sort:merged-desc")
+        "query{search(type:ISSUE,query:" + json.dumps(query + " sort:updated-desc")
         + ",first:100){nodes{... on PullRequest{createdAt mergedAt "
         + "closingIssuesReferences(first:1){nodes{createdAt}}}}}}"
     )
