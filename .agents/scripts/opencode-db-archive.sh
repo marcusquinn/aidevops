@@ -651,8 +651,26 @@ _archive_streak_update() {
 	return 0
 }
 
+# _archive_args_full_pass <archive args...>: true for a full apply pass. The
+# async runner starts every cycle with a --worker-events-only pass; if that
+# pass or a dry run reset the streak, catch-up could never trigger.
+# Mirrors _archive_parse_options: the last of --dry-run/--apply wins.
+_archive_args_full_pass() {
+	local arg dry=0
+	for arg in "$@"; do
+		case "$arg" in
+		--events-only | --worker-events-only) return 1 ;;
+		--dry-run) dry=1 ;;
+		--apply) dry=0 ;;
+		esac
+	done
+	((dry == 0)) || return 1
+	return 0
+}
+
 cmd_archive_all() {
-	local db rc=0 result=0 archive_pid=""
+	local db rc=0 result=0 archive_pid="" full_pass=0
+	_archive_args_full_pass "$@" && full_pass=1
 	# Wait asynchronously so Bash handles signals immediately, and forward them
 	# to the per-DB supervisor before releasing the async runner's lock.
 	trap 'kill -TERM "$archive_pid" 2>/dev/null || true; wait "$archive_pid" 2>/dev/null || true; exit 143' TERM
@@ -666,7 +684,7 @@ cmd_archive_all() {
 		wait "$archive_pid" || rc=$?
 		archive_pid=""
 		print_info "Archive inventory outcome: db=$db rc=$rc (0=complete, 2=protected/deferred, 3=unsupported)"
-		_archive_streak_update "$db" "$rc"
+		if ((full_pass)); then _archive_streak_update "$db" "$rc"; fi
 		# Continue the fleet, but never record a partial fleet as fully successful.
 		if [[ "$rc" -ne 0 && ("$result" -eq 0 || "$result" -eq 2) ]]; then result="$rc"; fi
 	done < <(opencode_db_inventory "$ACTIVE_DB")
@@ -828,10 +846,12 @@ cmd_archive() {
 	_archive_parse_options "$@" || return 1
 	_archive_validate_options || return 1
 	if [[ "${OPENCODE_ARCHIVE_BUDGET_CHILD:-0}" != 1 ]]; then
-		local streak catchup_after="${OPENCODE_DB_ARCHIVE_CATCHUP_AFTER:-$DEFAULT_CATCHUP_AFTER}"
+		# Only full apply passes use the catch-up budget (cmd_archive_all records
+		# the streak for the same passes; see _archive_args_full_pass).
+		local streak=0 catchup_after="${OPENCODE_DB_ARCHIVE_CATCHUP_AFTER:-$DEFAULT_CATCHUP_AFTER}"
 		[[ "$catchup_after" =~ ^[0-9]+$ ]] && ((catchup_after > 0)) || catchup_after="$DEFAULT_CATCHUP_AFTER"
-		streak=$(_archive_streak_read "$ACTIVE_DB")
-		if ((!dry_run && max_duration > 0 && streak >= catchup_after)); then
+		((dry_run || events_only || worker_events_only)) || streak=$(_archive_streak_read "$ACTIVE_DB")
+		if ((max_duration > 0 && streak >= catchup_after)); then
 			max_duration=$((max_duration * DEFAULT_CATCHUP_MULTIPLIER))
 			if ((streak == catchup_after)); then
 				print_warning "Archive deferred ${streak} consecutive times for ${ACTIVE_DB}; running catch-up passes with a ${max_duration}s budget until one completes."
@@ -840,6 +860,7 @@ cmd_archive() {
 			fi
 			export OPENCODE_ARCHIVE_EFFECTIVE_MAX_DURATION="$max_duration"
 		fi
+		# Replaces this shell (exec python3); nothing after it runs.
 		_archive_with_deadline "$max_duration" "${original_args[@]}"
 		return $?
 	fi
