@@ -236,5 +236,26 @@ else
 	_fail "migrate result unexpected (total=${total}): ${mig_out}"
 fi
 
+# Index: restored marks live in the index, never in a sealed segment.
+# shellcheck source=../opencode-db-archive-segments-lib.sh
+source "${SCRIPT_DIR}/../opencode-db-archive-segments-lib.sh"
+# shellcheck source=../opencode-db-archive-index-lib.sh
+source "${SCRIPT_DIR}/../opencode-db-archive-index-lib.sh"
+idx="${SANDBOX}/idx"
+mkdir -p "$idx"
+sqlite3 "${idx}/opencode-archive-2026-09.db" "CREATE TABLE session (id text PRIMARY KEY); INSERT INTO session VALUES ('x1');"
+sqlite3 "${idx}/opencode-archive-2026-11.db" "CREATE TABLE session (id text PRIMARY KEY); INSERT INTO session VALUES ('x1');"
+sealed_sha_before=$(_opencode_archive_sha256 "${idx}/opencode-archive-2026-09.db")
+opencode_archive_index_record "${idx}/opencode-archive.db" "${idx}/opencode-archive-2026-09.db"
+[[ "$(opencode_archive_index_lookup "${idx}/opencode-archive.db" x1)" == opencode-archive-2026-09.db ]] && _pass "index lookup resolves the segment" || _fail "index lookup failed"
+opencode_archive_index_mark_restored "${idx}/opencode-archive.db" x1
+if ! opencode_archive_index_lookup "${idx}/opencode-archive.db" x1 >/dev/null && [[ "$(_opencode_archive_sha256 "${idx}/opencode-archive-2026-09.db")" == "$sealed_sha_before" ]]; then
+	_pass "restored mark is in the index and the segment is unchanged"
+else
+	_fail "restored mark leaked or lookup still resolves"
+fi
+opencode_archive_index_record "${idx}/opencode-archive.db" "${idx}/opencode-archive-2026-11.db"
+[[ "$(opencode_archive_index_lookup "${idx}/opencode-archive.db" x1)" == opencode-archive-2026-11.db ]] && _pass "re-archive points the index at the newest segment" || _fail "re-archive did not update the index"
+
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
