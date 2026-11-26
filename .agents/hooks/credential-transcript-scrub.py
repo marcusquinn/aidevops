@@ -63,7 +63,8 @@ from structured_text_parser import parse_structured_text
 # into `ta[redacted-credential]` and similar (see GH#21026 / t2892 for the
 # canonical incident on example-repo/develop).
 CREDENTIAL_PATTERN = re.compile(
-    r"(?:^|(?<=[^A-Za-z0-9_-]))(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-|AIza)[A-Za-z0-9_-]{10,}",
+    r"(?:^|(?<=[^A-Za-z0-9_-]))(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|"
+    r"github_pat_|glpat-|xoxb-|xoxp-|AIza)[A-Za-z0-9_-]{10,}",
     re.ASCII,
 )
 
