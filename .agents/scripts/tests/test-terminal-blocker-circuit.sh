@@ -76,7 +76,7 @@ test_unknown_triage() (
 	TRIAGE_RESPONSE='{"reason":"unknown","owner":"","pending_only":true}'
 	_terminal_blocker_triage_unknown "$captured" "$issue" || status=1
 	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" =~ ^pending_work\ brief=[a-f0-9]{64}\ head=[a-f0-9]{40,64}$ ]] || status=1
-	for reason in external_trigger_pending permission_required input_required files_scope_excluded source_access_blocked runner_capability_unmet; do
+	for reason in external_trigger_pending permission_required input_required files_scope_excluded source_access_blocked runner_capability_unmet resource_contended; do
 		TRIAGE_RESPONSE=$(jq -nc --arg reason "$reason" '{reason:$reason,owner:"maintainer",pending_only:false,trigger_evidence:"Await model publication"}')
 		_terminal_blocker_triage_unknown "$captured" "$issue" || status=1
 		expected="known:${reason}"
@@ -86,6 +86,8 @@ test_unknown_triage() (
 		[[ "$reason" != external_trigger_pending || "${AIDEVOPS_TERMINAL_BLOCKER_TRIGGER:-}" == 'Await model publication' ]] || status=1
 	done
 	TRIAGE_RESPONSE='{"reason":"permission_required","owner":"","pending_only":true}'
+	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
+	TRIAGE_RESPONSE='{"reason":"resource_contended","owner":"","pending_only":true}'
 	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
 	TRIAGE_RESPONSE='not JSON'
 	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi

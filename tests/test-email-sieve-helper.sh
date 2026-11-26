@@ -63,7 +63,7 @@ assert_contains() {
 
 	TESTS_RUN=$((TESTS_RUN + 1))
 	# Use grep -F -- to handle needles starting with -- (macOS grep treats them as options otherwise)
-	if echo "$haystack" | grep -qF -- "$needle"; then
+	if grep -qF -- "$needle" <<<"$haystack"; then
 		TESTS_PASSED=$((TESTS_PASSED + 1))
 		echo "  PASS: $description"
 	else
@@ -81,7 +81,7 @@ assert_not_contains() {
 	local haystack="$3"
 
 	TESTS_RUN=$((TESTS_RUN + 1))
-	if ! echo "$haystack" | grep -qF -- "$needle"; then
+	if ! grep -qF -- "$needle" <<<"$haystack"; then
 		TESTS_PASSED=$((TESTS_PASSED + 1))
 		echo "  PASS: $description"
 	else
@@ -681,22 +681,120 @@ test_status() {
 }
 
 # ============================================================================
-# Test: deploy requires SIEVE_PASSWORD
+# Test: shared client requires an injected password (no secret-store access)
 # ============================================================================
 
 test_deploy_requires_password() {
 	echo ""
 	echo "--- test_deploy_requires_password ---"
 
-	# Ensure SIEVE_PASSWORD is not set
 	local output rc
-	output=$(env -u SIEVE_PASSWORD bash "$HELPER" deploy \
-		--server mail.example.com \
-		--user user@example.com \
-		--file "$TEST_OUTPUT" 2>&1) && rc=0 || rc=$?
+	output=$(env -u SIEVE_PASSWORD SIEVE_HOST=mail.example.com \
+		python3 "${REPO_ROOT}/.agents/scripts/managesieve_client.py" \
+		SIEVE_PASSWORD user@example.com list 2>&1) && rc=0 || rc=$?
 
-	assert_exit_nonzero "deploy without SIEVE_PASSWORD exits non-zero" "$rc"
-	assert_contains "error mentions SIEVE_PASSWORD" "SIEVE_PASSWORD" "$output"
+	assert_eq "client without password exits with usage error" "2" "$rc"
+	assert_contains "error mentions missing password" "password not available" "$output"
+	return 0
+}
+
+test_copy_to() {
+	local output legacy custom rc
+	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target owner@example.net --dry-run 2>&1)
+	legacy=$(bash "${REPO_ROOT}/.agents/scripts/purelymail-helper.sh" copy-to \
+		user@example.com MAILBOX_PASSWORD owner@example.net --dry-run 2>&1)
+	assert_eq "Purelymail positional dry-run remains identical" "$output" "$legacy"
+	local legacy_body expected_body
+	legacy_body="${legacy#*$'\n'}"
+	expected_body=$'require ["copy"];\n# rule:[Copy to owner]\nif true\n{\n\tredirect :copy "owner@example.net";\n}'
+	assert_eq "Purelymail positional dry-run matches the merge-base script body" "$expected_body" "$legacy_body"
+	assert_contains "Purelymail dry-run keeps legacy banner" "Would set Sieve script 'roundcube' on user@example.com and make it active:" "$legacy"
+	assert_contains "copy uses Roundcube script name" "'roundcube'" "$output"
+	assert_contains "copy is editable in Roundcube" '# rule:[Copy to owner]' "$output"
+	assert_contains "copy keeps implicit local delivery" 'redirect :copy "owner@example.net";' "$output"
+	custom=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target owner@example.net --secret MAILBOX_PASSWORD --script custom --port 4191 --dry-run 2>&1)
+	assert_contains "custom script name supported" "'custom'" "$custom"
+	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target 'bad"; discard;' --dry-run 2>&1) && rc=0 || rc=$?
+	assert_exit_nonzero "copy refuses Sieve injection in target" "$rc"
+	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target 2>&1) && rc=0 || rc=$?
+	assert_exit_nonzero "copy rejects missing option value" "$rc"
+	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target owner@example.net --port 18446744073709555806 --dry-run 2>&1) && rc=0 || rc=$?
+	assert_exit_nonzero "copy rejects overflowing port before arithmetic" "$rc"
+	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target owner@example.net --port 00004190 --dry-run 2>&1) && rc=0 || rc=$?
+	assert_exit_zero "copy accepts zero-padded port" "$rc"
+	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target owner@example.net --secret SIEVE_HOST --dry-run 2>&1) && rc=0 || rc=$?
+	assert_exit_nonzero "copy rejects endpoint credential namespace" "$rc"
+	return 0
+}
+
+test_client_requires_host() {
+	local output rc
+	output=$(env -u SIEVE_HOST -u PURELYMAIL_SIEVE_HOST \
+		python3 "${REPO_ROOT}/.agents/scripts/managesieve_client.py" \
+		SIEVE_PASSWORD user@example.com list 2>&1) && rc=0 || rc=$?
+	assert_eq "client without host exits 2 before connecting" "2" "$rc"
+	assert_contains "client explains missing host" "SIEVE_HOST is required" "$output"
+	return 0
+}
+
+# Exercise the command safety decisions offline using the existing test shell.
+test_copy_safety() {
+	local output rc
+	output=$(bash -c '
+		source "$1" help >/dev/null
+		_sieve() {
+			local operation="$1"
+			case "$operation" in
+			list) printf "other\tactive\n" ;;
+			*) printf "UNEXPECTED MUTATION\n"; return 1 ;;
+			esac
+			return 0
+		}
+		_cmd_remote copy-to --server mail.example.com --user user@example.com --target owner@example.net
+	' _ "$HELPER" 2>&1) && rc=0 || rc=$?
+	assert_exit_nonzero "copy refuses a mailbox with other scripts" "$rc"
+	assert_contains "refusal explains existing scripts" "already has Sieve scripts" "$output"
+	assert_not_contains "other scripts are not changed" "UNEXPECTED MUTATION" "$output"
+	return 0
+}
+
+test_copy_remove_preview_and_confirm() {
+	local output rc
+	local remove_script
+	# shellcheck disable=SC2016 # expanded by the child bash, not here
+	remove_script='
+		source "$1" help >/dev/null
+		_sieve() {
+			local operation="$1"
+			shift
+			case "$operation" in
+			list) printf "roundcube.aidevops-remove\tactive\n" ;;
+			get) _sieve_copy_script owner@example.net ;;
+			remove-parked)
+				[[ "$1" == "roundcube.aidevops-remove" ]] || return 1
+				_sieve_same "$2" "$(_sieve_copy_script owner@example.net)" || return 1
+				printf "CHECKED REMOVAL\n"
+				;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		_cmd_remote copy-to-remove --server mail.example.com --user user@example.com $2
+	'
+	output=$(bash -c "$remove_script" _ "$HELPER" "" 2>&1) && rc=0 || rc=$?
+	assert_exit_zero "removal preview exits zero" "$rc"
+	assert_contains "removal without --yes is a preview" "Re-run with --yes" "$output"
+	assert_not_contains "preview makes no remove call" "CHECKED REMOVAL" "$output"
+	output=$(bash -c "$remove_script" _ "$HELPER" --yes 2>&1) && rc=0 || rc=$?
+	assert_exit_zero "parked removal recovers with checked contents" "$rc"
+	assert_contains "confirmed removal passes original contents" "CHECKED REMOVAL" "$output"
 	return 0
 }
 
@@ -872,6 +970,10 @@ main() {
 	test_validate_missing_require
 	test_status
 	test_deploy_requires_password
+	test_copy_to
+	test_client_requires_host
+	test_copy_safety
+	test_copy_remove_preview_and_confirm
 	test_deploy_requires_server
 	test_deploy_requires_user
 	test_list_scripts_requires_server_user

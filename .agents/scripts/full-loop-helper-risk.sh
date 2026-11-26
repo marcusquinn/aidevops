@@ -611,6 +611,7 @@ print(json.dumps({"present": bool(section), "sections": sections,
 # Arguments: metadata JSON from _runtime_testing_metadata_from_body
 _runtime_testing_merge_refusal() {
 	local metadata="$1"
+	local runtime_waived="${2:-false}"
 	local risk="" level="" evidence="" sections=""
 	local remedy="a verifier with write access exercises the exact PR head, then runs full-loop-helper.sh verify-runtime <PR> --testing \"<evidence>\" from that checkout (GH#39639; it records ${_full_loop_runtime_verified_marker} evidence and lifts a runtime-only hold-for-review)"
 	if ! risk=$(printf '%s' "$metadata" | jq -er '.risk | strings') ||
@@ -644,6 +645,9 @@ _runtime_testing_merge_refusal() {
 			;;
 		esac
 	fi
+	# GH#40444: only the interactive merge caller passes this after verifying
+	# cryptographic approval. Malformed and ambiguous metadata still refuse.
+	[[ "$runtime_waived" == true ]] && return 0
 	if [[ "$level" == "$_full_loop_runtime_pending_marker" ]]; then
 		printf 'runtime verification is pending (%s); %s\n' "$_full_loop_runtime_pending_marker" "$remedy"
 		return 1

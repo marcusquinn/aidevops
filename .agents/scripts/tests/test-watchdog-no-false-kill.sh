@@ -837,6 +837,7 @@ cap_probe_results=$(
 	_watchdog_db_part_activity() { if [[ "$signal" == tool_output_active ]]; then return 0; fi; return 1; }
 	_watchdog_tree_network_active() { if [[ "$signal" == network_active ]]; then return 0; fi; return 1; }
 	_watchdog_tree_cpu() { if [[ "$signal" == cpu_active ]]; then printf 5; else printf 0; fi; return 0; }
+	_monitor_cap_inflight_tool_wait() { return 1; }
 	_kill_worker() { local reason="$1" kind="$2"; printf '%s:%s:%s\n' "$signal" "${reason%%:*}" "$kind"; return 0; }
 	for signal in ci_wait tool_output_active network_active cpu_active inactive; do
 		_monitor_enforce_hard_kill 100 || true
@@ -861,6 +862,7 @@ active_cap_results=$(
 	_output_has_ci_wait() { return 1; }
 	_watchdog_tree_network_active() { return 1; }
 	_watchdog_tree_cpu() { printf 0; return 0; }
+	_monitor_cap_inflight_tool_wait() { return 1; }
 	worker_attempt_observability_enrich() { return 0; }
 	_watchdog_record_event() { local event="$1"; printf '%s\n' "$event"; return 0; }
 	_kill_worker() { local reason="$1"; printf 'kill:%s\n' "${reason%%:*}"; return 0; }
@@ -973,6 +975,104 @@ if command -v sqlite3 >/dev/null 2>&1; then
 	rm -rf "$db_tmp_dir"
 else
 	echo "SKIP: 29. sqlite3 unavailable"
+fi
+
+#######################################
+# Test 30: t19399 / GH#40441 — at the elapsed cap, a silent tool started in
+# this attempt waits for its own bounded declared timeout. Stale, untimed,
+# completed, string-timeout, disabled and old-schema cases keep the cap kill.
+# Simulated time; the real OpenCode-shaped JSON is read through sqlite3.
+#######################################
+if command -v sqlite3 >/dev/null 2>&1; then
+	inflight_dir=$(mktemp -d 2>/dev/null || mktemp -d -t watchdog-inflight)
+	# Monitor starts at 100000s; the tool starts at 103500s (elapsed 3500s,
+	# past both caps) with a 30-minute timeout: deadline 103500+1800+60.
+	inflight_part() {
+		local name="$1" data="$2" db="${inflight_dir}/${1}.db"
+		sqlite3 "$db" "CREATE TABLE part (id text PRIMARY KEY, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);" || return 1
+		[[ -z "$data" ]] || sqlite3 "$db" "INSERT INTO part VALUES ('prt_${name}', 1, 1, '${data}');" || return 1
+		return 0
+	}
+	inflight_part live '{"type":"tool","tool":"bash","state":{"status":"running","input":{"timeout":1800000},"time":{"start":103500000}}}'
+	inflight_part bounded '{"type":"tool","tool":"bash","state":{"status":"running","input":{"timeout":7200000},"time":{"start":103500000}}}'
+	inflight_part stale '{"type":"tool","tool":"bash","state":{"status":"running","input":{"timeout":1800000},"time":{"start":99000000}}}'
+	inflight_part untimed '{"type":"tool","tool":"bash","state":{"status":"running","input":{},"time":{"start":103500000}}}'
+	inflight_part completed '{"type":"tool","tool":"bash","state":{"status":"completed","input":{"timeout":1800000},"time":{"start":103500000}}}'
+	inflight_part string_timeout '{"type":"tool","tool":"bash","state":{"status":"running","input":{"timeout":"1800000"},"time":{"start":103500000}}}'
+	sqlite3 "${inflight_dir}/old_schema.db" "CREATE TABLE part (id text PRIMARY KEY, time_updated integer NOT NULL);"
+	# Orphan: an older long tool still marked running after a newer short tool
+	# started. The newest tool's deadline (104000+60+60) governs, not the latest.
+	inflight_part orphan '{"type":"tool","tool":"bash","state":{"status":"running","input":{"timeout":1800000},"time":{"start":103500000}}}'
+	sqlite3 "${inflight_dir}/orphan.db" "INSERT INTO part VALUES ('prt_orphan_newer', 1, 1, '{\"type\":\"tool\",\"tool\":\"bash\",\"state\":{\"status\":\"running\",\"input\":{\"timeout\":60000},\"time\":{\"start\":104000000}}}');"
+	# Sequence: tool A defers, newer tool B defers, B completes, A is selected
+	# again; A must not log a second event in the same attempt.
+	inflight_part sequence '{"type":"tool","tool":"bash","state":{"status":"running","input":{"timeout":1800000},"time":{"start":103500000}}}'
+	inflight_results=$(
+		for fn in _watchdog_inflight_tool_deadline _monitor_cap_inflight_tool_wait _monitor_enforce_hard_kill; do
+			eval "$(sed -n "/^${fn}() {/,/^}/p" "${SCRIPT_DIR}/worker-activity-watchdog.sh")"
+		done
+		STALL_TIMEOUT=600 POLL_INTERVAL=10 HARD_KILL_SECONDS=1500 HARD_KILL_ACTIVE_SECONDS=3000 STALL_CPU_THRESHOLD=2
+		INFLIGHT_TOOL_MAX_SECONDS=1800 INFLIGHT_TOOL_GRACE_SECONDS=60
+		_MONITOR_START_EPOCH=100000 _MONITOR_LAST_DEFER_EPOCH=0 _MONITOR_CAP_EXTENDED=0
+		_MONITOR_INFLIGHT_LOGGED_PARTS="" _MONITOR_STALL_SECONDS=600 _MONITOR_DEFERRED_STALL_SECONDS=0 WORKER_PID=1
+		date() { local arg="$1"; if [[ "$arg" == +%s ]]; then printf '%s' "$now"; else printf timestamp; fi; return 0; }
+		_watchdog_db_part_activity() { return 1; }
+		_output_has_ci_wait() { return 1; }
+		_watchdog_tree_network_active() { return 0; }
+		_watchdog_tree_cpu() { printf 0; return 0; }
+		worker_attempt_observability_enrich() { return 0; }
+		_watchdog_record_event() { local event="$1"; printf 'event:%s\n' "$event"; return 0; }
+		_kill_worker() { local reason="$1"; killed="${reason%%:*}"; return 0; }
+		probe() {
+			local label="$1" case_db="$2"
+			WORKER_DB="${inflight_dir}/${case_db}.db" killed=""
+			if _monitor_enforce_hard_kill 100; then
+				printf '%s=wait\n' "$label"
+			else
+				printf '%s=kill:%s\n' "$label" "$killed"
+			fi
+			return 0
+		}
+		now=104000 probe live_first live
+		now=105359 probe live_last live
+		now=105360 probe live_expired live
+		now=105359 probe bounded_last bounded
+		now=105360 probe bounded_expired bounded
+		for case_db in stale untimed completed string_timeout old_schema; do
+			now=104000 probe "$case_db" "$case_db"
+		done
+		INFLIGHT_TOOL_MAX_SECONDS=0 now=104000 probe disabled live
+		now=104200 probe orphan orphan
+		printf -- '---sequence---\n'
+		now=104000 probe seq_a sequence
+		sqlite3 "${inflight_dir}/sequence.db" "INSERT INTO part VALUES ('prt_sequence_b', 1, 1, '{\"type\":\"tool\",\"tool\":\"bash\",\"state\":{\"status\":\"running\",\"input\":{\"timeout\":1800000},\"time\":{\"start\":103900000}}}');"
+		now=104000 probe seq_b sequence
+		sqlite3 "${inflight_dir}/sequence.db" "UPDATE part SET data = replace(data, '\"running\"', '\"completed\"') WHERE id = 'prt_sequence_b';"
+		now=104100 probe seq_a_again sequence
+	)
+	assert_contains "30a. silent in-flight tool waits at the elapsed cap" "live_first=wait" "$inflight_results"
+	assert_contains "30b. wait lasts until the declared deadline plus grace" "live_last=wait" "$inflight_results"
+	assert_contains "30c. kill resumes at the in-flight deadline" "live_expired=kill:hard_kill_cap_active" "$inflight_results"
+	assert_equals "30d. one lifecycle event per in-flight tool part (live, bounded)" "2" \
+		"$(printf '%s\n' "$inflight_results" | sed -n '/^---sequence---$/q;p' | grep -c 'worker_cap_deferred_inflight_tool')"
+	assert_contains "30h. newest tool's expired deadline kills despite an older running part" \
+		"orphan=kill:hard_kill_cap_active" "$inflight_results"
+	for inflight_case in seq_a seq_b seq_a_again; do
+		assert_contains "30i. ${inflight_case} waits for its in-flight tool" "${inflight_case}=wait" "$inflight_results"
+	done
+	assert_equals "30i. A, B, then A again logs one event per part per attempt" "2" \
+		"$(printf '%s\n' "$inflight_results" | sed -n '/^---sequence---$/,$p' | grep -c 'worker_cap_deferred_inflight_tool')"
+	assert_contains "30e. event reports tool age, remaining time and elapsed" \
+		"tool_age=500s deadline_in=1360s elapsed=4000s hard_kill=1500s" "$inflight_results"
+	assert_contains "30f. long declared timeouts are bounded" "bounded_last=wait" "$inflight_results"
+	assert_contains "30f. bounded deadline still kills" "bounded_expired=kill:hard_kill_cap_active" "$inflight_results"
+	for inflight_case in stale untimed completed string_timeout old_schema disabled; do
+		assert_contains "30g. ${inflight_case} tool part keeps the cap kill" \
+			"${inflight_case}=kill:hard_kill_cap_active" "$inflight_results"
+	done
+	rm -rf "$inflight_dir"
+else
+	echo "SKIP: 30. sqlite3 unavailable"
 fi
 
 #######################################

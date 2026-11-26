@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.284] - 2026-11-25
+
+### Added
+
+- support GPT Image 2.6 complexity and transparent background (GH#40135) (#40194)
+
+### Fixed
+
+- gate-blocked worktrees refuse edits/commits; retry author lookup without containment label (GH#40288) (#40434)
+- seed worker DB from a cached schema template when the shared DB is locked (#40428)
+
 ## [3.39.283] - 2026-11-25
 
 ### Added

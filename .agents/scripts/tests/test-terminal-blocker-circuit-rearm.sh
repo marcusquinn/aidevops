@@ -21,8 +21,12 @@ test_target_code_receipt_before_release() {
 		local live_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa api_fail=0
 		local fixture='{"state":"open","title":"Fix helper","body":"unchanged brief","labels":[{"name":"status:blocked"},{"name":"needs-ai-recovery"}]}'
 		local fixture_comments='[]' revision='' fingerprint='' rc=0 receipts=0 projections=0
-		local fail_receipt=1 fail_projection=0 receipt_body='' newer_event=0
+		local fail_receipt=1 fail_projection=0 receipt_body='' newer_event=0 reblock_at='2026-10-30T11:00:00Z'
 		gh() {
+			if [[ "$*" == 'api repos/owner/repo/issues/42/events?per_page=100 --paginate --slurp' ]]; then
+				jq -nc --arg at "$reblock_at" '[[{event:"labeled",label:{name:"status:blocked"},created_at:$at}]]'
+				return 0
+			fi
 			[[ "$*" == 'api repos/owner/repo/commits?per_page=1 --jq .[0].sha' && "$api_fail" == 0 ]] || return 1
 			printf '%s\n' "$live_sha"
 			return 0
@@ -70,6 +74,17 @@ test_target_code_receipt_before_release() {
 		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || rc=$?
 		[[ "$rc" == 2 && "$projections" == 1 && "$receipts" == 1 ]] || exit 1
 		newer_event=0
+		# GH#40445: a status:blocked applied after the receipt is a newer hold;
+		# the old receipt must not release it again (label flap across runners).
+		reblock_at='2026-10-30T12:30:00Z' rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" 2>"${TEST_ROOT}/reblock.err" || rc=$?
+		[[ "$rc" == 0 && "$projections" == 1 && "$receipts" == 1 ]] || exit 1
+		grep -q 'reason=reblocked_after_receipt' "${TEST_ROOT}/reblock.err" || exit 1
+		# Second-resolution timestamps cannot order a same-second re-block.
+		reblock_at='2026-10-30T12:00:00Z' rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || rc=$?
+		[[ "$rc" == 2 && "$projections" == 1 && "$receipts" == 1 ]] || exit 1
+		reblock_at='2026-10-30T11:00:00Z'
 		# Replaying the receipt finishes a failed projection without republishing.
 		fail_projection=0
 		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || exit 1
