@@ -700,29 +700,60 @@ _validate_standalone_prompt_args() {
 	return 0
 }
 
-# _agent_stub_declares_subagent: succeed when a generated OpenCode agent file
-# for NAME declares `mode: subagent` in its frontmatter (GH#40518).
-# Args: $1 - agent name. Returns 0 when subagent-only, 1 otherwise or unknown.
-_agent_stub_declares_subagent() {
-	local agent_value="$1"
-	local config_dir="${OPENCODE_CONFIG_DIR:-${HOME:-}/.config/opencode}"
-	local agent_file=""
+# _agent_markdown_mode: print the frontmatter `mode:` of the first OpenCode agent
+# Markdown definition for NAME (agent/ then agents/), handling YAML quotes and
+# trailing comments. Prints nothing when no definition or mode exists (GH#40518).
+# Args: $1 - config dir, $2 - agent name (may be nested, e.g. team/audit).
+_agent_markdown_mode() {
+	local config_dir="$1"
+	local agent_value="$2"
 	local sub_dir=""
+	local agent_file=""
 	for sub_dir in agent agents; do
 		agent_file="${config_dir}/${sub_dir}/${agent_value}.md"
 		[[ -f "$agent_file" ]] || continue
-		# Primary definitions in opencode.json win over a same-named stub.
-		if [[ -f "${config_dir}/opencode.json" ]] && command -v jq >/dev/null 2>&1; then
-			local configured_mode=""
-			configured_mode=$(jq -r --arg n "$agent_value" '.agent[$n].mode // empty' "${config_dir}/opencode.json" 2>/dev/null || true)
-			if [[ "$configured_mode" == "primary" || "$configured_mode" == "all" ]]; then
-				return 1
-			fi
-		fi
-		if awk '/^---[[:space:]]*$/ { fm++; next } fm == 1 && /^mode:[[:space:]]*"?subagent"?[[:space:]]*$/ { found = 1; exit } fm >= 2 { exit } END { exit !found }' "$agent_file" 2>/dev/null; then
-			return 0
-		fi
+		awk '
+			/^---[[:space:]]*$/ { fm++; next }
+			fm == 1 && /^mode:/ {
+				v = $0
+				sub(/^mode:[[:space:]]*/, "", v)
+				sub(/[[:space:]]+#.*$/, "", v)
+				gsub(/^["\047]|["\047][[:space:]]*$/, "", v)
+				gsub(/[[:space:]]+$/, "", v)
+				print v
+				exit
+			}
+			fm >= 2 { exit }
+		' "$agent_file" 2>/dev/null || true
+		return 0
 	done
+	return 0
+}
+
+# _agent_json_mode: print `.agent[NAME].mode` from opencode.json (no stub needed).
+# Args: $1 - config dir, $2 - agent name.
+_agent_json_mode() {
+	local config_dir="$1"
+	local agent_value="$2"
+	[[ -f "${config_dir}/opencode.json" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	jq -r --arg n "$agent_value" '.agent[$n].mode // empty' "${config_dir}/opencode.json" 2>/dev/null || true
+	return 0
+}
+
+# _agent_declares_subagent: succeed when NAME's effective OpenCode mode is
+# `subagent`. OpenCode 1.19.6 merges Markdown definitions after JSON ones, so a
+# Markdown `mode` overrides opencode.json. Returns 1 for primary, `all`, or unknown.
+# Args: $1 - agent name.
+_agent_declares_subagent() {
+	local agent_value="$1"
+	local config_dir="${OPENCODE_CONFIG_DIR:-${HOME:-}/.config/opencode}"
+	local effective_mode=""
+	effective_mode=$(_agent_markdown_mode "$config_dir" "$agent_value")
+	[[ -n "$effective_mode" ]] || effective_mode=$(_agent_json_mode "$config_dir" "$agent_value")
+	if [[ "$effective_mode" == "subagent" ]]; then
+		return 0
+	fi
 	return 1
 }
 
@@ -733,9 +764,11 @@ _agent_stub_declares_subagent() {
 _validate_run_agent_is_primary() {
 	local agent_value="${agent_name:-}"
 	[[ -n "$agent_value" ]] || return 0
-	[[ "$agent_value" =~ ^[A-Za-z0-9_-]+$ ]] || return 0
+	# Only safe OpenCode agent names (optionally nested, e.g. team/audit) are
+	# resolved to files; display names such as "Build+" are not definitions here.
+	[[ "$agent_value" =~ ^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$ ]] || return 0
 	[[ "${headless_runtime:-opencode}" == "claude" ]] && return 0
-	if _agent_stub_declares_subagent "$agent_value"; then
+	if _agent_declares_subagent "$agent_value"; then
 		print_error "--agent '${agent_value}' is a subagent-only agent and cannot run headless; OpenCode would fall back to its default agent. Use a primary agent (e.g. build-plus) and delegate to '${agent_value}' via Task, or run it interactively with @${agent_value}."
 		return 1
 	fi

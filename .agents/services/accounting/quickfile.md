@@ -28,8 +28,10 @@ mcp:
 - **API Docs**: https://api-beta.quickfile.co.uk/api-docs/
 - **OpenCode activation**: invoke `@quickfile` or delegate via Task
   `subagent_type: quickfile` (Build+ allows it); the agent connects the disabled
-  MCP on demand. It is subagent-only: `headless-runtime-helper.sh run --agent
-  quickfile` fails fast, and the MCP is scoped to this agent, so a default or
+  MCP on demand. It is subagent-only: with the generated OpenCode agent
+  definition deployed (`setup.sh`), `headless-runtime-helper.sh run --agent
+  quickfile` fails fast; without it OpenCode itself falls back to its default
+  agent, so never rely on headless `--agent quickfile`. The MCP is scoped to this agent, so a default or
   primary agent cannot `aidevops_mcp connect quickfile`
 - **Auth**: personal REST bearer tokens stored as
   `QUICKFILE_<ACCOUNT>_API_KEY` with `aidevops secret`
@@ -171,8 +173,11 @@ statement line is already imported untagged.
 - Tag or match the existing bank line to the invoice or purchase instead. If no
   exposed tool can do that, stop and report that it cannot be done through the
   API; leave matching to the operator in the QuickFile UI.
-- After any payment write, search the bank account again and confirm exactly one
-  line carries the receipt.
+- After any payment write, search the bank account again for both the new tagged
+  line and any matching untagged line (same amount and date range; a statement
+  import may have landed after the pre-write search). Two matching lines mean a
+  possible duplicate: report both for operator review rather than treating one
+  tagged line as proof.
 - Payment read tools can disagree: a direct payment get and the payment search
   list have returned different amounts for one payment ID. Treat a mismatch as
   unverified, compare against the bank line and invoice balance, and report both
