@@ -602,7 +602,7 @@ _rulesets_required_check_contexts() {
 _required_check_present() {
 	local contexts="$1"
 	local required_context="$2"
-	printf '%s\n' "$contexts" | grep -qxF "$required_context" 2>/dev/null
+	grep -qxF "$required_context" <<<"$contexts" 2>/dev/null
 	return $?
 }
 
@@ -1009,7 +1009,10 @@ _posture_env_line_secret_reason() {
 	local line="$1"
 	local pem_re='-----BEGIN [A-Z ]*PRIVATE KEY-----'
 	# Shared scrub prefixes plus detection-only live-key prefixes (AWS, Stripe, Google).
-	local token_re="(^|[^A-Za-z0-9_-])(${AIDEVOPS_CREDENTIAL_PREFIX_ERE}|AKIA|ASIA|sk_live_|rk_live_|AIza)([A-Za-z0-9_-]{10,})"
+	# AIza stays explicit although the shared default also lists it: a caller
+	# that presets a narrower AIDEVOPS_CREDENTIAL_PREFIX_ERE must not lose
+	# Google API key detection (GH#40482 review). Not a redundant alternative.
+	local token_re="(^|[^A-Za-z0-9_-])(${AIDEVOPS_CREDENTIAL_PREFIX_ERE}|AIza|AKIA|ASIA|sk_live_|rk_live_)([A-Za-z0-9_-]{10,})"
 	local url_re='[A-Za-z][A-Za-z0-9+.-]*://[^/:@[:space:]]+:([^/@[:space:]]+)@([^/:?#[:space:]]+)'
 	local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_.]*)[[:space:]]*=[[:space:]]*(.*)$'
 
@@ -1578,14 +1581,14 @@ _detect_cross_account_inherit() {
 	decoded=$(printf '%s' "$workflow_content" | base64 -d 2>/dev/null) || return 2
 
 	# Must be a marcusquinn/aidevops reusable-workflow caller
-	if ! printf '%s' "$decoded" | grep -q 'uses:.*marcusquinn/aidevops/'; then
+	if ! grep -q 'uses:.*marcusquinn/aidevops/' <<<"$decoded"; then
 		return 1
 	fi
 
 	# Must use an active secrets:inherit key (the broken cross-account pattern).
 	# Explanatory comments in the canonical caller must not trigger the advisory.
-	if ! printf '%s' "$decoded" | grep -qE \
-		'^[[:space:]]*secrets:[[:space:]]*inherit([[:space:]]+#.*)?[[:space:]]*$'; then
+	if ! grep -qE \
+		'^[[:space:]]*secrets:[[:space:]]*inherit([[:space:]]+#.*)?[[:space:]]*$' <<<"$decoded"; then
 		return 1
 	fi
 

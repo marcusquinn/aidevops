@@ -40,6 +40,19 @@ function withoutDisplayNote(text) {
   return text.slice(0, index);
 }
 
+describe("Google API keys (AIza prefix, keyString field)", () => {
+  const key = "AI" + "za" + "x".repeat(35);
+
+  test("redacts AIza keys at boundaries but not mid-word", () => {
+    assertScrub(`key ${key} end`, `key ${REDACTION_TOKEN} end`, 1);
+    assertScrub(`x${key}`, `x${key}`, 0);
+  });
+
+  test("redacts gcloud keyString JSON field", () => {
+    assertScrub('{"keyString": "plain-value-123"}', `{"keyString":"${REDACTION_TOKEN}"}`, 1);
+  });
+});
+
 describe("code and prose after sensitive labels (GH#37382)", () => {
   const unchanged = [
     "The secret: keep the originals of anything legally important",

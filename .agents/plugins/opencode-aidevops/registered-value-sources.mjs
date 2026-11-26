@@ -27,7 +27,7 @@ const DIGEST_LINE = /^([0-9]{1,4}) ([0-9a-f]{64})$/;
 const DIGEST_KEY = /^[0-9a-f]{64}$/;
 const EXPORT_LINE = /^export[ \t]+([A-Z_][A-Z0-9_]*)=(.*)$/;
 const SENSITIVE_ENV_NAME =
-  /(?:^|_)(?:API_?KEY|PRIVATE_KEY|SECRET_KEY|ACCESS_KEY|ACCESS_KEY_ID|ENCRYPTION_KEY|SIGNING_KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$/;
+  /(?:^|_)(?:API_?KEY|PRIVATE_KEY|SECRET_KEY|ACCESS_KEY|ACCESS_KEY_ID|ENCRYPTION_KEY|SIGNING_KEY|KEY_STRING|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$/;
 const PLACEHOLDERS = new Set(["", "***", "[redacted]", REDACTION_TOKEN, "<redacted>", "not set", "(not set)", "none", "null", "undefined", "missing", "changeme"]);
 // Public account identifiers stored beside credentials (for example
 // WPORG_USERNAME) are not secrets. Redacting them corrupts GitHub URLs, git

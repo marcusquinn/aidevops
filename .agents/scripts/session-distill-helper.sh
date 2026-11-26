@@ -99,7 +99,7 @@ privacy_redact() {
 	text=$(printf '%s' "$text" | sed -E "s#(^|[^A-Za-z0-9._/:~-])git:/($roots)/[^ ]*#\\1git:[local-path]#g")
 	# Roots must start a token (not follow a URL host/path char) so remote URLs survive.
 	text=$(printf '%s' "$text" | sed -E 's#(^|[^A-Za-z0-9._/:~-])/(Users|home|private/var|var/folders|var/tmp|tmp|run)/[^ ]*#\1[local-path]#g; s#(^|[^A-Za-z0-9._/:-])~/Git/[^ ]*#\1[local-path]#g')
-	text=$(printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g')
+	text=$(printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-|AIza)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g')
 	text=$(printf '%s' "$text" | sed -E 's/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/[email]/g')
 	printf '%s' "$text"
 	return 0

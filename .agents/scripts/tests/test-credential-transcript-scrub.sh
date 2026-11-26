@@ -87,7 +87,7 @@ d = json.load(sys.stdin)
 resp = d.get('tool_response', '')
 # Check that no raw token prefix family appears in the output
 import re
-pat = re.compile(r'(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}')
+pat = re.compile(r'(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-|AIza)[A-Za-z0-9_-]{10,}')
 if isinstance(resp, str):
     assert not pat.search(resp), f'token still present: {resp}'
 elif isinstance(resp, dict):
@@ -174,6 +174,19 @@ assert_redacted "9. xoxp- token" \
 GOOGLE_OAUTH_SECRET="GOCSPX-$(printf 'a%.0s' {1..28})"
 assert_redacted "10. GOCSPX- token" \
 	"{\"tool_response\": \"client_secret=${GOOGLE_OAUTH_SECRET}\"}"
+
+# Google API keys: synthetic fixture built at runtime (privacy guard safe)
+GOOGLE_API_KEY_SYNTH="AI""za$(printf 'x%.0s' {1..35})"
+assert_redacted "10b. AIza Google API key" \
+	"{\"tool_response\": \"key is ${GOOGLE_API_KEY_SYNTH} ok\"}"
+assert_redacted "10c. gcloud keyString field" \
+	'{"tool_response": "keyString: not-a-prefixed-value-123"}'
+keystring_out=$(run_hook '{"tool_response": "keyString: not-a-prefixed-value-123"}')
+if [[ "$keystring_out" == *"not-a-prefixed-value-123"* ]]; then
+	fail "10c. keyString value still present in output"
+else
+	pass "10c. keyString value removed from output"
+fi
 
 # ── Edge cases ─────────────────────────────────────────────────────────────
 
@@ -318,7 +331,7 @@ BENCH_MS=$(python3 -c "
 import re, time, json
 
 CREDENTIAL_PATTERN = re.compile(
-    r'(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}',
+    r'(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-|AIza)[A-Za-z0-9_-]{10,}',
     re.ASCII,
 )
 filler = 'x' * 9900

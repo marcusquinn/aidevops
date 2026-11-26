@@ -23,6 +23,7 @@ Token prefix families scrubbed (mirrors shared-constants.sh scrub_credentials):
   glpat-    GitLab personal access tokens
   xoxb-     Slack bot tokens
   xoxp-     Slack user tokens
+  AIza      Google API keys
 
 Unknown token formats are also scrubbed under unambiguous API key, token,
 secret, and password field names.
@@ -62,7 +63,8 @@ from structured_text_parser import parse_structured_text
 # into `ta[redacted-credential]` and similar (see GH#21026 / t2892 for the
 # canonical incident on example-repo/develop).
 CREDENTIAL_PATTERN = re.compile(
-    r"(?:^|(?<=[^A-Za-z0-9_-]))(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}",
+    r"(?:^|(?<=[^A-Za-z0-9_-]))(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|"
+    r"github_pat_|glpat-|xoxb-|xoxp-|AIza)[A-Za-z0-9_-]{10,}",
     re.ASCII,
 )
 
@@ -123,7 +125,7 @@ def is_sensitive_field_name(name: str) -> bool:
     """Return whether a field name is unambiguously credential-bearing."""
     pattern = (
         r"(?:^|_)(?:API_?KEY|PRIVATE_KEY|SECRET_KEY|ACCESS_KEY|ACCESS_KEY_ID|"
-        r"ENCRYPTION_KEY|SIGNING_KEY|TOKEN|SECRET|PASSWORD|PASSWD)$"
+        r"ENCRYPTION_KEY|SIGNING_KEY|KEY_STRING|TOKEN|SECRET|PASSWORD|PASSWD)$"
     )
     return bool(re.search(pattern, normalize_field_name(name)))
 
