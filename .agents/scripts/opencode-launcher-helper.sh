@@ -170,14 +170,17 @@ copy_auth_json() {
 # must hold exactly one JSON object, otherwise the session store is untouched.
 # Skipped while any process holds the shard's database open (or holders are
 # unknown): a live OpenCode may be rotating tokens in this file, and the
-# in-session login command covers running sessions. Only for stores owned by
-# the user's interactive, desktop or server sessions, never conversation or
-# worker stores. Contents are never printed.
+# in-session login command covers running sessions. OpenCode takes no writer
+# lock, so the write is compare-and-swap: merge from a private snapshot, create
+# a missing store with a no-clobber link, and replace an existing store only
+# if it still matches the snapshot; any concurrent change wins. Only for
+# stores owned by the user's interactive, desktop or server sessions, never
+# conversation or worker stores. Contents are never printed.
 seed_mcp_auth_json() {
     local target_data_dir="$1"
     local source_auth="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/mcp-auth.json"
     local target_auth="${target_data_dir}/opencode/mcp-auth.json"
-    local target_input="" temp_auth="" holder_status=0
+    local snapshot="" temp_auth="" holder_status=0 had_target=false
 
     [[ -f "${source_auth}" ]] || return 0
     [[ "${source_auth}" == "${target_auth}" ]] && return 0
@@ -185,18 +188,28 @@ seed_mcp_auth_json() {
     server_shard_has_holders "${target_data_dir}" 2>/dev/null || holder_status=$?
     ((holder_status == 1)) || return 0
     mkdir -p "$(dirname "${target_auth}")" || return 0
-    target_input="${target_auth}"
-    [[ -f "${target_auth}" ]] || target_input=/dev/null
-    temp_auth=$(umask 077 && mktemp "${target_auth}.XXXXXX") || return 0
-    if jq -n --slurpfile global "${source_auth}" --slurpfile session "${target_input}" '
+    snapshot=$(umask 077 && mktemp "${target_auth}.snap.XXXXXX") || return 0
+    temp_auth=$(umask 077 && mktemp "${target_auth}.XXXXXX") || {
+        rm -f "${snapshot}"
+        return 0
+    }
+    if [[ -f "${target_auth}" ]]; then
+        had_target=true
+        cp "${target_auth}" "${snapshot}" 2>/dev/null || had_target=error
+    fi
+    if [[ "${had_target}" != "error" ]] &&
+        jq -n --slurpfile global "${source_auth}" --slurpfile session "${snapshot}" '
         if ($global | length) == 1 and ($global[0] | type) == "object"
             and (($session | length) == 0 or (($session | length) == 1 and ($session[0] | type) == "object"))
         then $global[0] + ($session[0] // {}) else error("expected one object per file") end' \
-        >"${temp_auth}" 2>/dev/null &&
-        chmod 600 "${temp_auth}" && mv -f "${temp_auth}" "${target_auth}"; then
-        return 0
+            >"${temp_auth}" 2>/dev/null && chmod 600 "${temp_auth}"; then
+        if [[ "${had_target}" == "false" ]]; then
+            ln "${temp_auth}" "${target_auth}" 2>/dev/null || true
+        elif cmp -s "${snapshot}" "${target_auth}"; then
+            mv -f "${temp_auth}" "${target_auth}" || true
+        fi
     fi
-    rm -f "${temp_auth}"
+    rm -f "${temp_auth}" "${snapshot}"
     return 0
 }
 
