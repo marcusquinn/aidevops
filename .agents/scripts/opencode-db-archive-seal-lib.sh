@@ -23,7 +23,9 @@ readonly OPENCODE_ARCHIVE_DEFAULT_SEAL_GRACE_DAYS=7
 # opencode_archive_manifest_path <legacy-archive-path>
 opencode_archive_manifest_path() {
 	local legacy="$1"
-	printf '%s/opencode-archive-manifest.tsv\n' "${legacy%/*}"
+	local dir="${legacy%/*}"
+	[[ "$dir" == "$legacy" ]] && dir="."
+	printf '%s/opencode-archive-manifest.tsv\n' "$dir"
 	return 0
 }
 
@@ -31,7 +33,9 @@ opencode_archive_manifest_path() {
 opencode_archive_segment_path() {
 	local legacy="$1"
 	local month="$2"
-	printf '%s/opencode-archive-%s.db\n' "${legacy%/*}" "$month"
+	local dir="${legacy%/*}"
+	[[ "$dir" == "$legacy" ]] && dir="."
+	printf '%s/opencode-archive-%s.db\n' "$dir" "$month"
 	return 0
 }
 
@@ -40,7 +44,8 @@ opencode_archive_segment_path() {
 opencode_archive_current_segment() {
 	local legacy="$1"
 	local month=""
-	month="${OPENCODE_ARCHIVE_MONTH_OVERRIDE:-$(date +%Y-%m)}"
+	# UTC, matching the UTC month boundary used when sealing.
+	month="${OPENCODE_ARCHIVE_MONTH_OVERRIDE:-$(date -u +%Y-%m)}"
 	opencode_archive_segment_path "$legacy" "$month"
 	return 0
 }
@@ -60,11 +65,13 @@ opencode_archive_is_sealed() {
 # _opencode_archive_sha256 <file>
 _opencode_archive_sha256() {
 	local file="$1"
+	local out=""
 	if command -v sha256sum >/dev/null 2>&1; then
-		sha256sum "$file" | awk '{print $1}'
+		out=$(sha256sum "$file") || return 1
 	else
-		shasum -a 256 "$file" | awk '{print $1}'
+		out=$(shasum -a 256 "$file") || return 1
 	fi
+	printf '%s\n' "${out%% *}"
 	return 0
 }
 
@@ -74,8 +81,20 @@ _opencode_archive_sha256() {
 opencode_archive_seal_segment() {
 	local segment="$1"
 	local legacy="$2"
-	local manifest="" check="" sessions="" bytes="" digest="" sealed_at=""
+	local lock="${segment}.sealing" rc=0
 	[[ -f "$segment" && ! -L "$segment" ]] || return 1
+	# mkdir is an atomic cross-process lock; a concurrent sealer skips this pass.
+	mkdir "$lock" 2>/dev/null || return 1
+	_opencode_archive_seal_locked "$segment" "$legacy" || rc=$?
+	rmdir "$lock" 2>/dev/null || true
+	return "$rc"
+}
+
+# _opencode_archive_seal_locked <segment-path> <legacy-archive-path>
+_opencode_archive_seal_locked() {
+	local segment="$1"
+	local legacy="$2"
+	local manifest="" check="" sessions="" bytes="" digest="" sealed_at=""
 	opencode_archive_is_sealed "$segment" "$legacy" && return 0
 	chmod u+w "$segment" 2>/dev/null || true
 	sqlite3 "$segment" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || return 1
@@ -85,11 +104,20 @@ opencode_archive_seal_segment() {
 	[[ "$check" == "ok" ]] || return 1
 	sessions=$(sqlite3 -readonly "$segment" "SELECT COUNT(*) FROM session;" 2>/dev/null) || sessions=0
 	bytes=$(wc -c <"$segment" | tr -d ' ')
-	digest=$(_opencode_archive_sha256 "$segment")
+	# Make the file read-only first so the digest describes the final bytes;
+	# the manifest row is the completion marker and is written last.
+	chmod 0444 "$segment" || return 1
+	digest=$(_opencode_archive_sha256 "$segment") || digest=""
+	if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+		chmod u+w "$segment" 2>/dev/null || true
+		return 1
+	fi
 	sealed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	manifest=$(opencode_archive_manifest_path "$legacy")
-	printf '%s\t%s\t%s\t%s\t%s\n' "${segment##*/}" "$sessions" "$bytes" "$digest" "$sealed_at" >>"$manifest" || return 1
-	chmod 0444 "$segment" || return 1
+	if ! printf '%s\t%s\t%s\t%s\t%s\n' "${segment##*/}" "$sessions" "$bytes" "$digest" "$sealed_at" >>"$manifest"; then
+		chmod u+w "$segment" 2>/dev/null || true
+		return 1
+	fi
 	return 0
 }
 

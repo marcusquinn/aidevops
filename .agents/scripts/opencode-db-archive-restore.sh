@@ -128,18 +128,57 @@ EPOCH_DEFAULTS
 	return 0
 }
 
-# _archive_restore_select_segment <session_id_sql>
-# Points ARCHIVE_DB at the newest archive segment holding the session so a
-# restore reads the newest copy. Keeps the current ARCHIVE_DB when none match.
-_archive_restore_select_segment() {
+# _archive_restore_matching_segments <session_id_sql>
+# Prints every archive segment holding the session or its children, newest
+# first. A session family can span segments (parent and child archived in
+# different months), so restore walks all of them; INSERT OR IGNORE makes the
+# newest copy win. ARCHIVE_DB is a candidate only when not already listed.
+_archive_restore_matching_segments() {
 	local sid="$1"
-	local segment found="" count
+	local segment="" count="" all="" listed=""
+	listed=$(opencode_archive_segments "$ARCHIVE_LEGACY_DB")
+	all="$listed"
+	if [[ -f "$ARCHIVE_DB" ]] && ! grep -Fxq -- "$ARCHIVE_DB" <<<"$listed"; then
+		all="${ARCHIVE_DB}"$'\n'"${listed}"
+	fi
 	while IFS= read -r segment; do
 		[[ -n "$segment" ]] || continue
 		count=$(sqlite3 -readonly -cmd '.timeout 5000' "$segment" "SELECT COUNT(*) FROM session WHERE id = ${sid} OR parent_id = ${sid};" 2>/dev/null) || continue
-		[[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] && found="$segment"
-	done <<<"$(opencode_archive_segments "$ARCHIVE_LEGACY_DB"; [[ -f "$ARCHIVE_DB" ]] && printf '%s\n' "$ARCHIVE_DB")"
-	[[ -n "$found" ]] && ARCHIVE_DB="$found"
+		[[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] && printf '%s\n' "$segment"
+	done <<<"$all" | awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }'
+	return 0
+}
+
+# _archive_restore_from_segment <session_id> <session_id_sql> <dry_run>
+# Restores from the segment currently held in ARCHIVE_DB.
+_archive_restore_from_segment() {
+	local session_id="$1"
+	local sid="$2"
+	local dry_run="$3"
+	local archived_count restore_sql archive_sql
+	archived_count=$(sqlite3 -readonly -cmd '.timeout 5000' "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE id = ${sid} OR parent_id = ${sid};") || return 1
+	if ! restore_sql=$(_archive_restore_sql "$sid"); then
+		print_error "Archive and active schemas are incompatible for restore; nothing changed"
+		return 3
+	fi
+	if ((dry_run)); then
+		print_info "DRY RUN — would restore ${archived_count} session(s) (${session_id} and subagent children) from ${ARCHIVE_DB}"
+		return 0
+	fi
+	archive_sql=$(_archive_sql_quote "$ARCHIVE_DB")
+	if ! sqlite3 "$ACTIVE_DB" <<RESTORE_SQL >/dev/null; then
+.bail on
+.timeout 5000
+ATTACH DATABASE ${archive_sql} AS archive;
+BEGIN IMMEDIATE;
+${restore_sql}
+COMMIT;
+DETACH DATABASE archive;
+RESTORE_SQL
+		print_error "Restore of ${session_id} failed; the archive copy was left in place"
+		return 1
+	fi
+	print_success "Restored ${archived_count} session(s) (${session_id} and subagent children) to ${ACTIVE_DB}"
 	return 0
 }
 
@@ -149,7 +188,7 @@ _archive_restore_select_segment() {
 # transaction, like the headless worker merge. Exit 0 restored/already active,
 # 4 not found in the archive, 3 incompatible schema, 1 other failure.
 cmd_restore() {
-	local session_id="" dry_run=0 sid active_count archived_count restore_sql archive_sql
+	local session_id="" dry_run=0 sid active_count
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
 		case "$option" in
@@ -179,37 +218,26 @@ cmd_restore() {
 		print_info "Session ${session_id} is already in the active DB"
 		return 0
 	fi
-	_archive_restore_select_segment "$sid"
-	if [[ ! -f "$ARCHIVE_DB" ]] || [[ "$ARCHIVE_DB" -ef "$ACTIVE_DB" ]]; then
+	if [[ ! -f "$ARCHIVE_DB" ]] && ! opencode_archive_exists "$ARCHIVE_LEGACY_DB"; then
 		print_warning "No archive DB for ${ACTIVE_DB}; session ${session_id} not found"
 		return 4
 	fi
-	archived_count=$(sqlite3 -readonly -cmd '.timeout 5000' "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE id = ${sid} OR parent_id = ${sid};") || return 1
-	if [[ "$archived_count" == "0" ]] || [[ -z "$archived_count" ]]; then
+	if [[ -f "$ARCHIVE_DB" ]] && [[ "$ARCHIVE_DB" -ef "$ACTIVE_DB" ]]; then
+		print_warning "No archive DB for ${ACTIVE_DB}; session ${session_id} not found"
+		return 4
+	fi
+	local segments segment rc=0 archive_default="$ARCHIVE_DB"
+	segments=$(_archive_restore_matching_segments "$sid")
+	if [[ -z "$segments" ]]; then
 		print_warning "Session ${session_id} not found in archive ${ARCHIVE_DB}"
 		return 4
 	fi
-	if ! restore_sql=$(_archive_restore_sql "$sid"); then
-		print_error "Archive and active schemas are incompatible for restore; nothing changed"
-		return 3
-	fi
-	if ((dry_run)); then
-		print_info "DRY RUN — would restore ${archived_count} session(s) (${session_id} and subagent children) from ${ARCHIVE_DB}"
-		return 0
-	fi
-	archive_sql=$(_archive_sql_quote "$ARCHIVE_DB")
-	if ! sqlite3 "$ACTIVE_DB" <<RESTORE_SQL >/dev/null; then
-.bail on
-.timeout 5000
-ATTACH DATABASE ${archive_sql} AS archive;
-BEGIN IMMEDIATE;
-${restore_sql}
-COMMIT;
-DETACH DATABASE archive;
-RESTORE_SQL
-		print_error "Restore of ${session_id} failed; the archive copy was left in place"
-		return 1
-	fi
-	print_success "Restored ${archived_count} session(s) (${session_id} and subagent children) to ${ACTIVE_DB}"
-	return 0
+	while IFS= read -r segment; do
+		[[ -n "$segment" ]] || continue
+		ARCHIVE_DB="$segment"
+		_archive_restore_from_segment "$session_id" "$sid" "$dry_run" || rc=$?
+		((rc == 0)) || break
+	done <<<"$segments"
+	ARCHIVE_DB="$archive_default"
+	return "$rc"
 }
