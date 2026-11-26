@@ -122,7 +122,8 @@ _opencode_archive_migrate_locked() (
 	local months="$2"
 	local tables="$3"
 	local seg_n=0 month seg subq table filter src_n dst_n check missing
-	local trash="" created="" lock="" attempt=0 rc=1 f
+	local trash="" lock="" attempt=0 rc=1 f
+	local -a created=()
 	lock="$(opencode_archive_manifest_path "$legacy").lock"
 	until mkdir "$lock" 2>/dev/null; do
 		attempt=$((attempt + 1))
@@ -133,8 +134,10 @@ _opencode_archive_migrate_locked() (
 		sleep 0.1
 	done
 	_opencode_archive_migrate_release() {
-		if ((rc != 0)); then
-			for f in $created; do
+		# Delete only before the source is retired; once it has moved, the
+		# segments are the only live copy and must be kept.
+		if ((rc != 0)) && [[ -e "$legacy" ]]; then
+			for f in ${created[@]+"${created[@]}"}; do
 				rm -f "$f" "${f}-wal" "${f}-shm"
 			done
 		fi
@@ -143,10 +146,23 @@ _opencode_archive_migrate_locked() (
 	}
 	trap _opencode_archive_migrate_release EXIT
 	trap 'exit 1' HUP INT TERM
+	# Re-check source and targets under the lock (another run may have
+	# finished while we waited), before recording any output as ours.
+	[[ -f "$legacy" && ! -L "$legacy" ]] || {
+		printf 'migrate: no legacy archive at %s\n' "$legacy" >&2
+		return 4
+	}
+	for month in $months; do
+		seg=$(opencode_archive_segment_path "$legacy" "$month")
+		if [[ -e "$seg" ]]; then
+			printf 'migrate: target segment already exists: %s\n' "${seg##*/}" >&2
+			return 1
+		fi
+	done
 	for month in $months; do
 		seg=$(opencode_archive_segment_path "$legacy" "$month")
 		subq="SELECT id FROM src.session WHERE strftime('%Y-%m', COALESCE(time_updated, time_created)/1000, 'unixepoch') = '${month}'"
-		created="${created} ${seg}"
+		created+=("$seg")
 		sqlite3 -readonly "$legacy" ".schema" | sqlite3 "$seg" || return 1
 		for table in $tables; do
 			filter=$(_opencode_archive_migrate_filter "$table" "$legacy" "$subq") || continue
