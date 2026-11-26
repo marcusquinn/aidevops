@@ -435,7 +435,7 @@ _tbr_rearm_reason_line() {
 }
 
 # GH#40445: has status:blocked been labeled after the keyed receipt comment?
-# Returns: 0 yes (a newer hold), 1 no, 2 unreadable history (fail closed).
+# Returns: 0 yes (a newer hold), 1 no, 2 unreadable/ambiguous history (fail closed).
 _tbr_reblocked_after_receipt() {
 	local repo="$1" issue="$2" comments="$3" receipt="$4"
 	local receipt_at="" events="" verdict=""
@@ -448,6 +448,7 @@ _tbr_reblocked_after_receipt() {
 	verdict=$(printf '%s' "$events" | jq -r --arg at "$receipt_at" --arg pt "$page_type" --arg ev "$added_event" '
 		if (type == $pt and all(.[]; type == $pt)) | not then "invalid"
 		elif any(.[][]; .event == $ev and .label.name == "status:blocked" and (.created_at // "") > $at) then "yes"
+		elif any(.[][]; .event == $ev and .label.name == "status:blocked" and (.created_at // "") == $at) then "ambiguous"
 		else "no" end' 2>/dev/null) || return 2
 	case "$verdict" in
 	yes) return 0 ;;

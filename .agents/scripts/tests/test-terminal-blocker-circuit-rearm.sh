@@ -80,6 +80,10 @@ test_target_code_receipt_before_release() {
 		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" 2>"${TEST_ROOT}/reblock.err" || rc=$?
 		[[ "$rc" == 0 && "$projections" == 1 && "$receipts" == 1 ]] || exit 1
 		grep -q 'reason=reblocked_after_receipt' "${TEST_ROOT}/reblock.err" || exit 1
+		# Second-resolution timestamps cannot order a same-second re-block.
+		reblock_at='2026-10-30T12:00:00Z' rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || rc=$?
+		[[ "$rc" == 2 && "$projections" == 1 && "$receipts" == 1 ]] || exit 1
 		reblock_at='2026-10-30T11:00:00Z'
 		# Replaying the receipt finishes a failed projection without republishing.
 		fail_projection=0
