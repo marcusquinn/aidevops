@@ -652,17 +652,20 @@ def stop(signum, _frame=None):
     # Ignore repeated signals while draining the owned process group.
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    # Darwin killpg() returns EPERM, not ESRCH, when every member of the
+    # group has exited but is not yet reaped. Both mean nothing is left to
+    # signal; raising turned deadline deferrals (rc=2) into rc=1 failures.
     try:
         os.killpg(child.pid, signal.SIGTERM)
         child.wait(timeout=2)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         pass
     except subprocess.TimeoutExpired:
         pass
     finally:
         try:
             os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         child.wait()
     if signum:
