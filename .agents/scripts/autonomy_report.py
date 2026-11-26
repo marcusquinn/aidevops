@@ -102,7 +102,7 @@ def registry(path):
 
 
 def scopes(repos, framework):
-    rows = {framework: "repo:" + framework}
+    rows = {framework: "repo:" + framework + " archived:false"}
     for owner in sorted({slug.split("/")[0] for slug in repos}):
         data = graphql("query{repositoryOwner(login:" + json.dumps(owner) + "){__typename}}")
         kind = data["repositoryOwner"]["__typename"]
@@ -168,9 +168,7 @@ def count_queries(scope_rows, windows, repos, now):
                              if row == slug.split("/")[0])
         queries[("unregistered", row)] = scope + exclusions + " " + QUEUE["available_idle_7d"].format(**dates)
     for slug in repos:
-        # Owner rows exclude archived repos; the framework row (a plain repo: scope) does not.
-        archived = "" if slug in scope_rows else " archived:false"
-        queries[("pulse", slug)] = "repo:" + slug + archived + " " + QUEUE["available_idle_7d"].format(**dates)
+        queries[("pulse", slug)] = "repo:" + slug + " archived:false " + QUEUE["available_idle_7d"].format(**dates)
     return queries
 
 
