@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.287] - 2026-11-26
+
+### Added
+
+- add orphan backup ref cleanup to dirty-worktree-backup-helper (#40488)
+
+### Fixed
+
+- scrub Google API keys (AIza prefix, keyString field) in credential scrubbers (#40484)
+- use portable stat helper in launcher test (GH#40491) (#40494)
+- report legacy worktree bases and size pack temporaries (#40492)
+- calibrate cost-breaker budgets to measured single-attempt token tails (GH#40483) (#40486)
+
 ## [3.39.286] - 2026-11-26
 
 ### Added
