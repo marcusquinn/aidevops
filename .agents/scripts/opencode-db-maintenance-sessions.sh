@@ -270,9 +270,14 @@ cmd_sessions() {
 		print_warning "archive DB not found at $OPENCODE_ARCHIVE_DB; continuing with active DB only"
 	fi
 
-	# Re-sort across all sources by updated (field 10) and apply the limit once.
+	# Re-sort across all sources and apply the limit once. Key matches the SQL
+	# ordering: updated (field 10), falling back to created (field 9) when empty.
 	if [[ -n "$rows" ]]; then
-		rows=$(printf '%s\n' "$rows" | sort -t $'\037' -k10,10nr | awk -v n="$limit" 'NR <= n')
+		rows=$(printf '%s\n' "$rows" |
+			awk -F $'\037' -v OFS=$'\037' '{ k = ($10 != "" ? $10 : $9); print k, $0 }' |
+			sort -t $'\037' -k1,1nr |
+			cut -d $'\037' -f2- |
+			awk -v n="$limit" 'NR <= n')
 	fi
 
 	if [[ "$json" == true ]]; then

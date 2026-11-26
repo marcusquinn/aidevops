@@ -41,6 +41,8 @@ opencode_archive_segments() {
 	# Lexical order of YYYY-MM equals chronological order; the glob sorts.
 	for seg in "$dir"/opencode-archive-[0-9][0-9][0-9][0-9]-[0-1][0-9].db; do
 		[[ -f "$seg" && ! -L "$seg" ]] || continue
+		# The legacy path may itself be a monthly segment name; list it once.
+		[[ "$seg" == "$legacy" ]] && continue
 		printf '%s\n' "$seg"
 	done
 	return 0
