@@ -85,6 +85,14 @@ function maintenanceSummary(totals, config, stopReason, lastResult) {
   });
 }
 
+function spaceMutated(space) {
+  return [
+    space.tool_calls_deleted,
+    space.reclaimed_bytes,
+    space.incremental_vacuum_enabled ? 1 : 0,
+  ].some((value) => Number(value || 0) > 0);
+}
+
 function applyMaintenance(config, archive) {
   const startedAt = config.clock();
   const totals = newTotals();
@@ -114,13 +122,12 @@ function applyMaintenance(config, archive) {
   }
   const summary = maintenanceSummary(totals, config, stopReason, lastResult);
   const space = config.reclaim ? config.reclaim(startedAt + config.maxDurationSeconds * 1000) : {};
-  const mutated = summary.applied || Number(space.tool_calls_deleted || 0) > 0 ||
-    space.incremental_vacuum_enabled === true || Number(space.reclaimed_bytes || 0) > 0;
+  const reclaimed = spaceMutated(space);
   return Object.freeze({
     ...summary,
     ...space,
-    applied: mutated,
-    status: mutated && !summary.applied ? "maintained" : summary.status,
+    applied: summary.applied || reclaimed,
+    status: reclaimed ? "maintained" : summary.status,
   });
 }
 
