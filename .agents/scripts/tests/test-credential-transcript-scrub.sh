@@ -181,6 +181,12 @@ assert_redacted "10b. AIza Google API key" \
 	"{\"tool_response\": \"key is ${GOOGLE_API_KEY_SYNTH} ok\"}"
 assert_redacted "10c. gcloud keyString field" \
 	'{"tool_response": "keyString: not-a-prefixed-value-123"}'
+keystring_out=$(run_hook '{"tool_response": "keyString: not-a-prefixed-value-123"}')
+if [[ "$keystring_out" == *"not-a-prefixed-value-123"* ]]; then
+	fail "10c. keyString value still present in output"
+else
+	pass "10c. keyString value removed from output"
+fi
 
 # ── Edge cases ─────────────────────────────────────────────────────────────
 
