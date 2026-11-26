@@ -49,7 +49,7 @@ opencode_archive_segments() {
 # Succeeds when at least one archive segment exists for legacy path $1.
 opencode_archive_exists() {
 	local legacy="$1"
-	local first=""
-	first=$(opencode_archive_segments "$legacy" | head -n 1)
-	[[ -n "$first" ]]
+	local all=""
+	all=$(opencode_archive_segments "$legacy")
+	[[ -n "$all" ]]
 }

@@ -270,6 +270,11 @@ cmd_sessions() {
 		print_warning "archive DB not found at $OPENCODE_ARCHIVE_DB; continuing with active DB only"
 	fi
 
+	# Re-sort across all sources by updated (field 10) and apply the limit once.
+	if [[ -n "$rows" ]]; then
+		rows=$(printf '%s\n' "$rows" | sort -t $'\037' -k10,10nr | awk -v n="$limit" 'NR <= n')
+	fi
+
 	if [[ "$json" == true ]]; then
 		_sessions_print_json "$rows"
 	elif [[ -z "$rows" ]]; then
