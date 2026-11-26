@@ -270,6 +270,7 @@ logs, issue bodies, command arguments, or transcripts.
   - `systemctl show <service> --property=Environment`
   - Python/Node/Ruby one-liners parsing credential files (e.g., `python3 -c "import json; print(json.load(open('.env')))"`)
   - `heroku config`, `vercel env pull`, `fly secrets list` (with values)
+  - `gcloud services api-keys create` (key string in the stderr operation result and in gcloud log files; safe flow: `services/hosting/google-cloud.md`)
   - `grep`/`rg` that may display secret values; allow only when patterns guarantee values are not printed
 - When debugging env var issues, show key NAMES only, never values:
   - SAFE: `pm2 show <app> --json | jq -r '.[0].pm2_env | keys_unsorted[]'`

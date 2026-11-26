@@ -53,6 +53,24 @@ User credentials can create projects even when the Google account has no organiz
 
 An API key does not authenticate a principal, so it cannot create projects, change IAM, or manage OAuth. If a user asks for "an API key so the agent can manage everything", explain this and offer option 1 or 2.
 
+#### Creating API keys without exposing them
+
+`gcloud services api-keys create` returns the new key's `keyString` in the operation result on stderr, whatever `--format` says. gcloud also writes it to `~/.config/gcloud/logs/`; `api-keys lookup` logs the key in its request URL. Keep the value out of tool output and logs:
+
+```bash
+export CLOUDSDK_CORE_DISABLE_FILE_LOGGING=true   # this shell only: no gcloud log files
+gcloud services api-keys create --project=<project-id> --key-id=<key-id> \
+  --display-name="<name>" <restriction flags> >/dev/null 2>&1
+gcloud services api-keys get-key-string <key-id> --project=<project-id> \
+  --format='value(keyString)' | aidevops secret set <SECRET_NAME>
+unset CLOUDSDK_CORE_DISABLE_FILE_LOGGING
+```
+
+- Always pass `--format='value(keyString)'` to `get-key-string`; with `core/format=json` configured, the secret would otherwise store JSON.
+- If `create` fails, confirm the key exists with `gcloud services api-keys list --project=<project-id> --format='value(name)'`. Never re-run `create` or `lookup` with stderr visible.
+- If a key string was printed or logged, delete the key (`gcloud services api-keys delete <key-id>`) and create a new one. Never undelete an exposed key; deleted keys stay restorable for 30 days.
+- Check earlier logs with counts only: `rg -c 'AIza[0-9A-Za-z_-]{35}' ~/.config/gcloud/logs`. Any match means the key was logged: rotate it, then redact or delete those log files.
+
 ## Automatable with gcloud
 
 ```bash
