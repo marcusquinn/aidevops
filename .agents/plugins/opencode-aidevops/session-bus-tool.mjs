@@ -11,6 +11,7 @@ import { watchIssueAction } from "./session-bus-tool-watch.mjs";
 import { setChatWake } from "./session-bus-chat-trust.mjs";
 import { setKeepalive } from "./session-bus-keepalive.mjs";
 import { awaitReply } from "./session-bus-replies.mjs";
+import { deliveryNote, remoteAskToIdle } from "./session-bus-delivery-notes.mjs";
 
 const MAX_WAIT_SECONDS = 120;
 
@@ -42,27 +43,6 @@ function resolveOrThrow(root, to, selfID) {
   return resolved;
 }
 
-const OFFLINE_NOTE = "That session is not running. The message is kept for 7 days and delivered when the session resumes in any OpenCode process.";
-
-function workerNote(type, record) {
-  const answer = type === "ask" ? " It answers from its shell; the reply arrives in this session." : "";
-  return `${record.handle} is a pulse worker (${record.status}); it sees the message at its next tool result and is never woken.${answer}`;
-}
-
-/** An idle interactive session: info waits for its next turn; an ask wakes it unless a chat app drives it. */
-function idleNote(type, record) {
-  const state = `${record.handle} is ${record.status};`;
-  if (type !== "ask") return `${state} info messages wait for its next turn.`;
-  if (record.interface) return `${state} ${store.viaLabel(record)}, so the question does not wake it. This session is driven from ${record.interface}; it answers on its next chat turn.`;
-  return `${state} the question wakes it (at most ${store.LIMITS.wakesPerHour} wakes per hour). Its reply arrives in this session.`;
-}
-
-function deliveryNote(type, record) {
-  if (!record) return OFFLINE_NOTE;
-  if (store.isWorker(record)) return workerNote(type, record);
-  if (record.status === "busy" || record.status === "permission") return `${record.handle} is ${record.status}; it sees the message at its next tool result.`;
-  return idleNote(type, record);
-}
 
 function listAction(root, sender) {
   const records = store.sortPresence(store.readPresence(root), { repo: sender.record.repo });
@@ -109,6 +89,10 @@ async function askAction(bus, sender, args, context) {
   let release = () => {};
   // Reserve synchronously after the send, before any await, so the reply cannot be delivered to the root first.
   const sent = sendAction(bus.root, sender, args, "ask", (message) => { release = bus.reserveReply(sender.sessionID, message.id); });
+  if (remoteAskToIdle(sent.record, sender)) {
+    release();
+    return `${sent.text}\n\nNot waiting: the recipient is idle and this ask cannot wake it; ask ID ${sent.message.id}. The reply will follow normal delivery to this session.`;
+  }
   try {
     return await awaitReply(bus, sender, sent, args.wait_seconds, context?.abort);
   } finally {
@@ -131,7 +115,7 @@ function sendAction(root, sender, args, type, onSent = () => {}) {
     hops: sender.hops,
   });
   onSent(message);
-  return { message, text: `Sent ${type} ${message.id} to ${record?.handle || resolved.sessionID}. ${deliveryNote(type, record)}` };
+  return { message, record, text: `Sent ${type} ${message.id} to ${record?.handle || resolved.sessionID}. ${deliveryNote(type, record, sender)}` };
 }
 
 function replyAction(root, sender, args) {

@@ -672,6 +672,28 @@ test("remote-hosted fallbacks never use the opencode origin or a local identity"
   assert.equal(origin({ agent: "bad agent!", context: "garbage" }), "chat:remote:agent");
 });
 
+test("GH#40449: an ask from a remote-hosted session says it does not wake an idle local session", async () => {
+  const id = "ses_remote3";
+  const client = fakeClient({ [id]: { id, title: "", directory: root } });
+  const bus = remoteBus(client, { agent: "helper-agent", context: buzzContext });
+  bus.waitPollMs = 10;
+  const fakeTool = (definition) => definition;
+  fakeTool.schema = fakeSchema;
+  const tool = createSessionBusTool(fakeTool, bus);
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id, title: "", directory: root } } } });
+  livePresence("ses_idleL1", { handle: "local-idle", status: "idle" });
+
+  const sent = await tool.execute({ action: "ask", to: "local-idle", text: "status?" }, { sessionID: id });
+  assert.match(sent, /remote-hosted \(buzz\), so the question does not wake it/);
+  assert.doesNotMatch(sent, /the question wakes it/);
+  const [ask] = store.pendingMessages(root, "ses_idleL1").map((entry) => entry.message);
+  assert.equal(isWakeEligible(ask), false, "the boundary itself is unchanged");
+
+  const waited = await tool.execute({ action: "ask", to: "local-idle", text: "again?", wait_seconds: 60 }, { sessionID: id });
+  assert.match(waited, /Not waiting: the recipient is idle and this ask cannot wake it/);
+  assert.equal(bus.awaitingReplies.size, 0);
+});
+
 test("local sessions keep the opencode origin and unlabelled presence", async () => {
   const id = "ses_local01";
   const bus = busFor(fakeClient({ [id]: { id, title: "", directory: root } }));
