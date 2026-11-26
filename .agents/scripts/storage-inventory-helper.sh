@@ -269,7 +269,8 @@ _storage_archive_measure() {
 
 _storage_opencode_residual_measurement() {
 	local root_path="$1"
-	shift
+	local archive_db="$2"
+	shift 2
 	local root_measure=""
 	local root_bytes=""
 	local root_confidence=""
@@ -287,7 +288,14 @@ _storage_opencode_residual_measurement() {
 		printf 'null|unavailable|%s' "${root_error:-root-unavailable}"
 		return 0
 	fi
-	for component_path in "$@"; do
+	# Archive-owned paths (legacy file, monthly segments, -wal/-shm) follow the
+	# archive override, so they may live outside or inside root_path.
+	local archive_path=""
+	local archive_args=()
+	while IFS= read -r archive_path; do
+		archive_args+=("$archive_path")
+	done < <(_storage_archive_paths "$archive_db")
+	for component_path in "$@" "${archive_args[@]}"; do
 		if [[ "$component_path" != "$root_path" && "$component_path" != "$root_path/"* ]]; then
 			continue
 		fi
@@ -392,14 +400,9 @@ _storage_opencode_records() {
 	archive_measure=$(_storage_archive_measure "$archive_db")
 	legacy_measure=$(_storage_measure_group "$legacy_path")
 	tool_measure=$(_storage_measure_group "$tool_path")
-	local archive_owned_paths=()
-	local archive_owned_path=""
-	while IFS= read -r archive_owned_path; do
-		archive_owned_paths+=("$archive_owned_path")
-	done < <(_storage_archive_paths "$archive_db")
-	residual_measure=$(_storage_opencode_residual_measurement "$data_root" \
+	residual_measure=$(_storage_opencode_residual_measurement "$data_root" "$archive_db" \
 		"$active_db" "${active_db}-wal" "${active_db}-shm" \
-		"${archive_owned_paths[@]}" "$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
+		"$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
 	_storage_emit_opencode_backups "$data_root" "${backup_paths[@]+"${backup_paths[@]}"}"
 
 	if [[ "$OPENCODE_STORAGE_PROBES_AVAILABLE" -eq 1 ]]; then
