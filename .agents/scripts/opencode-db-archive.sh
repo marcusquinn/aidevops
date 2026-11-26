@@ -167,34 +167,22 @@ now_ms() {
 	return 0
 }
 
-# Get session IDs that have an active worker (pulse log <1h old)
+# Get session IDs that have an active worker (pulse log <1h old): sorted
+# unique UUIDs from per-user pulse worker logs modified within the last hour.
+# t19400 / GH#40443: one find plus batched grep. A per-file mtime subshell
+# forked ~1,450 times over the 48 h log retention (720+ logs) on every call,
+# and under the launchd job's background QoS that scan alone outlasted the
+# 60 s per-DB archive deadline, so no DB made progress.
 get_active_worker_sessions() {
-	local active_sessions=""
-	local one_hour_ago
-	one_hour_ago=$(($(date +%s) - 3600))
-
-	# Check per-user pulse worker logs modified within the last hour.
 	local pulse_tmp_root=""
 	pulse_tmp_root=$(aidevops_pulse_tmp_root 2>/dev/null || true)
-	[[ -n "$pulse_tmp_root" ]] || return 0
-	for logfile in "$pulse_tmp_root"/pulse-*.log; do
-		[[ -f "$logfile" ]] || continue
-		local file_mtime
-		file_mtime=$(_file_mtime_epoch "$logfile")
-		if ((file_mtime > one_hour_ago)); then
-			# Extract session IDs from log content (UUIDs)
-			local found
-			found=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$logfile" 2>/dev/null || true)
-			if [[ -n "$found" ]]; then
-				active_sessions="${active_sessions}${active_sessions:+$'\n'}${found}"
-			fi
-		fi
-	done
-
-	# Deduplicate
-	if [[ -n "$active_sessions" ]]; then
-		echo "$active_sessions" | sort -u
-	fi
+	[[ -n "$pulse_tmp_root" && -d "$pulse_tmp_root" ]] || return 0
+	# BSD find rounds the age up to whole minutes, so -61 keeps every log the
+	# old `mtime > now - 3600` check kept (GNU: at most one minute more, the
+	# protective direction). grep exits 1 when a batch has no UUID; not an error.
+	find "$pulse_tmp_root" -maxdepth 1 -type f -name 'pulse-*.log' -mmin -61 \
+		-exec grep -ohE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' {} + 2>/dev/null |
+		sort -u || true
 	return 0
 }
 
