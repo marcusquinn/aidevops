@@ -212,5 +212,29 @@ else
 	_fail "restore retry skipped archived children: ${cli_out}"
 fi
 
+# Migration: split a legacy archive across 3 months (GH#40419 phase 3).
+mig="${SANDBOX}/mig"
+mkdir -p "$mig" "${mig}/trash"
+sqlite3 "${mig}/opencode-archive.db" "CREATE TABLE project (id text PRIMARY KEY); CREATE TABLE session (id text PRIMARY KEY, project_id text, time_updated integer, time_created integer); CREATE TABLE message (id text PRIMARY KEY, session_id text); INSERT INTO project VALUES ('p'); INSERT INTO session VALUES ('a','p',1788220800000,1),('b','p',1790812800000,1),('c','p',1793491200000,1); INSERT INTO message VALUES ('m1','a'),('m2','b'),('m3','b'),('m4','c');"
+# shellcheck source=../opencode-db-archive-migrate-lib.sh
+source "${SCRIPT_DIR}/../opencode-db-archive-migrate-lib.sh"
+dry=$(opencode_archive_migrate "${mig}/opencode-archive.db")
+if [[ -f "${mig}/opencode-archive.db" && "$(grep -c '^would create' <<<"$dry")" == 3 ]]; then
+	_pass "migrate dry run reports 3 segments and changes nothing"
+else
+	_fail "migrate dry run unexpected: ${dry}"
+fi
+mig_out=$(OPENCODE_ARCHIVE_TRASH_DIR="${mig}/trash" opencode_archive_migrate "${mig}/opencode-archive.db" --apply 2>&1) || true
+total=0
+for f in "${mig}"/opencode-archive-20??-??.db; do
+	[[ "$(sqlite3 "$f" 'PRAGMA quick_check;')" == ok ]] || _fail "quick_check failed for ${f##*/}"
+	total=$((total + $(sqlite3 "$f" 'SELECT COUNT(*) FROM message;')))
+done
+if [[ "$total" == 4 && ! -e "${mig}/opencode-archive.db" ]] && [[ -n "$(ls "${mig}/trash")" ]]; then
+	_pass "migrate preserves row counts and moves the original to trash"
+else
+	_fail "migrate result unexpected (total=${total}): ${mig_out}"
+fi
+
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

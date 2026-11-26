@@ -100,6 +100,8 @@ unset _archive_default_dir
 source "${_oda_dir}/opencode-db-archive-segments-lib.sh"
 # shellcheck source=opencode-db-archive-seal-lib.sh
 source "${_oda_dir}/opencode-db-archive-seal-lib.sh"
+# shellcheck source=opencode-db-archive-migrate-lib.sh
+source "${_oda_dir}/opencode-db-archive-migrate-lib.sh"
 ARCHIVE_LEGACY_DB="$ARCHIVE_DB"
 if [[ "${OPENCODE_ARCHIVE_SEGMENTED:-0}" == "1" ]]; then
 	ARCHIVE_DB=$(opencode_archive_current_segment "$ARCHIVE_LEGACY_DB")
@@ -1735,6 +1737,7 @@ COMMANDS:
   archive-all  Archive selected/default DB and fixed-depth isolated project DBs
   prune     PERMANENTLY delete sessions older than N days from archive then active DB
   prune-all Prune selected/default DB and fixed-depth isolated project DBs
+  migrate-segments [--apply]  Split the legacy archive into monthly segments (dry run by default)
   seal      Seal completed monthly archive segments (OPENCODE_ARCHIVE_SEAL_GRACE_DAYS, default 7)
   restore   Move one archived session (and subagent children) back to the active DB
   retention-days  Print storage.opencode_session_retention_days (0 = keep all)
@@ -1843,6 +1846,9 @@ main() {
 		;;
 	restore)
 		cmd_restore "$@" || rc=$?
+		;;
+	migrate-segments)
+		opencode_archive_migrate "$ARCHIVE_LEGACY_DB" "${1:-}" || rc=$?
 		;;
 	seal)
 		opencode_archive_seal_due "$ARCHIVE_LEGACY_DB" "${OPENCODE_ARCHIVE_SEAL_GRACE_DAYS:-$OPENCODE_ARCHIVE_DEFAULT_SEAL_GRACE_DAYS}" || rc=$?

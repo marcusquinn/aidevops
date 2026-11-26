@@ -153,4 +153,10 @@ to checkpoint, VACUUM, `quick_check`, record `{segment, sessions, bytes, sha256,
 sealed_at}` in `opencode-archive-manifest.tsv`, then `chmod 0444` completed months.
 Sealed segments are never written: restore copies from them without deleting, and
 the archiver refuses to write to one. The legacy `opencode-archive.db` stays one
-unsealed segment until the phase 3 migration.
+unsealed segment until migrated.
+
+`opencode-db-archive.sh migrate-segments [--apply]` splits a legacy archive into
+monthly segments by UTC `time_updated` (dry run by default). It refuses when a
+target segment exists or a populated table has no session linkage, verifies
+`quick_check` and per-table row counts, then moves the original (and WAL/SHM) to
+`OPENCODE_ARCHIVE_TRASH_DIR` (default `~/.Trash`), never `rm`. Run `seal` after.
