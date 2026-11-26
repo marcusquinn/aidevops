@@ -342,8 +342,7 @@ The report is a diagnostic lead, not a policy verdict. Correlate fingerprints wi
 ### 6. Autonomy outcomes (GitHub)
 
 Run `autonomy-report-helper.sh report --weeks 2` (or add `--json`) for a read-only report from GitHub and `${REPOS_FILE:-$HOME/.config/aidevops/repos.json}`.
-The framework repository has its own row (`--framework-repo` overrides it); each other managed owner gets a row covering that owner's repositories.
-Weeks are completed Monday-Sunday UTC windows; queue health is current.
+The framework repository has its own row (`--framework-repo` overrides it); each other managed owner gets a row covering that owner's repositories. Weeks are completed Monday-Sunday UTC windows; queue health is current.
 
 - **Merged throughput:** weekly worker, interactive and total merged PRs; missing origin labels contribute only to total.
 - **Interactive share:** interactive / (worker + interactive), target **<15%**.
