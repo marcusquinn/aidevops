@@ -404,6 +404,12 @@ _kw_survey_rows() {
 		_kw_repo_is_owned "$slug" "$maintainer" "$role" "$login" || continue
 		local has_keywords="$KW_FALSE" has_legacy="$KW_FALSE"
 		[[ -f "$repo_path/$STRATEGY_REL" ]] && has_keywords="$KW_TRUE"
+		# A canonical checkout can lag its remote; a registry already merged
+		# upstream must not be refiled.
+		if [[ "$has_keywords" != "$KW_TRUE" ]] &&
+			git -C "$repo_path" cat-file -e "refs/remotes/origin/HEAD:$STRATEGY_REL" 2>/dev/null; then
+			has_keywords="$KW_TRUE"
+		fi
 		if [[ "$has_keywords" != "$KW_TRUE" ]]; then
 			local property_store=""
 			property_store=$(_kw_py property --root "$repo_path" 2>/dev/null | jq -r '.store // empty') || property_store=""
