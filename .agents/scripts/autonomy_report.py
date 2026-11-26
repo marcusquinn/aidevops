@@ -27,7 +27,6 @@ WEEKLY = {
     "interactive": "is:pr is:merged label:origin:interactive merged:{span}",
     "all": "is:pr is:merged merged:{span}",
     "worker_closed_unmerged": "is:pr is:closed is:unmerged label:origin:worker closed:{span}",
-    "other": "is:pr is:merged -label:origin:worker -label:origin:interactive merged:{span}",
 }
 QUEUE = {
     "available": "is:issue is:open label:auto-dispatch label:status:available",
@@ -40,7 +39,7 @@ QUEUE = {
 NOTES = [
     "Counts are point-in-time GitHub search totals, not a transactional snapshot.",
     "Search totals above 1,000 are exact counts; lead-time samples cap at 100 PRs per row/origin.",
-    "Repositories without origin labels contribute to all/other only; dual-origin PRs count in both origins.",
+    "PRs without origin labels contribute only to all; dual-origin PRs count in both origins.",
     "Windows are the latest completed Monday-Sunday UTC weeks; queue health is current.",
     "Owner rows cover the whole owner, including unregistered repos; only eligible registry entries define local pulse state.",
     "Lead times sample latest-updated merged PRs in the week and the first closing issue, omitting missing references.",
@@ -157,6 +156,13 @@ def count_queries(scope_rows, windows, repos, now):
              "d14": (now - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")}
     for row, metric in product(scope_rows, QUEUE):
         queries[("queue", row, metric)] = scope_rows[row] + " " + QUEUE[metric].format(**dates)
+    for row, scope in scope_rows.items():
+        if row in repos:
+            # A registered single-repository scope has no unregistered subset.
+            continue
+        exclusions = "".join(" -repo:" + slug for slug in repos
+                             if row == slug.split("/")[0])
+        queries[("unregistered", row)] = scope + exclusions + " " + QUEUE["available_idle_7d"].format(**dates)
     for slug in repos:
         queries[("pulse", slug)] = "repo:" + slug + " " + QUEUE["available_idle_7d"].format(**dates)
     return queries
@@ -183,9 +189,7 @@ def queue_rows(scope_rows, repos, framework, totals):
     for row in scope_rows:
         values = {metric: totals[("queue", row, metric)] for metric in QUEUE}
         split = pulse[row]
-        split["not_registered"] = values["available_idle_7d"] - split["on"] - split["off"]
-        if split["not_registered"] < 0:
-            raise ValueError("Queue changed during report; rerun for consistent pulse counts")
+        split["not_registered"] = 0 if row in repos else totals[("unregistered", row)]
         rows.append({"scope": row, **values, "available_idle_7d_by_pulse": split})
     return rows
 
@@ -197,7 +201,7 @@ def report(repos, framework, weeks, now):
                for i in reversed(range(weeks))]
     totals = counts(count_queries(scope_rows, windows, repos, now))
     leads = []
-    for row, origin in product(scope_rows, ("worker", "interactive", "other")):
+    for row, origin in product(scope_rows, ("worker", "interactive")):
         query = scope_rows[row] + " " + WEEKLY[origin].format(span=week_span(windows[-1]))
         leads.append({"scope": row, "origin": origin, **lead_time(query)})
     return {
@@ -222,10 +226,10 @@ def display(value, percent=False):
 
 def print_text(result):
     print("Weekly autonomy outcomes (completed UTC weeks)")
-    print("Week | Scope | Worker | Interactive | Other | All | Interactive share (<15%) | Worker waste (<5%)")
+    print("Week | Scope | Worker | Interactive | All | Interactive share (<15%) | Worker waste (<5%)")
     for row in result["rows"]:
         print(" | ".join([row["week_start"], row["scope"], str(row["worker"]),
-                          str(row["interactive"]), str(row["other"]), str(row["all"]),
+                          str(row["interactive"]), str(row["all"]),
                           display(row["interactive_share"], True), display(row["worker_waste"], True)]))
     print("\nLatest-week lead times (hours; worker issue→merge p90 target <24h)")
     print("Scope | Origin | PR sample | Issue n | Issue p50/p90 | PR p50/p90")
@@ -268,7 +272,10 @@ def main():
     except (ValueError, KeyError, TypeError) as error:
         print(f"autonomy-report: {error}", file=sys.stderr)
         return 1
-    print(json.dumps(result, allow_nan=False)) if args.json else print_text(result)
+    if args.json:
+        print(json.dumps(result, allow_nan=False))
+    else:
+        print_text(result)
     return 0
 
 

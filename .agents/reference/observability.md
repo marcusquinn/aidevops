@@ -322,7 +322,7 @@ The helper exposes data for course-correction; it does not kill the session.
 ### 4. Output sandbox (noisy command evidence)
 
 `output-sandbox-helper.sh` stores noisy raw command output in `~/.aidevops/.agent-workspace/output-sandbox/` with a SQLite index and WAL mode.
-The assistant receives a compact receipt instead of full logs: output ID, outcome, process/verified exit codes, decision basis, byte/line counts, and redaction state. Raw storage paths are never model-visible.
+Auto-compaction families return a compact receipt: output ID, outcome, exit codes, decision basis, byte/line counts, and redaction state. Other successful commands return full native output by default, even when noisy; select `--success-mode receipt` to force a receipt. Raw storage paths are never model-visible.
 Failure defaults to bounded diagnostic lines; exact evidence remains retrievable deliberately with `output-sandbox-helper.sh show OUTPUT_ID --offset N --limit N`.
 
 Use it for repeatable noisy flows such as diagnostics, CI logs, worker output, and browser/tool logs.
@@ -333,7 +333,7 @@ Maintenance: `output-sandbox-helper.sh cleanup --max-age-days 14` removes old ra
 
 ### 5. Session output-efficiency evidence
 
-`session-review-helper.sh output-efficiency --session ID --json` reads the exact local OpenCode or Claude Code transcript through the Vault-managed history gate.
+`session-review-helper.sh output-efficiency --session ID --json` reads the exact local transcript through the Vault-managed history gate. Outside an active session, add `--runtime opencode` or `--runtime claude-code` to read an ID without `--input`.
 It reports only aggregate, model-visible tool-output evidence: unchanged snapshots, duplicate results, repeated lines/blocks, successful oversized results, raw fallbacks, and exact-output bypasses.
 Receipt-declared background evidence bytes are reported separately; background content is not scanned or copied into model context. Inputs, commands, outputs, transcript paths, and raw fragments remain omitted.
 
@@ -345,7 +345,7 @@ Run `autonomy-report-helper.sh report --weeks 2` (or add `--json`) for a read-on
 The framework repository has its own row (`--framework-repo` overrides it); each other managed owner gets a row covering that owner's repositories.
 Weeks are completed Monday-Sunday UTC windows; queue health is current.
 
-- **Merged throughput:** weekly worker, interactive, other/unlabeled and total merged PRs; missing origin labels contribute only to other/total.
+- **Merged throughput:** weekly worker, interactive and total merged PRs; missing origin labels contribute only to total.
 - **Interactive share:** interactive / (worker + interactive), target **<15%**.
 - **Worker waste:** closed-unmerged worker PRs / (merged + closed-unmerged worker PRs), target **<5%**.
 - **Lead time:** latest-week issue-created → merged and PR-opened → merged p50/p90 hours per origin, using at most 100 PRs and each PR's first closing issue; worker issue→merge p90 target **<24h**.
