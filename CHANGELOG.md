@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.286] - 2026-11-26
+
+### Added
+
+- archive index with restored marks (For #40419) (#40480)
+- migrate legacy archive into monthly segments (phase 3, For #40419) (#40478)
+- monthly archive segments and sealing (phase 2, For #40419) (#40475)
+- resolve archive segments in readers (phase 1, For #40419) (#40474)
+- add --attention human-prompt section to autonomy report (#40472)
+- add read-only autonomy outcome report (#40466)
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#40477)
+
+### Fixed
+
+- parse credentials.sh instead of sourcing; add credentials-lint (GH#40479) (#40481)
+- defer timed-out terminal-blocker entries (GH#40471) (#40473)
+- create the worktree in the --repo target (GH#40463) (#40467)
+
 ## [3.39.285] - 2026-11-26
 
 ### Added
