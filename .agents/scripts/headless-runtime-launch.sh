@@ -700,6 +700,48 @@ _validate_standalone_prompt_args() {
 	return 0
 }
 
+# _agent_stub_declares_subagent: succeed when a generated OpenCode agent file
+# for NAME declares `mode: subagent` in its frontmatter (GH#40518).
+# Args: $1 - agent name. Returns 0 when subagent-only, 1 otherwise or unknown.
+_agent_stub_declares_subagent() {
+	local agent_value="$1"
+	local config_dir="${OPENCODE_CONFIG_DIR:-${HOME:-}/.config/opencode}"
+	local agent_file=""
+	local sub_dir=""
+	for sub_dir in agent agents; do
+		agent_file="${config_dir}/${sub_dir}/${agent_value}.md"
+		[[ -f "$agent_file" ]] || continue
+		# Primary definitions in opencode.json win over a same-named stub.
+		if [[ -f "${config_dir}/opencode.json" ]] && command -v jq >/dev/null 2>&1; then
+			local configured_mode=""
+			configured_mode=$(jq -r --arg n "$agent_value" '.agent[$n].mode // empty' "${config_dir}/opencode.json" 2>/dev/null || true)
+			if [[ "$configured_mode" == "primary" || "$configured_mode" == "all" ]]; then
+				return 1
+			fi
+		fi
+		if awk '/^---[[:space:]]*$/ { fm++; next } fm == 1 && /^mode:[[:space:]]*"?subagent"?[[:space:]]*$/ { found = 1; exit } fm >= 2 { exit } END { exit !found }' "$agent_file" 2>/dev/null; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# _validate_run_agent_is_primary: fail fast when --agent names a subagent-only
+# agent. OpenCode otherwise prints "is a subagent, not a primary agent" and
+# silently falls back to the default agent, which then exits 0 having done none
+# of the requested work (GH#40518). Subagents are reached through Task.
+_validate_run_agent_is_primary() {
+	local agent_value="${agent_name:-}"
+	[[ -n "$agent_value" ]] || return 0
+	[[ "$agent_value" =~ ^[A-Za-z0-9_-]+$ ]] || return 0
+	[[ "${headless_runtime:-opencode}" == "claude" ]] && return 0
+	if _agent_stub_declares_subagent "$agent_value"; then
+		print_error "--agent '${agent_value}' is a subagent-only agent and cannot run headless; OpenCode would fall back to its default agent. Use a primary agent (e.g. build-plus) and delegate to '${agent_value}' via Task, or run it interactively with @${agent_value}."
+		return 1
+	fi
+	return 0
+}
+
 # _validate_run_args: check required fields and resolve prompt from file if needed.
 # Operates on caller-scoped variables set by _parse_run_args.
 _validate_run_args() {
@@ -726,6 +768,7 @@ _validate_run_args() {
 		print_error "run requires --prompt or --prompt-file"
 		return 1
 	}
+	_validate_run_agent_is_primary || return 1
 	return 0
 }
 
