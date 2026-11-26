@@ -47,6 +47,8 @@ for workflow_path in "$command_workflow" "$canonical_workflow"; do
 done
 
 git init -q -b main "$canonical_root" || fail "could not initialize canonical fixture"
+git -C "$canonical_root" remote add origin https://github.com/owner/repo.git ||
+	fail "could not add fixture origin"
 git -C "$canonical_root" worktree add -q --orphan -b feature/interactive-start-test "$linked_worktree" ||
 	fail "could not create linked-worktree fixture"
 canonical_root=$(cd "$canonical_root" && pwd -P) || fail "could not resolve canonical fixture"
@@ -187,9 +189,42 @@ done
 assert_log_line "claim cwd=${linked_worktree} marker=1 args=claim 46 owner/repo --implementing --defer-comment --replace-pr 77 --replacement-reason The existing implementation cannot satisfy the current API contract."
 assert_log_line "claim cwd=${linked_worktree} marker=1 args=claim 46 owner/repo --implementing --worktree ${linked_worktree} --replace-pr 77 --replacement-reason The existing implementation cannot satisfy the current API contract."
 
+# Cross-repo start: cwd is a checkout of another slug; --repo is registered in
+# REPOS_JSON, so pre-edit must run in the registered target checkout.
+other_repo="${test_root}/other"
+git init -q -b main "$other_repo" || fail "could not initialize other fixture"
+git -C "$other_repo" remote add origin git@github.com:other/repo.git || fail "could not add other origin"
+other_repo=$(cd "$other_repo" && pwd -P) || fail "could not resolve other fixture"
+repos_fixture="${test_root}/repos.json"
+printf '{"initialized_repos":[{"slug":"owner/repo","path":"%s"}]}\n' "$canonical_root" >"$repos_fixture"
 : >"$call_log"
-if STUB_CLAIM_FAILS=1 PATH="${stub_dir}:$PATH" \
-	"$helper" --issue 31317 --repo owner/repo --task "failed claim" </dev/null >/dev/null 2>&1; then
+(
+	cd "$other_repo" || exit 1
+	AIDEVOPS_GIT_WORKSPACE_ROOT="$test_root" \
+		REPOS_JSON="$repos_fixture" PRE_EDIT_MODE=valid PATH="${stub_dir}:$PATH" \
+		"$helper" --issue 50 --repo owner/repo --task "cross repo" </dev/null
+) || fail "cross-repo issue start failed"
+assert_log_line "pre-edit cwd=${canonical_root} args=--loop-mode --issue 50 --task cross repo"
+assert_log_line "full-loop cwd=${linked_worktree} marker=1 args=start GH#50 cross repo"
+
+# Unregistered target with a non-matching cwd origin: fail before any claim.
+printf '{"initialized_repos":[]}\n' >"$repos_fixture"
+: >"$call_log"
+if (
+	cd "$other_repo" || exit 1
+	REPOS_JSON="$repos_fixture" PRE_EDIT_MODE=valid PATH="${stub_dir}:$PATH" \
+		"$helper" --issue 51 --repo owner/repo --task "unresolved repo" </dev/null >/dev/null 2>&1
+); then
+	fail "unresolvable cross-repo target reached success"
+fi
+[[ ! -s "$call_log" ]] || fail "unresolvable cross-repo target invoked a lifecycle helper"
+
+: >"$call_log"
+if (
+	cd "$canonical_root" || exit 1
+	STUB_CLAIM_FAILS=1 PATH="${stub_dir}:$PATH" \
+		"$helper" --issue 31317 --repo owner/repo --task "failed claim" </dev/null >/dev/null 2>&1
+); then
 	fail "failed initial claim reached success"
 fi
 if grep -q '^pre-edit \|^full-loop ' "$call_log"; then
@@ -198,8 +233,11 @@ fi
 
 for invalid_mode in missing malformed unsafe-canonical unregistered duplicate failure; do
 	: >"$call_log"
-	if PRE_EDIT_MODE="$invalid_mode" PATH="${stub_dir}:$PATH" \
-		"$helper" --issue 44 --repo owner/repo --task "invalid worktree" </dev/null >/dev/null 2>&1; then
+	if (
+		cd "$canonical_root" || exit 1
+		PRE_EDIT_MODE="$invalid_mode" PATH="${stub_dir}:$PATH" \
+			"$helper" --issue 44 --repo owner/repo --task "invalid worktree" </dev/null >/dev/null 2>&1
+	); then
 		fail "invalid pre-edit mode ${invalid_mode} reached success"
 	fi
 	if grep -q '^full-loop ' "$call_log"; then
