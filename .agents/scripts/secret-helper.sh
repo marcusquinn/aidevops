@@ -1458,6 +1458,33 @@ cmd_run_specific() {
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/secret-verify-lib.sh"
 
+# shellcheck source=./credentials-lint-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/credentials-lint-lib.sh"
+
+# Lint credential files without executing them (GH#40479). Prints variable
+# names and line numbers only, never values.
+cmd_credentials_lint() {
+	local file="" report="" line="" rc=0
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
+		report=$(credentials_lint_file "$file") || true
+		if [[ -n "$report" ]]; then
+			rc=1
+			print_warning "Malformed lines in ${file}:"
+			while IFS= read -r line; do
+				printf '  %s\n' "$line"
+			done <<<"$report"
+		fi
+	done < <(resolve_credential_files)
+	if [[ "$rc" -ne 0 ]]; then
+		print_info "Repair: aidevops secret set NAME (rewrites the value safely quoted)"
+		return 1
+	fi
+	print_success "credentials: no malformed export lines"
+	return 0
+}
+
 # Show backend status
 cmd_status() {
 	if has_systemd_creds; then
@@ -1521,6 +1548,7 @@ cmd_status() {
 	fi
 
 	warn_credential_backups
+	cmd_credentials_lint || true
 	echo ""
 	return 0
 }
@@ -1549,6 +1577,7 @@ cmd_help() {
 	echo "  inventory                         Names-only structured local inventory"
 	echo "  audit-credentials                 Names-only JSON Lines hygiene audit (offline)"
 	echo "  status                            Show backend status"
+	echo "  credentials-lint                  Flag malformed credentials.sh lines (names/line numbers only)"
 	echo ""
 	print_info "Credential registry (non-secret; which account each secret opens):"
 	echo ""
@@ -1677,6 +1706,9 @@ main() {
 		;;
 	status)
 		cmd_status "$@"
+		;;
+	credentials-lint | lint)
+		cmd_credentials_lint "$@" || return $?
 		;;
 	help | --help | -h)
 		cmd_help
