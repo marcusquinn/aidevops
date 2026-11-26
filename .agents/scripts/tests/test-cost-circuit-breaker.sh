@@ -52,7 +52,8 @@ mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor
 mkdir -p "${HOME}/.config/aidevops"
 # Public-write privacy guard requires a readable inventory even with stub gh.
 # Keep historical 800K scenarios deterministic via the supported repo override.
-# The framework default now measures full usage with a provisional 20M limit.
+# The framework defaults measure full usage with tier-split limits (GH#40483:
+# simple 20M, standard 40M, thinking 60M, from measured single-attempt tails).
 LEGACY_BUDGET_REPO="${TEST_ROOT}/legacy-budget"
 mkdir -p "${LEGACY_BUDGET_REPO}/.aidevops"
 printf '%s\n' COST_BUDGET_UNIT=full-v1 COST_BUDGET_SIMPLE=800000 COST_BUDGET_STANDARD=800000 COST_BUDGET_THINKING=800000 COST_BUDGET_DEFAULT=800000 \
@@ -916,17 +917,24 @@ print_result "override below the minimum is clamped to 100K" "$assertion_rc" "(r
 
 # GH#40030: a legacy-unit override (no COST_BUDGET_UNIT=full-v1) written
 # against the old 800K default must not trip on one ordinary full-usage
-# attempt. 2M legacy scales to 50M and clamps to the 20M maximum.
+# attempt. 2M legacy scales to 50M (within the 100M maximum, GH#40483).
 write_fixture_comments "6515070"
 run_check_cost_budget 18105 "owner/budgeted" "standard"
 assertion_rc=1
 if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
 print_result "legacy 2M override allows a single 6.5M full-usage attempt" "$assertion_rc" "(rc=$rc output='$output')"
-write_fixture_comments "21000000"
+write_fixture_comments "51000000"
 run_check_cost_budget 18106 "owner/budgeted" "standard"
 assertion_rc=1
-if [[ "$rc" -eq 0 && "$output" == *"budget=20000K"* ]]; then assertion_rc=0; fi
-print_result "scaled legacy override still clamps to the 20M maximum" "$assertion_rc" "(rc=$rc output='$output')"
+if [[ "$rc" -eq 0 && "$output" == *"budget=50000K"* ]]; then assertion_rc=0; fi
+print_result "legacy 2M override scales 25x to 50M and trips above it" "$assertion_rc" "(rc=$rc output='$output')"
+# A scaled legacy value above the ceiling is still clamped (typo protection).
+printf 'COST_BUDGET_STANDARD=999999999\n' >"${BUDGET_REPO}/.aidevops/dispatch-cost-budgets.conf"
+write_fixture_comments "101000000"
+run_check_cost_budget 18108 "owner/budgeted" "standard"
+assertion_rc=1
+if [[ "$rc" -eq 0 && "$output" == *"budget=100000K"* ]]; then assertion_rc=0; fi
+print_result "scaled legacy override still clamps to the 100M maximum" "$assertion_rc" "(rc=$rc output='$output')"
 # A declared full-usage override is honoured verbatim (CRLF tolerated).
 printf 'COST_BUDGET_UNIT=full-v1\r\nCOST_BUDGET_STANDARD=2000000\r\n' \
 	>"${BUDGET_REPO}/.aidevops/dispatch-cost-budgets.conf"
@@ -1043,11 +1051,45 @@ run_check_cost_budget 18303 "owner/defaults" standard
 assertion_rc=1
 if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
 print_result "full-usage default allows ordinary 1.5M attempt" "$assertion_rc"
-write_fixture_comments "21000000"
+write_fixture_comments "41000000"
 run_check_cost_budget 18304 "owner/defaults" standard
 assertion_rc=1
+if [[ "$rc" -eq 0 && "$output" == *"budget=40000K"* ]]; then assertion_rc=0; fi
+print_result "full-usage standard default stops runaway above 40M" "$assertion_rc" "(rc=$rc output='$output')"
+
+# GH#40483 regression: the flat 20M default tripped on ONE ordinary attempt
+# (21.3M, 1 attempt, tier:standard). Measured single-attempt tails on the
+# runner ledger: standard max 27.7M, thinking p95 21.4M. None may trip alone;
+# a multi-attempt runaway must still trip.
+write_fixture_comments "21310143"
+run_check_cost_budget 18305 "owner/defaults" standard
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
+print_result "GH#40483: single 21.3M standard attempt does not trip the breaker" "$assertion_rc" "(rc=$rc output='$output')"
+
+write_fixture_comments "27701838"
+run_check_cost_budget 18306 "owner/defaults" standard
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
+print_result "GH#40483: worst measured standard attempt (27.7M) is allowed" "$assertion_rc" "(rc=$rc output='$output')"
+
+write_fixture_comments "21392597"
+run_check_cost_budget 18307 "owner/defaults" thinking
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
+print_result "GH#40483: thinking-tier p95 attempt (21.4M) is allowed" "$assertion_rc" "(rc=$rc output='$output')"
+
+write_fixture_comments "15269331,15269331,15269331,15269331"
+run_check_cost_budget 18308 "owner/defaults" thinking
+assertion_rc=1
+if [[ "$rc" -eq 0 && "$output" == *"budget=60000K"* && "$output" == *"attempts=4"* ]]; then assertion_rc=0; fi
+print_result "GH#40483: four median thinking attempts (61M) still trip at 60M" "$assertion_rc" "(rc=$rc output='$output')"
+
+write_fixture_comments "21000000"
+run_check_cost_budget 18309 "owner/defaults" simple
+assertion_rc=1
 if [[ "$rc" -eq 0 && "$output" == *"budget=20000K"* ]]; then assertion_rc=0; fi
-print_result "full-usage default stops runaway above 20M" "$assertion_rc" "(rc=$rc output='$output')"
+print_result "GH#40483: unmeasured simple tier keeps the 20M limit" "$assertion_rc" "(rc=$rc output='$output')"
 
 export PATH="$OLD_PATH"
 
