@@ -44,6 +44,7 @@ opencode_archive_segment_path() {
 opencode_archive_current_segment() {
 	local legacy="$1"
 	local month=""
+	# UTC, matching the UTC month boundary used when sealing.
 	month="${OPENCODE_ARCHIVE_MONTH_OVERRIDE:-$(date -u +%Y-%m)}"
 	opencode_archive_segment_path "$legacy" "$month"
 	return 0
@@ -106,6 +107,9 @@ opencode_archive_seal_segment() (
 	[[ "$check" == "ok" ]] || return 1
 	sessions=$(sqlite3 -readonly "$segment" "SELECT COUNT(*) FROM session;" 2>/dev/null) || sessions=0
 	bytes=$(wc -c <"$segment" | tr -d ' ')
+	# Freeze permissions before hashing; publish completion only after both
+	# permissions and the validated checksum have succeeded.
+	chmod 0444 "$segment" || return 1
 	digest=$(_opencode_archive_sha256 "$segment") || return 1
 	[[ "$digest" =~ ^[[:xdigit:]]{64}$ ]] || return 1
 	sealed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -114,7 +118,6 @@ opencode_archive_seal_segment() (
 		cp "$manifest" "$pending" || return 1
 	fi
 	printf '%s\t%s\t%s\t%s\t%s\n' "${segment##*/}" "$sessions" "$bytes" "$digest" "$sealed_at" >>"$pending" || return 1
-	chmod 0444 "$segment" || return 1
 	mv -f "$pending" "$manifest" || return 1
 	pending=""
 	retry_writable=0
