@@ -154,7 +154,9 @@ from the verified launch overlay, never from `BUZZ_*` variables or tool argument
   `buzz`) and `agent` (the overlay agent ID). `aidevops sessions list|show` add
   `via Buzz agent NAME`. Local records carry neither field.
 - Its messages use origin `chat:<app>:<conversation>`, so they never wake a local
-  session. The channel falls back to the agent ID, then `agent`; the app falls
+  session. Its `ask` result says so for an idle recipient, and `wait_seconds`
+  returns at once instead of waiting for a reply the recipient cannot give
+  before its next turn (GH#40449). The channel falls back to the agent ID, then `agent`; the app falls
   back to `remote`. It never falls back to `opencode`, even if the overlay
   context is malformed.
 - Nothing wakes it: a turn the chat app did not start has no channel to answer in.

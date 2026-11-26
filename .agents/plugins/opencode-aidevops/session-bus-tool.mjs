@@ -49,19 +49,36 @@ function workerNote(type, record) {
   return `${record.handle} is a pulse worker (${record.status}); it sees the message at its next tool result and is never woken.${answer}`;
 }
 
-/** An idle interactive session: info waits for its next turn; an ask wakes it unless a chat app drives it. */
-function idleNote(type, record) {
+/**
+ * GH#40449: a remote-hosted sender (t18898) sends with a chat origin, and
+ * delivery never wakes an idle session for it (isWakeEligible). Name the
+ * sender's app so the ask result does not promise a wake.
+ */
+function remoteSenderApp(sender) {
+  return store.parseChatOrigin(sender?.from?.origin)?.app || "";
+}
+
+/** An idle interactive session: info waits for its next turn; an ask wakes it unless a chat app drives either side. */
+function idleNote(type, record, sender) {
   const state = `${record.handle} is ${record.status};`;
   if (type !== "ask") return `${state} info messages wait for its next turn.`;
   if (record.interface) return `${state} ${store.viaLabel(record)}, so the question does not wake it. This session is driven from ${record.interface}; it answers on its next chat turn.`;
+  const app = remoteSenderApp(sender);
+  if (app) return `${state} this session is remote-hosted (${app}), so the question does not wake it. It arrives at that session's next turn or tool result, and its reply arrives in this session.`;
   return `${state} the question wakes it (at most ${store.LIMITS.wakesPerHour} wakes per hour). Its reply arrives in this session.`;
 }
 
-function deliveryNote(type, record) {
+/** GH#40449: a remote-hosted sender's ask to an idle local session cannot wake it, so a reply wait cannot help. */
+function remoteAskToIdle(record, sender) {
+  if (!record || record.interface || store.isWorker(record) || record.status === "busy" || record.status === "permission") return false;
+  return Boolean(remoteSenderApp(sender));
+}
+
+function deliveryNote(type, record, sender) {
   if (!record) return OFFLINE_NOTE;
   if (store.isWorker(record)) return workerNote(type, record);
   if (record.status === "busy" || record.status === "permission") return `${record.handle} is ${record.status}; it sees the message at its next tool result.`;
-  return idleNote(type, record);
+  return idleNote(type, record, sender);
 }
 
 function listAction(root, sender) {
@@ -109,6 +126,10 @@ async function askAction(bus, sender, args, context) {
   let release = () => {};
   // Reserve synchronously after the send, before any await, so the reply cannot be delivered to the root first.
   const sent = sendAction(bus.root, sender, args, "ask", (message) => { release = bus.reserveReply(sender.sessionID, message.id); });
+  if (remoteAskToIdle(sent.record, sender)) {
+    release();
+    return `${sent.text}\n\nNot waiting: the recipient is idle and this ask cannot wake it; ask ID ${sent.message.id}. The reply will follow normal delivery to this session.`;
+  }
   try {
     return await awaitReply(bus, sender, sent, args.wait_seconds, context?.abort);
   } finally {
@@ -131,7 +152,7 @@ function sendAction(root, sender, args, type, onSent = () => {}) {
     hops: sender.hops,
   });
   onSent(message);
-  return { message, text: `Sent ${type} ${message.id} to ${record?.handle || resolved.sessionID}. ${deliveryNote(type, record)}` };
+  return { message, record, text: `Sent ${type} ${message.id} to ${record?.handle || resolved.sessionID}. ${deliveryNote(type, record, sender)}` };
 }
 
 function replyAction(root, sender, args) {
