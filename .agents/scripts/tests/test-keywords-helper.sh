@@ -235,6 +235,16 @@ test_public_repo_ignores_data() {
 	export AIDEVOPS_KEYWORDS_HUB_PATH=""
 	"$HELPER" issues >"$issues_file"
 	check "public issue dry run identifies ignored mode" contains "$issues_file" 'mode=ignored'
+	# A not-planned closure is a recorded decision and must not be refiled.
+	gh() {
+		case " $* " in *" --state closed "*) printf '7\n' ;; esac
+		return 0
+	}
+	export -f gh
+	"$HELPER" issues >"$issues_file"
+	check "not-planned closure is not re-filed" contains "$issues_file" 'skip declined example/public #7'
+	gh() { return 0; }
+	export -f gh
 	# Call the same label/body path with a stubbed create wrapper, no network or issue writes.
 	(
 		# shellcheck source=/dev/null

@@ -465,6 +465,7 @@ aidevops now standardises search targets per repository (`~/.aidevops/agents/seo
 
 ### Implementation Steps
 
+0. Product check: if the README, docs and site content do not define the product and the repository or domain name does not unambiguously imply it, do not invent positioning. Close this issue as not planned with that reason; `aidevops keywords issues` will not refile it. Reopen it when the product is described.
 1. `aidevops keywords scaffold .` — detects surfaces, migrates any `context/target-keywords.md`, and picks tracked vs ignored data.
 2. Add the brand entity (`role=self`, `same_as` profiles) and 3-5 competitors to `entities`.
 3. Add 10-30 targets from existing evidence first (README, docs, GSC/Bing exports, package keywords, GitHub topics); set `business_value` 1-5. Paid research must stay inside the monthly budget (`aidevops keywords budget`).
@@ -549,10 +550,16 @@ cmd_issues() {
 		[[ -n "$slug" && "$has_keywords" != "$KW_TRUE" ]] || continue
 		local mode
 		mode=$(_kw_data_mode "$repo_path")
-		local existing=""
+		local existing="" declined=""
 		existing=$(gh issue list --repo "$slug" --state open --search "${ISSUE_TITLE} in:title" --json number --jq '.[0].number // empty' 2>/dev/null || true)
+		# A not-planned closure records a deliberate decision (for example, no
+		# product defined yet); refiling it would recreate an unsolvable issue.
+		[[ -z "$existing" ]] && declined=$(gh issue list --repo "$slug" --state closed --search "${ISSUE_TITLE} in:title reason:\"not planned\"" --json number --jq '.[0].number // empty' 2>/dev/null || true)
 		if [[ -n "$existing" ]]; then
 			printf 'skip existing %s #%s\n' "$slug" "$existing"
+			skipped=$((skipped + 1))
+		elif [[ -n "$declined" ]]; then
+			printf 'skip declined %s #%s\n' "$slug" "$declined"
 			skipped=$((skipped + 1))
 		elif [[ "$apply" != "$KW_TRUE" ]]; then
 			printf 'would-create %s %s (legacy=%s mode=%s)\n' "$slug" "$ISSUE_TITLE" "$has_legacy" "$mode"
