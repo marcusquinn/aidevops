@@ -356,10 +356,9 @@ EOF
 test_negative_escaped_quote_spans() {
 	source_literal_helpers
 
-	# shellcheck disable=SC2016  # fixture body is literal text
-	local input='"a --jq \".x[].id\"`.\n" +
-"b --jq \".y[].id\"`.\n" +
-"c --jq \".z[].id\"`.\n" +
+	local input='"a --jq \".x[].id\" done\n" +
+"b --jq \".y[].id\" done\n" +
+"c --jq \".z[].id\" done\n" +
 '
 	local count shown
 	count=$(printf '%s' "$input" | _count_repeated_literals)
