@@ -49,7 +49,9 @@ _DISPATCH_DEDUP_COST_LOADED=1
 # can neither disable the breaker nor make it fire on the first attempt.
 #######################################
 _COST_REPO_BUDGET_MIN=100000
-_COST_REPO_BUDGET_MAX=20000000
+# GH#40483: the ceiling must sit above the framework tier defaults (up to 60M),
+# otherwise a repository could only ever lower a budget, never raise it.
+_COST_REPO_BUDGET_MAX=100000000
 # GH#40030: GH#39951 switched footers to full usage (cache and reasoning
 # included) and raised the install default 25x (800K -> 20M). Repository files
 # written before then are in legacy non-cache units; read verbatim, a former
@@ -127,9 +129,9 @@ _get_cost_budget_for_tier() {
 	local _conf="${SCRIPT_DIR}/../configs/dispatch-cost-budgets.conf"
 	# Defaults match the documented tier sizing (see dispatch-cost-budgets.conf)
 	local COST_BUDGET_SIMPLE=20000000
-	local COST_BUDGET_STANDARD=20000000
-	local COST_BUDGET_THINKING=20000000
-	local COST_BUDGET_DEFAULT=20000000
+	local COST_BUDGET_STANDARD=40000000
+	local COST_BUDGET_THINKING=60000000
+	local COST_BUDGET_DEFAULT=40000000
 	if [[ -f "$_conf" ]]; then
 		# shellcheck source=/dev/null
 		source "$_conf"
