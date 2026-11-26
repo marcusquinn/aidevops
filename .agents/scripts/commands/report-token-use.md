@@ -52,4 +52,12 @@ are excluded from net totals and retained in raw totals for context-volume revie
 OpenCode reports recursively include child sessions via `session.parent_id` so
 compacted sessions are counted with their root session.
 
+OpenCode DB discovery: the global `~/.local/share/opencode/opencode.db` plus every
+`~/.aidevops/.agent-workspace/work/opencode-interactive/*/opencode/{opencode.db,opencode-archive.db}`
+are read, deduplicating session ids (first DB wins). `--session <id>` reports the DB
+it matched on stderr and prints "session not found in N databases" on a miss.
+`AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB` restricts reading to that single DB;
+`AIDEVOPS_REPORT_TOKEN_USE_INTERACTIVE_ROOT` overrides the per-project root.
+`--runtime auto` tries OpenCode first, then falls back to Claude metrics.
+
 The `efficiency` scorecard separates model and reasoning effort, uncached/cache/output/reasoning tokens, median/p95 prompt size, routing metadata coverage, and parent-plus-child session families. When append-only objective evidence exists, JSON adds source-qualified unique-attachment coverage and cost per independently verified objective; shared or incomplete evidence remains unavailable. JSON retains both recorded cost versions and a consistently repriced API-equivalent estimate. Unknown prices and unverified task completion remain explicitly unavailable, not zero. See `reference/context-efficiency.md` for interpretation and context-loading safeguards.

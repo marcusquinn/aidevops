@@ -21,7 +21,10 @@ export { enforceManagedMcpArtifactPath } from "./mcp-artifact-path.mjs";
 
 const MCP_DIAGNOSTIC_UNAVAILABLE =
   "diagnostic unavailable; use the documented secure CLI diagnostic path";
-const MCP_STATUS_VALUES = new Set(["connected", "connecting", "disabled", "error", "failed"]);
+// GH#40451: OpenCode reports OAuth remotes without a usable login as
+// needs_auth / needs_client_registration. Waiting cannot fix either.
+const MCP_AUTH_STATUSES = new Set(["needs_auth", "needs_client_registration"]);
+const MCP_STATUS_VALUES = new Set(["connected", "connecting", "disabled", "error", "failed", ...MCP_AUTH_STATUSES]);
 
 function safeMcpStatusDiagnostic() {
   // The OpenCode SDK currently types the /mcp response as unknown. Until it
@@ -34,6 +37,30 @@ class McpFailedStatusError extends Error {
   constructor(status, phase) {
     super(`MCP entered ${status} status during ${phase}; ${safeMcpStatusDiagnostic()}`);
     this.name = "McpFailedStatusError";
+  }
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The login command for the credential store this OpenCode process reads.
+ * Built only from the registry-approved name and the process environment,
+ * never from status-entry detail.
+ */
+export function mcpAuthCommand(name, env = process.env) {
+  const dataHome = env.XDG_DATA_HOME;
+  return dataHome ? `XDG_DATA_HOME=${shellQuote(dataHome)} opencode mcp auth ${name}` : `opencode mcp auth ${name}`;
+}
+
+class McpNeedsAuthError extends Error {
+  constructor(name, status, env) {
+    const detail = status === "needs_client_registration"
+      ? "needs OAuth client registration that OpenCode could not complete automatically"
+      : "needs an OAuth login for this session's credential store";
+    super(`MCP ${name} ${detail} (status ${status}). Run in a terminal, then connect again: ${mcpAuthCommand(name, env)}`);
+    this.name = "McpNeedsAuthError";
   }
 }
 
@@ -71,6 +98,7 @@ async function waitForConnection(name, options, phase) {
     const statusEntry = payload?.[name];
     status = MCP_STATUS_VALUES.has(statusEntry?.status) ? statusEntry.status : "unknown";
     if (status === "connected") return;
+    assert(!MCP_AUTH_STATUSES.has(status), new McpNeedsAuthError(name, status, options.env || process.env));
     assert(!["error", "failed"].includes(status), new McpFailedStatusError(status, phase));
     await pause(pollIntervalMs);
   } while (Date.now() < deadline);
@@ -290,7 +318,7 @@ async function executeMcpActivation(args, context, allowed, options) {
  * Create the bounded MCP activation tool.
  * @param {function} tool
  * @param {object} z
- * @param {{client: object, directory?: string, allowedNames: string[], activationAgents?: object, managedWorkspaces?: object, connectTimeoutMs?: number, pollIntervalMs?: number, pause?: function}} options
+ * @param {{client: object, directory?: string, allowedNames: string[], activationAgents?: object, managedWorkspaces?: object, env?: object, connectTimeoutMs?: number, pollIntervalMs?: number, pause?: function}} options
  * @returns {object}
  */
 export function createMcpActivationTool(tool, z, options) {
