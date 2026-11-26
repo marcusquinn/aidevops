@@ -38,6 +38,12 @@ test("worker runtime reads allow bounded plumbing but keep broad and proc reques
     ["symlink", join(temp, "escape/request.json"), `${temp}/escape/*`, "read", false],
     ["secret", join(temp, ".env"), `${temp}/*`, "read", false],
   ]) {
+    // GH#40455: hosts without /proc (macOS) reject the absent read before any
+    // permission ask; that rejection is the gate there. Linux keeps the ask path.
+    if (target.startsWith("/proc/") && !existsSync(target)) {
+      assert.throws(() => broker.recordToolCall({ tool, callID: id }, { args: { filePath: target } }), /does not exist/, id);
+      continue;
+    }
     broker.recordToolCall({ tool, callID: id }, { args: { filePath: target } });
     const raw = { id, sessionID: "runtime", permission: "external_directory", patterns: [pattern], callID: id };
     const output = { status: "ask" };
