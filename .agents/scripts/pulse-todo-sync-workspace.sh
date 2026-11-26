@@ -225,7 +225,7 @@ _ptsw_sanitize_clone_diagnostic() {
 		sanitized=$(scrub_credentials "$sanitized") || return 1
 	else
 		sanitized=$(printf '%s' "$sanitized" |
-			sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g') || return 1
+			sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-|AIza)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g') || return 1
 	fi
 	sanitized=$(printf '%s' "$sanitized" |
 		LC_ALL=C tr '\r\n\t' '   ' |

@@ -755,7 +755,7 @@ readonly TASK_SIBLING_NON_ACTIVE_STATES_SQL="'verified','cancelled','deployed','
 #
 # Two layers:
 #   scrub_credentials  — strips known token prefixes (sk-, GOCSPX-, ghp_, gho_, ghs_,
-#                        ghu_, github_pat_, glpat-, xoxb-, xoxp-) from any
+#                        ghu_, github_pat_, glpat-, xoxb-, xoxp-, AIza) from any
 #                        text passed to it. Pure regex, no network.
 #   sanitize_url       — strips the `user:pass@` or `token@` authority from
 #                        URL-shaped strings, THEN pipes through
@@ -774,7 +774,7 @@ readonly TASK_SIBLING_NON_ACTIVE_STATES_SQL="'verified','cancelled','deployed','
 # Known credential token prefixes (ERE alternation, no grouping). Shared by
 # scrub_credentials and the security-posture tracked-template classifier
 # (GH#33339) so redaction and detection recognise the same signatures.
-[[ -z "${AIDEVOPS_CREDENTIAL_PREFIX_ERE+x}" ]] && AIDEVOPS_CREDENTIAL_PREFIX_ERE='sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-'
+[[ -z "${AIDEVOPS_CREDENTIAL_PREFIX_ERE+x}" ]] && AIDEVOPS_CREDENTIAL_PREFIX_ERE='sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-|AIza'
 
 scrub_credentials() {
 	local text="$1"

@@ -15,7 +15,7 @@ export {
 } from "./display-redaction.mjs";
 
 const CREDENTIAL_PATTERN =
-  /(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
+  /(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-|AIza)[A-Za-z0-9_-]{10,}/g;
 const NAMED_CREDENTIAL_ASSIGNMENT_PATTERN =
   /(^|[^A-Za-z0-9_])((?:"[A-Za-z_][A-Za-z0-9_. -]*"|'[A-Za-z_][A-Za-z0-9_. -]*'|(?:API[ \t]+KEY|PRIVATE[ \t]+KEY|SECRET[ \t]+KEY|ACCESS[ \t]+TOKEN|AUTH[ \t]+TOKEN|CLIENT[ \t]+SECRET|USER[ \t]+PASSWORD)|[A-Za-z_][A-Za-z0-9_.-]*))(\s*(?::=|=>|=(?!=)|:(?![:=]))\s*)(\$\{[A-Za-z_][A-Za-z0-9_]*(?::?[-?=+])?\}|"(?:\\.|[^"\\])*"[^\r\n\s,}\])&;|<>]*|'(?:\\.|[^'\\])*'[^\r\n\s,}\])&;|<>]*|\[[^\r\n\s,};&|<>]*\][^\r\n\s,}\])&;|<>]*|<[^>\r\n]*>[^\r\n\s,}\])&;|<>]*|\([^()\r\n]*\)[^\r\n\s,}\])&;|<>]*|not[ \t]+set(?=$|[\s,}\])&;|<>])|[^\s,}\])&;|<>]+)/gim;
 // scheme://user:password@host (any scheme); captures through the ":" before the password.
@@ -99,7 +99,7 @@ function normalizeFieldName(name) {
 }
 
 function isSensitiveFieldName(name) {
-  return /(?:^|_)(?:API_?KEY|PRIVATE_KEY|SECRET_KEY|ACCESS_KEY|ACCESS_KEY_ID|ENCRYPTION_KEY|SIGNING_KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$/.test(
+  return /(?:^|_)(?:API_?KEY|PRIVATE_KEY|SECRET_KEY|ACCESS_KEY|ACCESS_KEY_ID|ENCRYPTION_KEY|SIGNING_KEY|KEY_STRING|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$/.test(
     normalizeFieldName(name),
   );
 }
