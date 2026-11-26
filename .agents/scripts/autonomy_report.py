@@ -4,7 +4,9 @@
 """Read-only GitHub autonomy outcomes for owners in the local managed registry."""
 
 import argparse
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from itertools import product
 import json
 import math
 import os
@@ -144,51 +146,67 @@ def lead_time(query):
             "issue_created_to_merged": percentiles(issues)}
 
 
+def week_span(window):
+    start, stop = window
+    return f"{start}..{stop - timedelta(days=1)}"
+
+
+def count_queries(scope_rows, windows, repos, now):
+    queries = {}
+    for window, row, metric in product(windows, scope_rows, WEEKLY):
+        queries[(str(window[0]), row, metric)] = scope_rows[row] + " " + WEEKLY[metric].format(span=week_span(window))
+    dates = {"d7": (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "d14": (now - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    for row, metric in product(scope_rows, QUEUE):
+        queries[("queue", row, metric)] = scope_rows[row] + " " + QUEUE[metric].format(**dates)
+    for slug in repos:
+        queries[("pulse", slug)] = "repo:" + slug + " " + QUEUE["available_idle_7d"].format(**dates)
+    return queries
+
+
+def weekly_rows(scope_rows, windows, totals):
+    rows = []
+    for window, row in product(windows, scope_rows):
+        start, stop = window
+        values = {metric: totals[(str(start), row, metric)] for metric in WEEKLY}
+        values["interactive_share"] = ratio(values["interactive"], values["worker"] + values["interactive"])
+        values["worker_waste"] = ratio(values["worker_closed_unmerged"], values["worker"] + values["worker_closed_unmerged"])
+        rows.append({"week_start": str(start), "week_end": str(stop - timedelta(days=1)),
+                     "scope": row, **values})
+    return rows
+
+
+def queue_rows(scope_rows, repos, framework, totals):
+    pulse = defaultdict(lambda: {"on": 0, "off": 0, "not_registered": 0})
+    for slug, enabled in repos.items():
+        row = framework if slug == framework else slug.split("/")[0]
+        pulse[row][{True: "on", False: "off"}[enabled]] += totals[("pulse", slug)]
+    rows = []
+    for row in scope_rows:
+        values = {metric: totals[("queue", row, metric)] for metric in QUEUE}
+        split = pulse[row]
+        split["not_registered"] = values["available_idle_7d"] - split["on"] - split["off"]
+        if split["not_registered"] < 0:
+            raise ValueError("Queue changed during report; rerun for consistent pulse counts")
+        rows.append({"scope": row, **values, "available_idle_7d_by_pulse": split})
+    return rows
+
+
 def report(repos, framework, weeks, now):
     scope_rows = scopes(repos, framework)
     end = now.date() - timedelta(days=now.weekday())
     windows = [(end - timedelta(weeks=i + 1), end - timedelta(weeks=i))
                for i in reversed(range(weeks))]
-    queries = {}
-    for start, stop in windows:
-        span = f"{start}..{stop - timedelta(days=1)}"
-        for row, scope in scope_rows.items():
-            for metric, query in WEEKLY.items():
-                queries[(str(start), row, metric)] = scope + " " + query.format(span=span)
-    dates = {"d7": (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-             "d14": (now - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    for row, scope in scope_rows.items():
-        for metric, query in QUEUE.items():
-            queries[("queue", row, metric)] = scope + " " + query.format(**dates)
-    for slug in repos:
-        queries[("pulse", slug)] = "repo:" + slug + " " + QUEUE["available_idle_7d"].format(**dates)
-    totals = counts(queries)
-    weekly, queue, leads = [], [], []
-    for start, stop in windows:
-        for row in scope_rows:
-            values = {metric: totals[(str(start), row, metric)] for metric in WEEKLY}
-            values["interactive_share"] = ratio(values["interactive"], values["worker"] + values["interactive"])
-            values["worker_waste"] = ratio(values["worker_closed_unmerged"], values["worker"] + values["worker_closed_unmerged"])
-            weekly.append({"week_start": str(start), "week_end": str(stop - timedelta(days=1)),
-                           "scope": row, **values})
-    for row, scope in scope_rows.items():
-        values = {metric: totals[("queue", row, metric)] for metric in QUEUE}
-        split = {"on": 0, "off": 0, "not_registered": 0}
-        for slug, enabled in repos.items():
-            if (slug == framework if row == framework else slug != framework and slug.split("/")[0] == row):
-                split["on" if enabled else "off"] += totals[("pulse", slug)]
-        split["not_registered"] = values["available_idle_7d"] - split["on"] - split["off"]
-        if split["not_registered"] < 0:
-            raise ValueError("Queue changed during report; rerun for consistent pulse counts")
-        queue.append({"scope": row, **values, "available_idle_7d_by_pulse": split})
-        span = f"{windows[-1][0]}..{windows[-1][1] - timedelta(days=1)}"
-        for origin in ("worker", "interactive", "other"):
-            query = scope + " " + WEEKLY[origin].format(span=span)
-            leads.append({"scope": row, "origin": origin, **lead_time(query)})
+    totals = counts(count_queries(scope_rows, windows, repos, now))
+    leads = []
+    for row, origin in product(scope_rows, ("worker", "interactive", "other")):
+        query = scope_rows[row] + " " + WEEKLY[origin].format(span=week_span(windows[-1]))
+        leads.append({"scope": row, "origin": origin, **lead_time(query)})
     return {
         "window": {"start": str(windows[0][0]), "end_exclusive": str(end),
                    "weeks": weeks, "generated_at": now.isoformat()},
-        "rows": weekly, "lead_times": leads, "queue": queue,
+        "rows": weekly_rows(scope_rows, windows, totals), "lead_times": leads,
+        "queue": queue_rows(scope_rows, repos, framework, totals),
         "targets": {"interactive_share_lt": TARGET_INTERACTIVE_SHARE,
                     "worker_waste_lt": TARGET_WORKER_WASTE,
                     "worker_issue_merge_p90_hours_lt": TARGET_WORKER_ISSUE_MERGE_P90_HOURS,
