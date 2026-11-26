@@ -255,11 +255,29 @@ cmd_sessions() {
 	if [[ -f "$OPENCODE_DB" ]]; then
 		rows+="$(_sessions_query_db "$OPENCODE_DB" "active" "$query" "$exact_id" "$directory" "$limit")"
 	fi
-	if [[ "$include_archive" == true && -f "$OPENCODE_ARCHIVE_DB" ]]; then
-		[[ -n "$rows" ]] && rows+=$'\n'
-		rows+="$(_sessions_query_db "$OPENCODE_ARCHIVE_DB" "archive" "$query" "$exact_id" "$directory" "$limit")"
+	local segment=""
+	local segment_rows=""
+	if [[ "$include_archive" == true ]] && opencode_archive_exists "$OPENCODE_ARCHIVE_DB"; then
+		# GH#40419: the legacy archive plus any monthly segments.
+		while IFS= read -r segment; do
+			[[ -n "$segment" ]] || continue
+			segment_rows="$(_sessions_query_db "$segment" "archive" "$query" "$exact_id" "$directory" "$limit")"
+			[[ -n "$segment_rows" ]] || continue
+			[[ -n "$rows" ]] && rows+=$'\n'
+			rows+="$segment_rows"
+		done < <(opencode_archive_segments "$OPENCODE_ARCHIVE_DB")
 	elif [[ "$include_archive" == true && "$json" != true ]]; then
 		print_warning "archive DB not found at $OPENCODE_ARCHIVE_DB; continuing with active DB only"
+	fi
+
+	# Re-sort across all sources and apply the limit once. Key matches the SQL
+	# ordering: updated (field 10), falling back to created (field 9) when empty.
+	if [[ -n "$rows" ]]; then
+		rows=$(printf '%s\n' "$rows" |
+			awk -F $'\037' -v OFS=$'\037' '{ k = ($10 != "" ? $10 : $9); print k, $0 }' |
+			sort -t $'\037' -k1,1nr |
+			cut -d $'\037' -f2- |
+			awk -v n="$limit" 'NR <= n')
 	fi
 
 	if [[ "$json" == true ]]; then

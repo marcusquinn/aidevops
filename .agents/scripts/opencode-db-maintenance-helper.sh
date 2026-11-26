@@ -98,6 +98,8 @@ fi
 
 # shellcheck source=opencode-db-inventory-lib.sh
 source "${SCRIPT_DIR}/opencode-db-inventory-lib.sh"
+# shellcheck source=opencode-db-archive-segments-lib.sh
+source "${SCRIPT_DIR}/opencode-db-archive-segments-lib.sh"
 
 readonly OPENCODE_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode"
 readonly OPENCODE_DB="${OPENCODE_DB_PATH:-${OPENCODE_DB:-${OPENCODE_DATA_DIR}/opencode.db}}"

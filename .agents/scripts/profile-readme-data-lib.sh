@@ -37,6 +37,60 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+_PROFILE_DATA_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_PROFILE_DATA_LIB_DIR" != "${BASH_SOURCE[0]}" ]] || _PROFILE_DATA_LIB_DIR="."
+
+# --- Load OpenCode archive segments into a temp table (GH#40419 phase 1) ---
+# SQLite allows 10 attached databases by default, so segments are attached one
+# at a time: ATTACH, copy the small projected rows into a TEMP table, DETACH.
+# Every segment is read regardless of count, and the final grouping (models,
+# distinct sessions, totals) runs once over the combined rows.
+# Usage: _profile_archive_load_sql <rows|tokens>
+# Prints SQL (empty when no archive segment exists). It creates temp table
+# `archive_rows`; the caller UNIONs it with the active message rows.
+_profile_archive_load_sql() {
+	local kind="$1"
+	local seg="" escaped="" projection="" out=""
+	# Lazy source (fixtures copy only some libs); fall back to the single
+	# legacy archive file when the segments library is not beside this one.
+	if ! declare -F opencode_archive_segments >/dev/null 2>&1; then
+		if [[ -f "${_PROFILE_DATA_LIB_DIR}/opencode-db-archive-segments-lib.sh" ]]; then
+			# shellcheck source=opencode-db-archive-segments-lib.sh
+			source "${_PROFILE_DATA_LIB_DIR}/opencode-db-archive-segments-lib.sh"
+		else
+			opencode_archive_segments() {
+				local legacy="$1"
+				[[ -f "$legacy" ]] && printf '%s\n' "$legacy"
+				return 0
+			}
+		fi
+	fi
+	while IFS= read -r seg; do
+		[[ -n "$seg" ]] || continue
+		escaped="${seg//\'/\'\'}"
+		if [[ "$kind" == "tokens" ]]; then
+			[[ -n "$out" ]] || out="CREATE TEMP TABLE archive_rows(input_tokens, output_tokens, cache_read_tokens, cache_write_tokens);
+"
+			projection="SELECT json_extract(data, '\$.tokens.input'),
+	json_extract(data, '\$.tokens.output'),
+	json_extract(data, '\$.tokens.cache.read'),
+	json_extract(data, '\$.tokens.cache.write')
+FROM archive_seg.message
+WHERE json_extract(data, '\$.role') = 'assistant'"
+		else
+			[[ -n "$out" ]] || out="CREATE TEMP TABLE archive_rows(session_id, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms);
+"
+			projection=$(_opencode_assistant_rows_sql archive_seg.message)
+		fi
+		out="${out}ATTACH DATABASE '${escaped}' AS archive_seg;
+INSERT INTO archive_rows ${projection};
+DETACH DATABASE archive_seg;
+"
+	done < <(opencode_archive_segments "$OPENCODE_ARCHIVE_DB_FILE")
+	printf '%s' "$out"
+	return 0
+}
+
 PROFILE_EPOCH_DATE="1970-01-01"
 PROFILE_RATE_OPUS="15.0|75.0|1.50"
 PROFILE_RATE_SONNET="3.0|15.0|0.30"
@@ -370,11 +424,11 @@ _get_model_usage_from_opencode() {
 	local attach_clause=""
 	local assistant_rows_sql=""
 	assistant_rows_sql=$(_opencode_assistant_rows_sql message)
-	if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
-		attach_clause="ATTACH DATABASE '${OPENCODE_ARCHIVE_DB_FILE}' AS archive;"
+	attach_clause=$(_profile_archive_load_sql rows)
+	if [[ -n "$attach_clause" ]]; then
 		assistant_rows_sql="${assistant_rows_sql}
 UNION ALL
-$(_opencode_assistant_rows_sql archive.message)"
+SELECT * FROM temp.archive_rows"
 	fi
 	raw_json=$(_profile_sqlite_read "$OPENCODE_DB_FILE" "
 		${attach_clause}
@@ -685,15 +739,12 @@ _token_totals_from_opencode_db() {
 	fi
 
 	local _totals_attach="" _totals_union=""
-	if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
-		_totals_attach="ATTACH DATABASE '${OPENCODE_ARCHIVE_DB_FILE}' AS archive;"
-		_totals_union="UNION ALL
-			SELECT json_extract(data, '\$.tokens.input'),
-				json_extract(data, '\$.tokens.output'),
-				json_extract(data, '\$.tokens.cache.read'),
-				json_extract(data, '\$.tokens.cache.write')
-			FROM archive.message
-			WHERE json_extract(data, '\$.role') = 'assistant'"
+	_totals_attach=$(_profile_archive_load_sql tokens)
+	if [[ -n "$_totals_attach" ]]; then
+		_totals_union="
+			UNION ALL
+			SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+			FROM temp.archive_rows"
 	fi
 
 	local oc_stats total_input total_output total_cache_read total_cache_write

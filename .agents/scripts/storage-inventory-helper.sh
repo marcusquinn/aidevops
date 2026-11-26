@@ -29,6 +29,8 @@ if [[ -f "$SCRIPT_DIR/opencode-db-safety-lib.sh" ]]; then
 	source "$SCRIPT_DIR/opencode-db-safety-lib.sh"
 	OPENCODE_STORAGE_PROBES_AVAILABLE=1
 fi
+# shellcheck source=opencode-db-archive-segments-lib.sh
+source "$SCRIPT_DIR/opencode-db-archive-segments-lib.sh"
 if [[ -f "$SCRIPT_DIR/worktree-recovery-lifecycle-helper.sh" ]]; then
 	# shellcheck source=worktree-recovery-lifecycle-helper.sh
 	source "$SCRIPT_DIR/worktree-recovery-lifecycle-helper.sh"
@@ -241,9 +243,34 @@ _storage_measure_group() {
 	return 0
 }
 
+# Prints archive-owned paths: the legacy archive plus monthly segments (GH#40419),
+# each with its -wal and -shm companions, one per line.
+_storage_archive_paths() {
+	local archive_db="$1"
+	local segment=""
+	printf '%s\n%s\n%s\n' "$archive_db" "${archive_db}-wal" "${archive_db}-shm"
+	while IFS= read -r segment; do
+		[[ -n "$segment" && "$segment" != "$archive_db" ]] || continue
+		printf '%s\n%s\n%s\n' "$segment" "${segment}-wal" "${segment}-shm"
+	done < <(opencode_archive_segments "$archive_db")
+	return 0
+}
+
+_storage_archive_measure() {
+	local archive_db="$1"
+	local paths=()
+	local path=""
+	while IFS= read -r path; do
+		paths+=("$path")
+	done < <(_storage_archive_paths "$archive_db")
+	_storage_measure_group "${paths[@]}"
+	return 0
+}
+
 _storage_opencode_residual_measurement() {
 	local root_path="$1"
-	shift
+	local archive_db="$2"
+	shift 2
 	local root_measure=""
 	local root_bytes=""
 	local root_confidence=""
@@ -261,7 +288,29 @@ _storage_opencode_residual_measurement() {
 		printf 'null|unavailable|%s' "${root_error:-root-unavailable}"
 		return 0
 	fi
-	for component_path in "$@"; do
+	# Archive-owned paths (legacy file, monthly segments, -wal/-shm) follow the
+	# archive override, so they may live outside or inside root_path.
+	local archive_path=""
+	local archive_args=()
+	while IFS= read -r archive_path; do
+		archive_args+=("$archive_path")
+	done < <(_storage_archive_paths "$archive_db")
+	# Build the subtraction set first: skip archive paths nested inside an
+	# included component (already counted there), regardless of argument order.
+	local subtract_paths=("$@")
+	local included=""
+	local nested=0
+	for archive_path in "${archive_args[@]}"; do
+		nested=0
+		for included in "$@"; do
+			if [[ "$archive_path" == "$included" || "$archive_path" == "$included/"* ]]; then
+				nested=1
+				break
+			fi
+		done
+		[[ "$nested" -eq 1 ]] || subtract_paths+=("$archive_path")
+	done
+	for component_path in "${subtract_paths[@]}"; do
 		if [[ "$component_path" != "$root_path" && "$component_path" != "$root_path/"* ]]; then
 			continue
 		fi
@@ -363,12 +412,12 @@ _storage_opencode_records() {
 	fi
 	active_measure=$(_storage_measure_group "$active_db")
 	wal_measure=$(_storage_measure_group "${active_db}-wal" "${active_db}-shm")
-	archive_measure=$(_storage_measure_group "$archive_db" "${archive_db}-wal" "${archive_db}-shm")
+	archive_measure=$(_storage_archive_measure "$archive_db")
 	legacy_measure=$(_storage_measure_group "$legacy_path")
 	tool_measure=$(_storage_measure_group "$tool_path")
-	residual_measure=$(_storage_opencode_residual_measurement "$data_root" \
+	residual_measure=$(_storage_opencode_residual_measurement "$data_root" "$archive_db" \
 		"$active_db" "${active_db}-wal" "${active_db}-shm" \
-		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
+		"$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
 	_storage_emit_opencode_backups "$data_root" "${backup_paths[@]+"${backup_paths[@]}"}"
 
 	if [[ "$OPENCODE_STORAGE_PROBES_AVAILABLE" -eq 1 ]]; then
