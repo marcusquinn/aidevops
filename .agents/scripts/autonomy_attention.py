@@ -66,10 +66,17 @@ def _read_db(db_path, start_ms, stop_ms):
         con.close()
 
 
-def scan(windows, framework_name):
-    """Return per-week prompt counts, scanned and skipped DB counts."""
+def _part_text(data):
+    try:
+        return json.loads(data).get("text") or ""
+    except (ValueError, AttributeError):
+        return ""
+
+
+def _collect(windows):
+    """Dedupe user messages across DBs: id -> [directory, created, all parts are nudges]."""
     start_ms, stop_ms = _millis(windows[0][0]), _millis(windows[-1][1])
-    messages = {}  # message id -> [directory, time_created, every text part is a nudge]
+    messages = {}
     skipped = scanned = 0
     for db_path in opencode_db_paths():
         if not db_path.is_file():
@@ -81,12 +88,14 @@ def scan(windows, framework_name):
             continue
         scanned += 1
         for message_id, _session, directory, created, data in rows:
-            try:
-                text = json.loads(data).get("text") or ""
-            except (ValueError, AttributeError):
-                text = ""
             entry = messages.setdefault(message_id, [directory, created, True])
-            entry[2] = entry[2] and bool(NUDGE.match(text))
+            entry[2] = entry[2] and bool(NUDGE.match(_part_text(data)))
+    return messages, scanned, skipped
+
+
+def scan(windows, framework_name):
+    """Return per-week prompt counts, scanned and skipped DB counts."""
+    messages, scanned, skipped = _collect(windows)
     weeks = {str(w[0]): {"human_prompts": 0, "nudges": 0, "framework_prompts": 0} for w in windows}
     for directory, created, nudge in messages.values():
         for start, stop in windows:
