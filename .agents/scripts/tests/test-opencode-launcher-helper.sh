@@ -18,6 +18,8 @@ unset XDG_DATA_HOME
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
 HELPER="${REPO_ROOT}/.agents/scripts/opencode-launcher-helper.sh"
+# shellcheck source=../portable-stat.sh
+source "${REPO_ROOT}/.agents/scripts/portable-stat.sh" || exit
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -260,7 +262,7 @@ fi
 printf '{"alpha":{"tokens":"global-a"}}\n' >"${home_dir}/.local/share/opencode/mcp-auth.json"
 mcp_output=$(_run_mcp_seed)
 mcp_seeded=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
-mcp_mode=$(stat -f '%Lp' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || stat -c '%a' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+mcp_mode=$(_file_perms "${mcp_session_dir}/mcp-auth.json")
 if [[ "${mcp_seeded}" == '{"alpha":{"tokens":"global-a"}}' && "${mcp_mode}" == "600" && "${mcp_output}" != *"global-a"* ]]; then
     _pass "launcher seeds a missing session mcp-auth.json from the global store (GH#40451)"
 else
