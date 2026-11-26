@@ -1043,7 +1043,9 @@ _merge_execute() {
 	local merge_body_file="${6:-}"
 	_merge_check_admin_capability "$pr_number" "$repo" "$has_admin" || return 1
 	_merge_verify_rbg_override_approval "$pr_number" "$repo" || return 1
-	_merge_verify_runtime_waiver_approval "$pr_number" "$repo" || return 1
+	if [[ -n "${_FULL_LOOP_RUNTIME_WAIVER_REASON:-}" ]]; then
+		_merge_verify_runtime_waiver_approval "$pr_number" "$repo" || return 1
+	fi
 	squash_subject=$(_merge_resolve_subject_for_method "$pr_number" "$repo" "$merge_method") || return 1
 	local merge_flags=()
 	[[ "$has_admin" -eq 1 ]] && merge_flags+=("--admin")
@@ -1987,7 +1989,9 @@ cmd_merge() {
 	fi
 
 	_merge_check_closing_guards "$pr_number" "$repo" || return 1
-	_merge_lift_runtime_waiver_hold "$pr_number" "$repo" || return 1
+	if [[ -n "${_FULL_LOOP_RUNTIME_WAIVER_REASON:-}" ]]; then
+		_merge_lift_runtime_waiver_hold "$pr_number" "$repo" || return 1
+	fi
 
 	# t2449: use the deterministic worker-briefed linked-issue trust verdict
 	# before pre-merge checks or any native/admin merge transport.
