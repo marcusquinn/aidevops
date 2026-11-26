@@ -341,7 +341,7 @@ EOF
 
 	rm -rf "$tmp_repo"
 
-	if [ "$ret" -eq 0 ] && printf '%s' "$output" | grep -q 'no new repeated string literals'; then
+	if [ "$ret" -eq 0 ] && grep -q 'no new repeated string literals' <<<"$output"; then
 		print_result "local linter: pre-existing string-literal debt is non-blocking" 0
 	else
 		print_result "local linter: pre-existing string-literal debt is non-blocking" 1 \
@@ -353,6 +353,119 @@ EOF
 # ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
+test_negative_escaped_quote_spans() {
+	source_literal_helpers
+
+	local input='"a --jq \".x[].id\" done\n" +
+"b --jq \".y[].id\" done\n" +
+"c --jq \".z[].id\" done\n" +
+'
+	local count shown
+	count=$(printf '%s' "$input" | _count_repeated_literals)
+	shown=$(printf '%s' "$input" | _show_repeated_literals all)
+	if [ "$count" -eq 0 ] && [ -z "$shown" ]; then
+		print_result "escaped-quote spans NOT counted (count and display)" 0
+	else
+		print_result "escaped-quote spans NOT counted (count and display)" 1 \
+			"expected 0, got count=$count display=$shown"
+	fi
+
+	local real='x "same literal" y
+z "same literal" w
+q "same literal" r
+'
+	count=$(printf '%s' "$real" | _count_repeated_literals)
+	if [ "$count" -eq 1 ]; then
+		print_result "real repeated literals still detected alongside escape fix" 0
+	else
+		print_result "real repeated literals still detected alongside escape fix" 1 \
+			"expected 1, got: $count"
+	fi
+
+	# Escaped quotes stay part of literal identity: three different values.
+	local mixed='echo "alpha \"beta\""
+echo "alpha beta"
+echo "alpha \"beta"
+'
+	count=$(printf '%s' "$mixed" | _count_repeated_literals)
+	if [ "$count" -eq 0 ]; then
+		print_result "escaped quotes preserved in literal identity" 0
+	else
+		print_result "escaped quotes preserved in literal identity" 1 "expected 0, got: $count"
+	fi
+
+	# Even backslash run: the quote after it closes the string.
+	local even='echo "path\\"
+echo "path\\"
+echo "path\\"
+'
+	count=$(printf '%s' "$even" | _count_repeated_literals)
+	if [ "$count" -eq 1 ]; then
+		print_result "closing quote after even backslash run preserved" 0
+	else
+		print_result "closing quote after even backslash run preserved" 1 "expected 1, got: $count"
+	fi
+	return 0
+}
+
+test_marker_identity_and_source_length() {
+	source_literal_helpers
+
+	local input count shown expected
+	# None of these distinct source literals occurs three times.
+	input='echo "alpha \"beta\""
+echo "alpha @Q@beta@Q@"
+echo "alpha @Q@beta@Q@"
+echo "path\\suffix"
+echo "path@B@suffix"
+echo "path@B@suffix"
+echo "alpha @A@Q@beta@A@Q@"
+echo "alpha @A@Q@beta@A@Q@"'
+	count=$(printf '%s\n' "$input" | _count_repeated_literals)
+	shown=$(printf '%s\n' "$input" | _show_repeated_literals all)
+	if [ "$count" -eq 0 ] && [ -z "$shown" ]; then
+		print_result "source marker text stays distinct from generated markers" 0
+	else
+		print_result "source marker text stays distinct from generated markers" 1 \
+			"expected zero and empty display, got count=$count display=$shown"
+	fi
+
+	input='echo "\\a"
+echo "\\a"
+echo "\\a"
+echo "\"a"
+echo "\"a"
+echo "\"a"'
+	count=$(printf '%s\n' "$input" | _count_repeated_literals)
+	shown=$(printf '%s\n' "$input" | _show_repeated_literals all)
+	if [ "$count" -eq 0 ] && [ -z "$shown" ]; then
+		print_result "three-source-character bodies remain below threshold" 0
+	else
+		print_result "three-source-character bodies remain below threshold" 1 \
+			"expected zero and empty display, got count=$count display=$shown"
+	fi
+
+	input='echo "\\ab"
+echo "\\ab"
+echo "\\ab"
+echo "\"ab"
+echo "\"ab"
+echo "\"ab"
+echo "@Q@@B@@A@"
+echo "@Q@@B@@A@"
+echo "@Q@@B@@A@"'
+	expected=$(printf '%s\n' '  3x: "\\ab"' '  3x: "\"ab"' '  3x: "@Q@@B@@A@"' | sort)
+	count=$(printf '%s\n' "$input" | _count_repeated_literals)
+	shown=$(printf '%s\n' "$input" | _show_repeated_literals all | sort)
+	if [ "$count" -eq 3 ] && [ "$shown" = "$expected" ]; then
+		print_result "four-character bodies detected and source identities displayed" 0
+	else
+		print_result "four-character bodies detected and source identities displayed" 1 \
+			"expected count=3 display=[$expected], got count=$count display=[$shown]"
+	fi
+	return 0
+}
+
 main() {
 	if [ ! -f "$HOOK_SCRIPT" ]; then
 		printf '%bERROR%b pre-commit-hook.sh not found at %s\n' \
@@ -368,6 +481,8 @@ main() {
 	test_boundary_escaped_dollar_caught
 	test_show_matches_count_no_phantom
 	test_posix_grep_comment_filter
+	test_negative_escaped_quote_spans
+	test_marker_identity_and_source_length
 	test_local_linter_preexisting_debt_nonblocking
 
 	echo ""

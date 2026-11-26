@@ -507,24 +507,35 @@ validate_positional_parameters() {
 # rejects literals that START with "$", not inter-argument spans. (GH#20505)
 #
 # Sed patterns (ERE, -E works on both BSD and GNU sed):
+#   @                            → @A first, keeping source markers distinct
+#   \\\\ then \\"                 → masked as @B / @Q (left to right, so backslash-run
+#                                   parity is respected): escaped quotes are not
+#                                   delimiters but stay part of the literal identity
 #   "\$[A-Za-z_][A-Za-z0-9_]*"   → "$var", "$name", "$_private"
 #   "\$\{[^}]*\}"                 → "${var}", "${var:-default}", "${#var}"
 #   "\$@"                         → special array-expansion token
 #   "\$[0-9*#?$!-]"               → "$1", "$*", "$#", "$?", "$$", "$!", "$-"
 #
 # POSIX note: [[:space:]] replaces \s in grep to ensure BSD grep compatibility.
+# Decode Q/B before A, then apply the four-source-character body threshold.
+# Grouping and display therefore use original source text, not expanded markers.
 _count_repeated_literals() {
-	local _ext_literal='"[^"]{4,}"'
+	local _ext_literal='"[^"]*"'
 	local _ext_numeric='^"[0-9]+\.?[0-9]*"$'
 	local _ext_varref='^"\$'
 	grep -v '^[[:space:]]*#' |
 		sed -E '
+			s/@/@A/g
+			s/\\\\/@B/g
+			s/\\"/@Q/g
 			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
 			s/"\$\{[^}]*\}"//g
-			s/"\$@"//g
+			s/"\$@A"//g
 			s/"\$[0-9*#?$!-]"//g
 		' |
 		grep -oE "$_ext_literal" |
+		sed 's/@Q/\\"/g; s/@B/\\\\/g; s/@A/@/g' |
+		awk 'length($0) >= 6' |
 		grep -vE "$_ext_numeric" |
 		grep -vE "$_ext_varref" |
 		sort | uniq -c | awk '$1 >= 3' | wc -l | tr -d ' '
@@ -546,18 +557,23 @@ _count_repeated_literals() {
 _show_repeated_literals() {
 	local mode="${1:-top}"
 	local baseline="${2:-}"
-	local _ext_literal='"[^"]{4,}"'
+	local _ext_literal='"[^"]*"'
 	local _ext_numeric='^"[0-9]+\.?[0-9]*"$'
 	local _ext_varref='^"\$'
 	local listing
 	listing=$(grep -v '^[[:space:]]*#' |
 		sed -E '
+			s/@/@A/g
+			s/\\\\/@B/g
+			s/\\"/@Q/g
 			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
 			s/"\$\{[^}]*\}"//g
-			s/"\$@"//g
+			s/"\$@A"//g
 			s/"\$[0-9*#?$!-]"//g
 		' |
 		grep -oE "$_ext_literal" |
+		sed 's/@Q/\\"/g; s/@B/\\\\/g; s/@A/@/g' |
+		awk 'length($0) >= 6' |
 		grep -vE "$_ext_numeric" |
 		grep -vE "$_ext_varref" |
 		sort | uniq -c |
