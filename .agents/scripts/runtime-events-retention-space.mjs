@@ -104,6 +104,22 @@ export function enableIncrementalVacuum(dbPath, { timeoutMs = 3600000 } = {}) {
   return true;
 }
 
+/** After verified deletes: prune tool_calls, then return free pages (GH#40498). */
+export function reclaimAfterArchive(dbPath, cutoffAt, { clock, deadline, enableIncrementalVacuum: convert }, sqlEscape) {
+  if (deadline - clock() <= 0) return { space_reclaim_skipped: "max_duration" };
+  const converted = convert ? enableIncrementalVacuum(dbPath) : false;
+  const toolCalls = pruneToolCalls(dbPath, cutoffAt, { clock, deadline, sqlEscape });
+  const pages = reclaimFreePages(dbPath, { clock, deadline });
+  return {
+    auto_vacuum: pages.auto_vacuum,
+    incremental_vacuum_enabled: converted,
+    reclaimed_bytes: pages.reclaimed_bytes,
+    tool_calls_deleted: toolCalls.deleted,
+    tool_calls_prune_complete: toolCalls.complete,
+    vacuum_required: pages.vacuum_required,
+  };
+}
+
 /** Return freelist pages to the filesystem in bounded chunks. */
 export function reclaimFreePages(dbPath, { clock, deadline }) {
   const probe = { timeoutMs: Math.min(30000, Math.max(1, deadlineLeft(clock, deadline))) };

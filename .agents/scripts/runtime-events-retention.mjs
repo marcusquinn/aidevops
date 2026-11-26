@@ -28,11 +28,7 @@ import { buildRuntimeEventRetentionInventory } from "./runtime-events-retention-
 import { runRuntimeEventMaintenance } from "./runtime-events-retention-maintenance.mjs";
 import { isProtectedRuntimeEvent } from "./runtime-events-retention-policy.mjs";
 import { verifyArchiveArtifacts } from "./runtime-events-retention-verification.mjs";
-import {
-  enableIncrementalVacuum,
-  pruneToolCalls,
-  reclaimFreePages,
-} from "./runtime-events-retention-space.mjs";
+import { reclaimAfterArchive } from "./runtime-events-retention-space.mjs";
 import { retentionStages, sqlite, sqliteRows } from "./runtime-events-retention-sqlite.mjs";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
 
@@ -396,20 +392,7 @@ export function archiveRuntimeEvents(options = {}) {
 function reclaimSpace(options) {
   const dbPath = canonicalizeSqliteDbPath(options.dbPath || resolveRuntimeEventsDbPath());
   if (!existsSync(dbPath)) return {};
-  const { clock, deadline } = options;
-  if (deadline - clock() <= 0) return { space_reclaim_skipped: "max_duration" };
-  const cutoffAt = normalizedCutoff(options.cutoff, options);
-  const converted = options.enableIncrementalVacuum ? enableIncrementalVacuum(dbPath) : false;
-  const toolCalls = pruneToolCalls(dbPath, cutoffAt, { clock, deadline, sqlEscape });
-  const pages = reclaimFreePages(dbPath, { clock, deadline });
-  return {
-    auto_vacuum: pages.auto_vacuum,
-    incremental_vacuum_enabled: converted,
-    reclaimed_bytes: pages.reclaimed_bytes,
-    tool_calls_deleted: toolCalls.deleted,
-    tool_calls_prune_complete: toolCalls.complete,
-    vacuum_required: pages.vacuum_required,
-  };
+  return reclaimAfterArchive(dbPath, normalizedCutoff(options.cutoff, options), options, sqlEscape);
 }
 
 /** Apply verified partitions until caught up or an explicit work bound is reached. */
