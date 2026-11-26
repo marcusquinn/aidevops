@@ -161,6 +161,38 @@ copy_auth_json() {
     return 0
 }
 
+# seed_mcp_auth_json <target_data_dir>
+# GH#40451: a terminal `opencode mcp auth NAME` writes the global
+# mcp-auth.json, which a per-project XDG_DATA_HOME never reads. Merge the
+# global entries into the session store per server, keeping every entry the
+# session already has: OAuth refresh rotates tokens inside the session store,
+# and overwriting them would revoke a working login. Best-effort: invalid or
+# unreadable JSON leaves the session store untouched. Only for stores owned by
+# the user's interactive, desktop or server sessions, never conversation or
+# worker stores. Contents are never printed.
+seed_mcp_auth_json() {
+    local target_data_dir="$1"
+    local source_auth="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/mcp-auth.json"
+    local target_auth="${target_data_dir}/opencode/mcp-auth.json"
+    local target_input="" temp_auth=""
+
+    [[ -f "${source_auth}" ]] || return 0
+    [[ "${source_auth}" == "${target_auth}" ]] && return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    mkdir -p "$(dirname "${target_auth}")" || return 0
+    target_input="${target_auth}"
+    [[ -f "${target_auth}" ]] || target_input=/dev/null
+    temp_auth=$(umask 077 && mktemp "${target_auth}.XXXXXX") || return 0
+    if jq -s 'if length == 1 then .[1] = {} else . end
+        | if (.[0] | type) == "object" and (.[1] | type) == "object" then .[0] + .[1] else error("not objects") end' \
+        "${source_auth}" "${target_input}" >"${temp_auth}" 2>/dev/null &&
+        chmod 600 "${temp_auth}" && mv -f "${temp_auth}" "${target_auth}"; then
+        return 0
+    fi
+    rm -f "${temp_auth}"
+    return 0
+}
+
 prewarm_opencode_data_dir() {
     local target_data_dir="$1"
 
@@ -492,6 +524,7 @@ run_isolated_tui() {
     # Keep stdout/stderr clean before exec: OpenCode's TUI is sensitive to any
     # pre-launch terminal output and can leave visible redraw artifacts.
     copy_auth_json "${data_dir}" || true
+    seed_mcp_auth_json "${data_dir}"
     prewarm_opencode_data_dir "${data_dir}"
 
     cd "${launch_dir}" || return 1
@@ -1180,6 +1213,7 @@ execute_desktop_launch() {
     managed_desktop_ready || return 1
     mkdir -p "${data_dir}/opencode" || return 1
     copy_auth_json "${data_dir}" || true
+    seed_mcp_auth_json "${data_dir}"
     prewarm_opencode_data_dir "${data_dir}"
 
     cd "${launch_dir}" || return 1
@@ -1349,6 +1383,7 @@ run_server_owner() {
         trap - EXIT
         return 1
     fi
+    seed_mcp_auth_json "${data_dir}"
     prewarm_opencode_data_dir "${data_dir}"
     if ! cd "${launch_dir}"; then
         release_server_lock

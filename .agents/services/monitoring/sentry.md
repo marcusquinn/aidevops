@@ -27,45 +27,28 @@ mcp:
 ## Quick Reference
 
 - **Purpose**: Production error debugging, trend analysis, stack trace investigation, release health
-- **MCP**: Local stdio mode with `@sentry/mcp-server`
-- **Auth**: Personal Auth Token (created **after** org exists — earlier tokens may not inherit org access)
-- **Credentials**: `~/.config/aidevops/credentials.sh` → `SENTRY_YOURNAME`
-- **MCP tools**: `list_projects` · `get_issue` · `list_issues` · `get_event` · `resolve_issue` · `assign_issue`
+- **MCP**: Sentry's hosted remote server, `https://mcp.sentry.dev/mcp` (registry entry `sentry`, `type: remote`), connected on demand from this agent with `aidevops_mcp connect sentry`
+- **Auth**: OAuth via OpenCode (`opencode mcp auth sentry`); no token in `credentials.sh` or `opencode.json`
+- **Check**: `sentry_whoami` confirms the connected account
 - **Use instead**: LLM traces/evals → `services/monitoring/langwatch.md`; dependency security → `services/monitoring/socket.md`
 
 <!-- AI-CONTEXT-END -->
 
 ## MCP Setup
 
-1. Sign up at [sentry.io](https://sentry.io), create an org (`Settings → Organizations → Create`), then a project.
-2. Generate a **personal** auth token (`Settings → Account → Personal Tokens → Create New Token`). Required scopes: `alerts:read`, `alerts:write`, `event:admin`, `event:read`, `event:write`, `member:read`, `org:read`, `project:read`, `project:releases`, `team:read`
-3. Save the token:
+1. Sign up at [sentry.io](https://sentry.io) and create an org and a project.
+2. From the `sentry` agent, run `aidevops_mcp connect sentry`.
+3. If it reports that an OAuth login is needed, run the printed command in a terminal, approve in the browser, then connect again. No restart is needed.
+
+aidevops launches OpenCode with a per-project `XDG_DATA_HOME`, so each session reads its own `opencode/mcp-auth.json`. The printed command targets that store:
 
 ```bash
-echo 'export SENTRY_YOURNAME="sntryu_..."' >> ~/.config/aidevops/credentials.sh
-chmod 600 ~/.config/aidevops/credentials.sh
+XDG_DATA_HOME="<session data dir>" opencode mcp auth sentry
 ```
 
-4. Configure MCP in `~/.config/opencode/opencode.json` or equivalent:
+A plain `opencode mcp auth sentry` writes the global store (`~/.local/share/opencode/mcp-auth.json`). Newly launched sessions merge its entries into their own store without overwriting entries the session already has (GH#40451); sessions that are already running need the session-store command.
 
-```json
-{
-  "mcpServers": {
-    "sentry": {
-      "command": "npx",
-      "args": ["@sentry/mcp-server@latest", "--access-token", "${SENTRY_YOURNAME}"],
-      "enabled": true
-    }
-  }
-}
-```
-
-5. Test:
-
-```bash
-source ~/.config/aidevops/credentials.sh
-curl -s -H "Authorization: Bearer $SENTRY_YOURNAME" "https://sentry.io/api/0/organizations/" | jq '.[].slug'
-```
+The registry replaces any legacy local `@sentry/mcp-server` + access-token entry in `opencode.json`. Remove that entry's token from your config.
 
 ## Usage Examples
 
@@ -86,9 +69,10 @@ Keep `sendDefaultPii` disabled unless you explicitly need user/IP metadata and h
 
 ## Troubleshooting
 
-- **Empty organizations**: token created before org existed — generate a new one after org creation.
-- **`Not authenticated`**: verify (`source ~/.config/aidevops/credentials.sh && printenv | grep '^SENTRY_YOURNAME$'`), test API (`curl -H "Authorization: Bearer $SENTRY_YOURNAME" https://sentry.io/api/0/`), restart runtime.
-- **Wrong token type**: org tokens (`org:ci`) are for CI/CD; MCP needs a personal token.
+- **Connect reports `needs_auth`**: run the printed `opencode mcp auth sentry` command for the session store, then connect again.
+- **Logged in, but the session still says not authenticated**: the login went to a different store. Compare `opencode mcp auth list` in the session shell with a normal terminal, then log in with the session's `XDG_DATA_HOME`.
+- **`needs_client_registration`**: OpenCode could not register an OAuth client automatically; retry `opencode mcp auth sentry` and check the OpenCode MCP docs.
+- **Diagnosis**: `mcp-diagnose.sh sentry` reports `[remote]` and the login command; it never suggests a local install.
 
 ## Related
 

@@ -11,6 +11,9 @@ unset AIDEVOPS_TEAM_INTERFACE_OVERLAY AIDEVOPS_CONVERSATION_PROJECT_ROOT \
     AIDEVOPS_CONVERSATION_RUNTIME_ROOT AIDEVOPS_SIG_MODEL BUZZ_ACP_MODEL \
     OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_DIR \
     OPENCODE_DISABLE_DEFAULT_PLUGINS OPENCODE_MODEL OPENCODE_PURE
+# GH#40451: credential sources resolve from the fixture HOME, never the
+# running session's real store.
+unset XDG_DATA_HOME
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
@@ -236,6 +239,24 @@ if [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
 else
     _fail "isolated launcher output unexpected: ${output}"
 fi
+
+# GH#40451: a terminal MCP OAuth login reaches the session store without
+# overwriting the session's own (possibly refreshed) entries.
+mcp_session_dir="${work_dir}/opencode-interactive/mcp-auth-merge/opencode"
+mkdir -p "${mcp_session_dir}"
+printf '{"alpha":{"tokens":"global-a"},"beta":{"tokens":"global-b"}}\n' >"${home_dir}/.local/share/opencode/mcp-auth.json"
+printf '{"beta":{"tokens":"session-b"}}\n' >"${mcp_session_dir}/mcp-auth.json"
+mcp_output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
+    "${HELPER}" --dir "${launch_dir}" --session-id mcp-auth-merge -- --version 2>&1)
+mcp_merged=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+mcp_mode=$(stat -f '%Lp' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || stat -c '%a' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+if [[ "${mcp_merged}" == '{"alpha":{"tokens":"global-a"},"beta":{"tokens":"session-b"}}' && "${mcp_mode}" == "600" ]] &&
+    [[ "${mcp_output}" != *"global-a"* && "${mcp_output}" != *"session-b"* ]]; then
+    _pass "launcher merges global mcp-auth.json entries without overwriting session entries (GH#40451)"
+else
+    _fail "mcp-auth.json merge unexpected: merged=${mcp_merged} mode=${mcp_mode}"
+fi
+rm -f "${home_dir}/.local/share/opencode/mcp-auth.json"
 
 output=$(env -u TMPDIR -u TMP -u TEMP PATH="${fake_bin}:$PATH" HOME="${home_dir}" \
     AIDEVOPS_WORK_DIR="${work_dir}" \

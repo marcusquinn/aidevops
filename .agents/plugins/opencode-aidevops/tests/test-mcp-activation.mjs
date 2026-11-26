@@ -1191,6 +1191,34 @@ test("normalizes unknown status values before reporting a timeout", async () => 
   assert.doesNotMatch(result, /PLAYWRITER_TOKEN|private-value/);
 });
 
+test("GH#40451: an OAuth login status fails fast with the session-store login command", async () => {
+  for (const [status, env, command] of [
+    ["needs_auth", { XDG_DATA_HOME: "/data/it's here" }, "XDG_DATA_HOME='/data/it'\\''s here' opencode mcp auth sentry"],
+    ["needs_client_registration", {}, "opencode mcp auth sentry"],
+  ]) {
+    const calls = [];
+    const activation = createMcpActivationTool(tool, z, {
+      client: {
+        async connect() { calls.push("connect"); },
+        async disconnect() { calls.push("disconnect"); },
+        async status() {
+          calls.push("status");
+          return { data: { sentry: { status, error: "SENTRY_TOKEN=private-value" } } };
+        },
+      },
+      allowedNames: ["sentry"],
+      env,
+      pollIntervalMs: 1,
+      pause: async () => {},
+    });
+    const result = await activation.execute({ action: "connect", name: "sentry" }, { agent: "sentry" });
+    assert.ok(result.includes(command), `${status}: ${result}`);
+    assert.match(result, new RegExp(`status ${status}`));
+    assert.doesNotMatch(result, /SENTRY_TOKEN|private-value/);
+    assert.deepEqual(calls, ["connect", "status"], `${status} fails on the first poll without a reset`);
+  }
+});
+
 test("does not reset status API errors or timeouts", async () => {
   const apiErrorCalls = [];
   const apiErrorActivation = createMcpActivationTool(tool, z, {

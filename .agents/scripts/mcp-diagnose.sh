@@ -423,6 +423,29 @@ while IFS= read -r _diag_cfg; do
 	fi
 done < <(for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do printf '%s\n' "${_diag_entry#*"${MCP_CONFIG_SEPARATOR}"}"; done)
 
+# GH#40451: the plugin registry decides the runtime type for registry-only
+# servers and for entries it always overwrites (e.g. sentry replaces a legacy
+# local+token config), so a remote OAuth server is never treated as a CLI.
+# Prints "<type> <overwrite:0|1>", or nothing when unknown.
+_registry_mcp_type() {
+	local mcp_name="$1"
+	local registry="${SCRIPT_DIR}/../plugins/opencode-aidevops/mcp-registry.mjs"
+	[[ -f "$registry" ]] && command -v node >/dev/null 2>&1 || return 0
+	# shellcheck disable=SC2016 # JavaScript template literal, not shell expansion.
+	node --input-type=module -e '
+const [registry, name] = process.argv.slice(1);
+const { getMcpRegistry } = await import(new URL(`file://${registry}`).href);
+const entry = getMcpRegistry().find((mcp) => mcp.name === name);
+if (typeof entry?.type === "string") process.stdout.write(`${entry.type} ${entry.alwaysOverwrite ? 1 : 0}`);
+' "$registry" "$mcp_name" 2>/dev/null || true
+	return 0
+}
+_registry_type="" _registry_overwrite=0
+read -r _registry_type _registry_overwrite <<<"$(_registry_mcp_type "$MCP_NAME")" || true
+if [[ -n "$_registry_type" && ("$_registry_overwrite" == "1" || -z "$MCP_CONFIGURED_TYPE") ]]; then
+	MCP_CONFIGURED_TYPE="$_registry_type"
+fi
+
 if [[ "$MCP_CONFIGURED_TYPE" == "$MCP_REMOTE_TYPE" || "$MCP_CONFIGURED_TYPE" == "sse" ]]; then
 	MCP_IS_REMOTE=true
 fi
@@ -833,6 +856,8 @@ PYEOF
 if [[ "$MCP_IS_REMOTE" == "true" ]]; then
 	echo -e "   ${CYAN}[remote]${NC} $MCP_NAME is a remote/SSE MCP (type: ${MCP_CONFIGURED_TYPE}) — no local command required."
 	echo "   Remote MCPs connect over the network and cannot be diagnosed locally."
+	echo "   OAuth login status for this session's credential store: opencode mcp auth list"
+	echo "   Log in (session store): ${XDG_DATA_HOME:+XDG_DATA_HOME=\"${XDG_DATA_HOME}\" }opencode mcp auth ${MCP_NAME}"
 	echo ""
 	echo "4. Known issues for $MCP_NAME..."
 	case "$MCP_NAME" in
