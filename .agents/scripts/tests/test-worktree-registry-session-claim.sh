@@ -124,6 +124,12 @@ test_source_preflight_reclaims_only_dead_same_session_owner() {
 		print_result "source preflight repairs only a dead same-session owner" 1
 		return 0
 	}
+	# Exercise ownership from a trusted fixture workspace, independent of the
+	# caller's checkout location (CI checkouts need not live under ~/Git).
+	local -x AIDEVOPS_GIT_WORKSPACE_ROOT="$TEST_ROOT"
+	"$GIT_BIN" -C "$canonical_path" remote add origin https://github.com/example/test.git || rc=1
+	printf '{"initialized_repos":[{"slug":"example/test","path":"%s"}]}\n' "$canonical_path" >"${TEST_ROOT}/repos.json"
+	export REPOS_JSON="${TEST_ROOT}/repos.json"
 	mkdir -p "${TEST_ROOT}/bin"
 	printf '#!/usr/bin/env bash\nprintf "WORKTREE_PATH=%%s\\n" "%s"\n' "$linked_path" >"${TEST_ROOT}/bin/pre-edit-check.sh"
 	chmod +x "${TEST_ROOT}/bin/pre-edit-check.sh"
@@ -137,7 +143,7 @@ test_source_preflight_reclaims_only_dead_same_session_owner() {
 	wait "$old_pid" 2>/dev/null || true
 	# The broker cannot connect to the intentionally absent socket; ownership must
 	# nevertheless be repaired before the proposal is attempted.
-	output=$(PATH="${TEST_ROOT}/bin:$PATH" "${SCRIPT_DIR}/../interactive-start-helper.sh" \
+	output=$(cd "$canonical_path" && PATH="${TEST_ROOT}/bin:$PATH" "${SCRIPT_DIR}/../interactive-start-helper.sh" \
 		--issue 32884 --repo example/test --task restart --source-path README.md 2>&1) || true
 	[[ "$output" != *"source worktree owner changed"* ]] || rc=1
 	[[ "$(owner_info "$linked_path")" == "${CLAIM_PID}|${session_id}|"* ]] || rc=1
@@ -145,14 +151,14 @@ test_source_preflight_reclaims_only_dead_same_session_owner() {
 
 	reset_registry
 	register_worktree "$linked_path" "$branch" --owner-pid "$OWNER_PID" --session "$session_id" --task 32884 || rc=1
-	PATH="${TEST_ROOT}/bin:$PATH" "${SCRIPT_DIR}/../interactive-start-helper.sh" \
-		--issue 32884 --repo example/test --task restart --source-path README.md >/dev/null 2>&1 && rc=1
+	(cd "$canonical_path" && PATH="${TEST_ROOT}/bin:$PATH" "${SCRIPT_DIR}/../interactive-start-helper.sh" \
+		--issue 32884 --repo example/test --task restart --source-path README.md) >/dev/null 2>&1 && rc=1
 	[[ "$(owner_info "$linked_path")" == "${OWNER_PID}|${session_id}|"* ]] || rc=1
 
 	reset_registry
 	register_worktree "$linked_path" "$branch" --owner-pid "$OWNER_PID" --session ses_other --task 32884 || rc=1
-	PATH="${TEST_ROOT}/bin:$PATH" "${SCRIPT_DIR}/../interactive-start-helper.sh" \
-		--issue 32884 --repo example/test --task restart --source-path README.md >/dev/null 2>&1 && rc=1
+	(cd "$canonical_path" && PATH="${TEST_ROOT}/bin:$PATH" "${SCRIPT_DIR}/../interactive-start-helper.sh" \
+		--issue 32884 --repo example/test --task restart --source-path README.md) >/dev/null 2>&1 && rc=1
 	[[ "$(owner_info "$linked_path")" == "${OWNER_PID}|ses_other|"* ]] || rc=1
 	if [[ "$rc" -ne 0 ]]; then
 		printf 'source preflight diagnostic: %s; owner=%s\n' "$output" "$(owner_info "$linked_path")" >&2

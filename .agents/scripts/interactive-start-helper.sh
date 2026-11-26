@@ -212,18 +212,19 @@ _interactive_start_parse_args() {
 }
 
 _interactive_start_prepare_sources() {
+	local work_dir="$1"
 	local session_id="${AIDEVOPS_OPENCODE_SESSION_ID:-${OPENCODE_SESSION_ID:-}}"
 	if [[ -z "$session_id" || -z "${AIDEVOPS_SOURCE_CONTEXT_SOCKET:-}" || "$_INTERACTIVE_START_BACKGROUND" -ne 0 ]]; then
 		printf 'ERROR: source preflight requires a live interactive OpenCode context; no approval was issued\n' >&2
 		return 1
 	fi
 	local pre_edit_output=""
-	pre_edit_output=$(pre-edit-check.sh --loop-mode --issue "$_INTERACTIVE_START_ISSUE" --task "$_INTERACTIVE_START_TASK" 2>&1) || {
+	pre_edit_output=$(cd "$work_dir" && pre-edit-check.sh --loop-mode --issue "$_INTERACTIVE_START_ISSUE" --task "$_INTERACTIVE_START_TASK" 2>&1) || {
 		printf '%s\n' "$pre_edit_output" >&2
 		return 1
 	}
 	local worktree_path=""
-	worktree_path=$(_interactive_start_resolve_worktree "$pre_edit_output") || return 1
+	worktree_path=$(cd "$work_dir" && _interactive_start_resolve_worktree "$pre_edit_output") || return 1
 	_interactive_start_reclaim_dead_owner "$worktree_path" "$session_id" || return 1
 	local proposal_args=(propose --session "$session_id" --repo "$_INTERACTIVE_START_REPO" --issue "$_INTERACTIVE_START_ISSUE"
 		--reason 'secret-bearing basename' --context-socket "$AIDEVOPS_SOURCE_CONTEXT_SOCKET")
@@ -287,6 +288,50 @@ _interactive_start_reclaim_dead_owner() {
 	return 1
 }
 
+# Resolve a registered repo slug to its local checkout path (empty if unknown).
+_interactive_start_target_repo_path() {
+	local repo_slug="$1"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local target_repo=""
+	[[ -f "$repos_json" ]] || return 0
+	target_repo=$(jq -r --arg slug "$repo_slug" '.initialized_repos[]? | select(.slug == $slug) | .path // ""' "$repos_json" 2>/dev/null | sed -n '1p') || target_repo=""
+	target_repo="${target_repo/#\~/$HOME}"
+	printf '%s' "$target_repo"
+	return 0
+}
+
+# True when the git checkout at $1 has an origin remote for the given slug.
+_interactive_start_dir_matches_repo() {
+	local dir="$1"
+	local repo_slug="$2"
+	local origin=""
+	origin=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$dir" remote get-url origin 2>/dev/null) || return 1
+	origin=${origin%.git}
+	case "$origin" in
+	"https://github.com/${repo_slug}" | "git@github.com:${repo_slug}" | "ssh://git@github.com/${repo_slug}" | "ssh://git@github.com:22/${repo_slug}") return 0 ;;
+	esac
+	return 1
+}
+
+# Print the directory where pre-edit must run for --repo: the current checkout
+# when it belongs to that repo, else the registered local path.
+_interactive_start_resolve_work_dir() {
+	local repo_slug="$1"
+	local top="" target=""
+	top=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git rev-parse --show-toplevel 2>/dev/null) || top=""
+	if [[ -n "$top" ]] && _interactive_start_dir_matches_repo "$top" "$repo_slug"; then
+		printf '%s' "$PWD"
+		return 0
+	fi
+	target=$(_interactive_start_target_repo_path "$repo_slug")
+	if [[ -n "$target" && -d "$target" ]] && _interactive_start_dir_matches_repo "$target" "$repo_slug"; then
+		printf '%s' "$target"
+		return 0
+	fi
+	printf "ERROR: cannot resolve a local checkout for %s; run from its checkout or register it with 'aidevops repos'\n" "$repo_slug" >&2
+	return 1
+}
+
 # Refuse before claiming or creating a worktree when this session's project
 # directory is outside the trusted Git workspace: the later direct writes into
 # a cross-repository linked worktree would be denied by the write policy.
@@ -296,8 +341,7 @@ _interactive_start_probe_session_location() {
 	local policy_helper="${SCRIPT_DIR}/canonical-write-policy-helper.py"
 	local target_repo=""
 	[[ -f "$repos_json" && -f "$policy_helper" ]] || return 0
-	target_repo=$(jq -r --arg slug "$repo_slug" '.initialized_repos[]? | select(.slug == $slug) | .path // ""' "$repos_json" 2>/dev/null | sed -n '1p') || target_repo=""
-	target_repo="${target_repo/#\~/$HOME}"
+	target_repo=$(_interactive_start_target_repo_path "$repo_slug")
 	[[ -n "$target_repo" && -d "$target_repo" ]] || return 0
 	local decision=""
 	decision=$(python3 "$policy_helper" check-session --cwd "$PWD" --target "$target_repo" --field decision 2>/dev/null) || return 0
@@ -316,8 +360,10 @@ main() {
 		return 0
 	fi
 	_interactive_start_probe_session_location "$_INTERACTIVE_START_REPO" || return 1
+	local work_dir=""
+	work_dir=$(_interactive_start_resolve_work_dir "$_INTERACTIVE_START_REPO") || return 1
 	if [[ -n "${_INTERACTIVE_START_SOURCE_PATHS[*]:-}" ]]; then
-		_interactive_start_prepare_sources
+		_interactive_start_prepare_sources "$work_dir"
 		return $?
 	fi
 	local issue="$_INTERACTIVE_START_ISSUE"
@@ -347,14 +393,14 @@ main() {
 
 	local pre_edit_output=""
 	local pre_edit_rc=0
-	pre_edit_output=$(pre-edit-check.sh --loop-mode --issue "$issue" --task "$task" 2>&1) || pre_edit_rc=$?
+	pre_edit_output=$(cd "$work_dir" && pre-edit-check.sh --loop-mode --issue "$issue" --task "$task" 2>&1) || pre_edit_rc=$?
 	[[ -z "$pre_edit_output" ]] || printf '%s\n' "$pre_edit_output"
 	if [[ "$pre_edit_rc" -ne 0 ]]; then
 		return "$pre_edit_rc"
 	fi
 
 	local worktree_path=""
-	worktree_path=$(_interactive_start_resolve_worktree "$pre_edit_output") || return 1
+	worktree_path=$(cd "$work_dir" && _interactive_start_resolve_worktree "$pre_edit_output") || return 1
 	local refresh_claim_args=(claim "$issue" "$repo" --implementing --worktree "$worktree_path")
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
 		refresh_claim_args+=(--replace-pr "$replacement_pr" --replacement-reason "$replacement_reason")
