@@ -106,6 +106,49 @@ INSERT INTO message VALUES ('message-old-2', 'session-old-child', 'subagent hist
 	return 0
 }
 
+test_seed_worker_db_session_context_restores_from_monthly_segment() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-segment"
+	local shared_db="${shared_dir}/opencode.db"
+	local segment_db="${shared_dir}/opencode-archive-2026-09.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local schema="CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, parent_id TEXT, directory TEXT NOT NULL, title TEXT NOT NULL, time_updated INTEGER NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	chmod u+w "$segment_db" 2>/dev/null || true
+	rm -f "$shared_db" "$shared_dir/opencode-archive.db" "$shared_dir/opencode-archive-index.db" "$shared_dir/opencode-archive-manifest.tsv" "$segment_db" "$worker_db"
+	sqlite3 "$shared_db" "${schema}"
+	sqlite3 "$segment_db" "${schema}
+INSERT INTO project VALUES ('project-seg', 'Seg Project');
+INSERT INTO session VALUES ('session-seg', 'project-seg', NULL, '/work/seg', 'Sealed worker', 1);
+INSERT INTO message VALUES ('message-seg-1', 'session-seg', 'history');"
+	sqlite3 "$shared_db" .schema | sqlite3 "$worker_db"
+	# Seal through the real path so restore must mark the index, not the segment.
+	(
+		# shellcheck source=../opencode-db-archive-seal-lib.sh
+		source "${SCRIPT_DIR}/opencode-db-archive-seal-lib.sh" &&
+			opencode_archive_seal_segment "$segment_db" "${shared_dir}/opencode-archive.db"
+	) >/dev/null 2>&1 || true
+	local sha_before sha_after
+	sha_before=$(shasum -a 256 "$segment_db" | cut -d' ' -f1)
+
+	local seed_status=0
+	_seed_worker_db_session_context "$isolated_dir" "session-seg" >/dev/null 2>&1 || seed_status=$?
+
+	sha_after=$(shasum -a 256 "$segment_db" | cut -d' ' -f1)
+	local shared_sessions
+	shared_sessions=$(sqlite3 "$shared_db" "SELECT COUNT(*) FROM session WHERE id = 'session-seg';")
+	chmod u+w "$segment_db" 2>/dev/null || true
+	if [[ "$seed_status" -eq 0 && "$shared_sessions" == "1" && "$sha_before" == "$sha_after" ]]; then
+		print_result "seed worker DB restores from a monthly segment without the legacy archive" 0
+		return 0
+	fi
+	print_result "seed worker DB restores from a monthly segment without the legacy archive" 1 \
+		"seed_status=$seed_status shared_sessions=$shared_sessions sha_same=$([[ "$sha_before" == "$sha_after" ]] && echo yes || echo no)"
+	return 0
+}
+
 test_seed_worker_db_session_context_rebinds_replacement_worktree() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-rebound"

@@ -590,8 +590,19 @@ _restore_archived_worker_session() {
 	[[ "$lib_dir" != "${BASH_SOURCE[0]}" ]] || archive_helper="${OPENCODE_DB_ARCHIVE_HELPER:-./opencode-db-archive.sh}"
 	[[ -x "$archive_helper" ]] || archive_helper="${HOME}/.aidevops/agents/scripts/opencode-db-archive.sh"
 	[[ -x "$archive_helper" ]] || return 1
-	[[ -f "${shared_db%/*}/opencode-archive.db" ]] || return 1
-	if restore_output=$(OPENCODE_DB_PATH="$shared_db" OPENCODE_ARCHIVE_DB="${shared_db%/*}/opencode-archive.db" \
+	# GH#40419: the legacy file is trashed after migration; any monthly segment
+	# counts as an archive. The helper resolves segments/index from the legacy path.
+	local legacy_archive="${shared_db%/*}/opencode-archive.db"
+	local segments_lib="${lib_dir}/opencode-db-archive-segments-lib.sh"
+	[[ -f "$segments_lib" ]] || segments_lib="${HOME}/.aidevops/agents/scripts/opencode-db-archive-segments-lib.sh"
+	if [[ -f "$segments_lib" ]]; then
+		# shellcheck source=opencode-db-archive-segments-lib.sh
+		source "$segments_lib"
+		opencode_archive_exists "$legacy_archive" || return 1
+	else
+		[[ -f "$legacy_archive" ]] || return 1
+	fi
+	if restore_output=$(OPENCODE_DB_PATH="$shared_db" OPENCODE_ARCHIVE_DB="$legacy_archive" \
 		"$archive_helper" restore --session "$session_id" 2>&1); then
 		print_info "[lifecycle] archived_session_restored session=${session_id} pid=$$"
 		return 0
