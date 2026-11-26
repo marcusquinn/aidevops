@@ -243,6 +243,30 @@ _storage_measure_group() {
 	return 0
 }
 
+# Prints archive-owned paths: the legacy archive plus monthly segments (GH#40419),
+# each with its -wal and -shm companions, one per line.
+_storage_archive_paths() {
+	local archive_db="$1"
+	local segment=""
+	printf '%s\n%s\n%s\n' "$archive_db" "${archive_db}-wal" "${archive_db}-shm"
+	while IFS= read -r segment; do
+		[[ -n "$segment" && "$segment" != "$archive_db" ]] || continue
+		printf '%s\n%s\n%s\n' "$segment" "${segment}-wal" "${segment}-shm"
+	done < <(opencode_archive_segments "$archive_db")
+	return 0
+}
+
+_storage_archive_measure() {
+	local archive_db="$1"
+	local paths=()
+	local path=""
+	while IFS= read -r path; do
+		paths+=("$path")
+	done < <(_storage_archive_paths "$archive_db")
+	_storage_measure_group "${paths[@]}"
+	return 0
+}
+
 _storage_opencode_residual_measurement() {
 	local root_path="$1"
 	shift
@@ -263,7 +287,13 @@ _storage_opencode_residual_measurement() {
 		printf 'null|unavailable|%s' "${root_error:-root-unavailable}"
 		return 0
 	fi
-	for component_path in "$@"; do
+	local segment_path=""
+	local segment_args=()
+	while IFS= read -r segment_path; do
+		# Legacy archive paths arrive in "$@"; only monthly segments are added here.
+		[[ "$segment_path" == "$root_path/opencode-archive-"* ]] && segment_args+=("$segment_path")
+	done < <(_storage_archive_paths "$root_path/opencode-archive.db")
+	for component_path in "$@" "${segment_args[@]+"${segment_args[@]}"}"; do
 		if [[ "$component_path" != "$root_path" && "$component_path" != "$root_path/"* ]]; then
 			continue
 		fi
@@ -365,19 +395,12 @@ _storage_opencode_records() {
 	fi
 	active_measure=$(_storage_measure_group "$active_db")
 	wal_measure=$(_storage_measure_group "${active_db}-wal" "${active_db}-shm")
-	# GH#40419: monthly archive segments beside the legacy archive are archive bytes too.
-	local archive_extra=()
-	local archive_segment=""
-	while IFS= read -r archive_segment; do
-		[[ -n "$archive_segment" && "$archive_segment" != "$archive_db" ]] || continue
-		archive_extra+=("$archive_segment" "${archive_segment}-wal" "${archive_segment}-shm")
-	done < <(opencode_archive_segments "$archive_db")
-	archive_measure=$(_storage_measure_group "$archive_db" "${archive_db}-wal" "${archive_db}-shm" "${archive_extra[@]+"${archive_extra[@]}"}")
+	archive_measure=$(_storage_archive_measure "$archive_db")
 	legacy_measure=$(_storage_measure_group "$legacy_path")
 	tool_measure=$(_storage_measure_group "$tool_path")
 	residual_measure=$(_storage_opencode_residual_measurement "$data_root" \
 		"$active_db" "${active_db}-wal" "${active_db}-shm" \
-		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "${archive_extra[@]+"${archive_extra[@]}"}" "$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
+		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "$legacy_path" "$tool_path" "${backup_paths[@]+"${backup_paths[@]}"}")
 	_storage_emit_opencode_backups "$data_root" "${backup_paths[@]+"${backup_paths[@]}"}"
 
 	if [[ "$OPENCODE_STORAGE_PROBES_AVAILABLE" -eq 1 ]]; then
