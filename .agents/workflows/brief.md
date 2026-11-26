@@ -159,7 +159,11 @@ the following; headings or `N/A` alone do not pass:
    preserved behavior when a hazard is absent.
 3. **Verification Before Dispatch:** provide executable focused commands and
    map each command to the affected surfaces. Add a broad gate only when named
-   blast-radius evidence requires one.
+   blast-radius evidence requires one. Workers run on any runner, so commands
+   must work unchanged on macOS and Linux and read only the worktree or managed
+   temp roots: for host load use `uptime` and `getconf _NPROCESSORS_ONLN`, not
+   `sysctl` or `/proc/*`, which fail elsewhere or pause the worker on a
+   permission wall (GH#40452).
 4. **Acceptance Criteria:** include at least two observable criteria with both
    positive behavior and a negative/regression guarantee.
 
