@@ -45,6 +45,7 @@ NOTES = [
     "PRs without origin labels contribute only to all; dual-origin PRs count in both origins.",
     "Windows are the latest completed Monday-Sunday UTC weeks; queue health is current.",
     "Owner rows cover the whole owner, including unregistered repos; only eligible registry entries define local pulse state.",
+    "Archived repositories are excluded.",
     "Lead times sample latest-updated merged PRs in the week and the first closing issue, omitting missing references.",
     "Targets are initial heuristics, not gates; missing ratios/percentiles are null (n/a in text).",
 ]
@@ -101,12 +102,12 @@ def registry(path):
 
 
 def scopes(repos, framework):
-    rows = {framework: "repo:" + framework}
+    rows = {framework: "repo:" + framework + " archived:false"}
     for owner in sorted({slug.split("/")[0] for slug in repos}):
         data = graphql("query{repositoryOwner(login:" + json.dumps(owner) + "){__typename}}")
         kind = data["repositoryOwner"]["__typename"]
         scope = {"User": "user:", "Organization": "org:"}[kind] + owner
-        rows[owner] = scope + " -repo:" + framework
+        rows[owner] = scope + " -repo:" + framework + " archived:false"
     return rows
 
 
@@ -167,7 +168,7 @@ def count_queries(scope_rows, windows, repos, now):
                              if row == slug.split("/")[0])
         queries[("unregistered", row)] = scope + exclusions + " " + QUEUE["available_idle_7d"].format(**dates)
     for slug in repos:
-        queries[("pulse", slug)] = "repo:" + slug + " " + QUEUE["available_idle_7d"].format(**dates)
+        queries[("pulse", slug)] = "repo:" + slug + " archived:false " + QUEUE["available_idle_7d"].format(**dates)
     return queries
 
 
