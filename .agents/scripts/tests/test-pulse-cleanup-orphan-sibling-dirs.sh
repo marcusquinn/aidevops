@@ -233,6 +233,21 @@ test_orphan_sibling_dirs_move_to_trash_only() {
 	return 0
 }
 
+# GH#40476: a legacy base (the historical default left after worktree_base_dir
+# moved) gets the same orphan scan and gates as the configured base.
+test_legacy_base_orphan_scan() {
+	local legacy="$HOME/Git/_worktrees" moved="" rc=0
+	mkdir -p "$legacy/aidevops-feature-auto-legacy-leftover"
+	printf 'legacy leftover\n' >"$legacy/aidevops-feature-auto-legacy-leftover/NOTE.txt"
+	git -C "$TEST_ROOT/Git/aidevops" worktree add -q "$legacy/aidevops-feature-auto-legacy-registered" -b feature/auto-legacy-registered
+	printf 'dirty\n' >"$legacy/aidevops-feature-auto-legacy-registered/DIRTY.txt"
+	moved=$(_pc_cleanup_orphan_sibling_dirs "$HOME/.config/aidevops/repos.json" "$(date +%s)")
+	[[ "$moved" == 1 && ! -e "$legacy/aidevops-feature-auto-legacy-leftover" &&
+		-f "$legacy/aidevops-feature-auto-legacy-registered/DIRTY.txt" ]] || rc=1
+	print_result "legacy base gets the orphan scan; registered dirty worktree preserved" "$rc" "moved=$moved"
+	return 0
+}
+
 test_standalone_clean_check_requires_successful_status() {
 	local candidate_path="$TEST_ROOT/Git/_worktrees/aidevops-release-clone-status-fails"
 	mkdir -p "$candidate_path/.git"
@@ -520,6 +535,7 @@ main() {
 	load_subject
 	test_ci_repair_sibling_name_validation
 	test_orphan_sibling_dirs_move_to_trash_only
+	test_legacy_base_orphan_scan
 	test_standalone_clean_check_requires_successful_status
 	test_abandoned_central_fixtures
 	test_orphan_retry_ledger

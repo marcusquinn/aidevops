@@ -39,6 +39,10 @@
 #   STORAGE_CLEANUP_ARTEFACT_MAX_SECONDS  artefacts apply work budget (default 300)
 #   AIDEVOPS_WORKTREE_IDLE_DAYS      artefacts idle threshold in days (default 14)
 #   AIDEVOPS_WORKTREE_BASE_DIR       Linked-worktree base (default: worktree-paths.sh)
+#   AIDEVOPS_LEGACY_WORKTREE_BASES   Colon-separated older bases to report alongside
+#                                    the configured one (the historical default
+#                                    base, _worktrees under the Git root, is
+#                                    always checked; GH#40476)
 #   STORAGE_CLEANUP_DOCKER_MAX_SECONDS  docker reap work budget (default 300)
 #   AIDEVOPS_DOCKER_BUILD_CACHE_HOURS   BuildKit cache unused window (default 168)
 #   STORAGE_CLEANUP_GITLOCKS_REPO_MAX_SECONDS  gitlocks budget per repository (default 120)
@@ -71,6 +75,8 @@ readonly SC_GITLOCKS_BUSY=75
 # are published in one atomic syscall (no empty-lock window).
 SC_LOCK="${AIDEVOPS_LOG_DIR:-${HOME:?}/.aidevops/logs}/storage-cleanup.lock"
 readonly SC_LOCK_BUSY=2
+# Per-base worktree sizes, set by _sc_worktree_bases_measure (GH#40476).
+SC_WT_KB="" SC_WT_COUNT=0 SC_WT_BASES=0 SC_WT_BASE_LINES=""
 
 # ---------------------------------------------------------------------------
 # Store metadata
@@ -90,7 +96,7 @@ _sc_store_paths() {
 	local workspace="${HOME}/.aidevops/.agent-workspace"
 	case "$store" in
 	tmp) printf '%s\n' "${AIDEVOPS_TEMP_DIR:-${workspace}/tmp}" ;;
-	worktrees) aidevops_worktree_base_dir_configured ;;
+	worktrees) aidevops_worktree_base_dirs ;; # Configured base, then legacy bases.
 	artefacts) ;; # Inside the worktrees total; the preview reports eligible bytes.
 	opencode)
 		printf '%s\n' "${XDG_DATA_HOME:-${HOME}/.local/share}/opencode" \
@@ -200,14 +206,121 @@ _sc_human_kb() {
 	return 0
 }
 
+# Directory entries in one base (default: the configured base).
 _sc_worktree_count() {
-	local base="" count=0 entry=""
-	base=$(aidevops_worktree_base_dir_configured)
+	local base="${1:-}" count=0 entry=""
+	[[ -n "$base" ]] || base=$(aidevops_worktree_base_dir_configured)
 	[[ -d "$base" ]] || { printf '0\n'; return 0; }
 	for entry in "$base"/*; do
 		[[ -d "$entry" ]] && count=$((count + 1))
 	done
 	printf '%s\n' "$count"
+	return 0
+}
+
+# Sizes every worktree base once for the report (GH#40476). Sets SC_WT_KB
+# (total KiB; empty when any base timed out), SC_WT_COUNT, SC_WT_BASES and
+# SC_WT_BASE_LINES ("configured|legacy PATH: N worktrees (SIZE)" per base).
+_sc_worktree_bases_measure() {
+	local kb=""
+	local base="" size="" count=0 label="configured"
+	SC_WT_KB=0 SC_WT_COUNT=0 SC_WT_BASES=0 SC_WT_BASE_LINES=""
+	while IFS= read -r base; do
+		[[ -n "$base" ]] || continue
+		count=$(_sc_worktree_count "$base")
+		SC_WT_COUNT=$((SC_WT_COUNT + count))
+		SC_WT_BASES=$((SC_WT_BASES + 1))
+		if kb=$(_sc_path_kb "$base"); then
+			size=$(_sc_human_kb "$kb")
+			[[ -n "$SC_WT_KB" ]] && SC_WT_KB=$((SC_WT_KB + kb))
+		else
+			size="?"
+			SC_WT_KB=""
+		fi
+		SC_WT_BASE_LINES="${SC_WT_BASE_LINES}${label} ${base}: ${count} worktrees (${size})"$'\n'
+		label="legacy"
+	done < <(aidevops_worktree_base_dirs)
+	return 0
+}
+
+# Explains why a legacy base's entries survive, read-only and without Git
+# calls (GH#40476). Prints "TOTAL MANAGED IN_SCOPE UNMANAGED STALE OTHER":
+# managed = registered with a repos.json repository (lifecycle cleanup owns
+# it; relocate moves it only when it sits inside that repo's parent and the
+# repo is not local_only), unmanaged = registered with another repository,
+# stale = the .git pointer target is missing, other = not a linked worktree.
+_sc_classify_legacy_base() {
+	local base="$1" repos="$2" entry="" pointer="" gitdir="" common="" canonical="" physical=""
+	local repo_parent="" repo_path="" local_only="" matched=""
+	local total=0 managed=0 in_scope=0 unmanaged=0 stale=0 other=0
+	for entry in "$base"/*; do
+		[[ -d "$entry" && ! -L "$entry" ]] || continue
+		total=$((total + 1))
+		pointer=""
+		[[ -f "${entry}/.git" ]] && { IFS= read -r pointer <"${entry}/.git" || true; }
+		gitdir="${pointer#gitdir: }"
+		if [[ -z "$pointer" || "$gitdir" == "$pointer" || -z "$gitdir" ]]; then
+			other=$((other + 1))
+			continue
+		fi
+		[[ "$gitdir" == /* ]] || gitdir="${entry}/${gitdir}"
+		if [[ ! -d "$gitdir" ]]; then
+			stale=$((stale + 1))
+			continue
+		fi
+		common=$(aidevops_physical_dir "${gitdir}/../..") || common=""
+		canonical="${common%/.git}"
+		matched=""
+		if [[ -n "$common" && "$canonical" != "$common" ]]; then
+			while IFS=$'\t' read -r repo_path local_only; do
+				[[ "$repo_path" == "$canonical" ]] && { matched="$local_only"; break; }
+			done <<<"$repos"
+		fi
+		if [[ -z "$matched" ]]; then
+			unmanaged=$((unmanaged + 1))
+			continue
+		fi
+		managed=$((managed + 1))
+		physical=$(aidevops_physical_dir "$entry") || physical=""
+		repo_parent="${canonical%/*}"
+		if [[ "$matched" == "false" && -n "$physical" && "$physical" == "$repo_parent"/* ]]; then
+			in_scope=$((in_scope + 1))
+		fi
+	done
+	printf '%s %s %s %s %s %s\n' "$total" "$managed" "$in_scope" "$unmanaged" "$stale" "$other"
+	return 0
+}
+
+# Registered repositories as "physical-path<TAB>local_only" lines.
+_sc_registry_repo_physicals() {
+	local registry="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}" path="" local_only="" physical=""
+	[[ -f "$registry" ]] && command -v jq >/dev/null 2>&1 || return 0
+	while IFS=$'\t' read -r path local_only; do
+		[[ "$path" == /* ]] || continue
+		physical=$(aidevops_physical_dir "$path") || continue
+		printf '%s\t%s\n' "$physical" "$local_only"
+	done < <(jq -r '.initialized_repos[]? | [(.path // ""), ((.local_only // false) | tostring)] | @tsv' "$registry" 2>/dev/null || true)
+	return 0
+}
+
+# Worktrees preview: the configured base, then one classified line per
+# legacy base so worktrees left behind by a base move stay visible.
+_sc_preview_worktrees() {
+	local base="" repos="" counts="" total=0 managed=0 in_scope=0 unmanaged=0 stale=0 other=0 legacy=0
+	printf 'Linked worktrees: %s under %s%s\n' "$(_sc_worktree_count)" "$(aidevops_worktree_base_dir_configured)" "$(_sc_last_worktree_refusals)"
+	while IFS= read -r base; do
+		[[ -n "$base" ]] || continue
+		[[ "$legacy" -eq 1 ]] || repos=$(_sc_registry_repo_physicals)
+		legacy=1
+		counts=$(_sc_classify_legacy_base "$base" "$repos")
+		read -r total managed in_scope unmanaged stale other <<<"$counts"
+		printf 'Legacy base %s: %s entries; managed %s (relocate scope %s), unmanaged %s, stale %s, other %s\n' \
+			"$base" "$total" "$managed" "$in_scope" "$unmanaged" "$stale" "$other"
+	done < <(aidevops_legacy_worktree_base_dirs)
+	if [[ "$legacy" -eq 1 ]]; then
+		printf '%s\n' "Legacy bases are reported, not swept wholesale: lifecycle cleanup still removes merged/closed managed worktrees there; relocate moves only managed worktrees inside their repo's parent; other entries get the guarded orphan and unregistered scans. More bases: AIDEVOPS_LEGACY_WORKTREE_BASES (colon-separated)."
+	fi
+	printf 'Apply removes only worktrees whose branches are merged or closed; dirty work is archived first.\n'
 	return 0
 }
 
@@ -232,10 +345,12 @@ _sc_schedule_state() {
 # ---------------------------------------------------------------------------
 
 cmd_report() {
-	local store="" kb="" size="" note="" timed_out=0
+	local store="" kb="" size="" note="" line="" wt_lines="" timed_out=0
 	printf 'aidevops storage report (read-only; nothing is deleted)\n\n'
 	printf '%-14s %-9s %s\n' "STORE" "SIZE" "OWNING CLEANER"
 	for store in $SC_STORES; do
+		note=""
+		wt_lines=""
 		if [[ "$store" == "artefacts" ]]; then
 			# Counted inside worktrees; eligibility needs the bounded preview.
 			size="(in wt)"
@@ -252,15 +367,27 @@ cmd_report() {
 				size="?"
 				timed_out=1
 			fi
+		elif [[ "$store" == "worktrees" ]]; then
+			# Sized per base once, so legacy bases show beside the total.
+			_sc_worktree_bases_measure
+			if [[ -n "$SC_WT_KB" ]]; then
+				size=$(_sc_human_kb "$SC_WT_KB")
+			else
+				size="?"
+				timed_out=1
+			fi
+			note=" (${SC_WT_COUNT} worktrees)"
+			[[ "$SC_WT_BASES" -gt 1 ]] && wt_lines="$SC_WT_BASE_LINES"
 		elif kb=$(_sc_store_kb "$store"); then
 			size=$(_sc_human_kb "$kb")
 		else
 			size="?"
 			timed_out=1
 		fi
-		note=""
-		[[ "$store" == "worktrees" ]] && note=" ($(_sc_worktree_count) worktrees)"
 		printf '%-14s %-9s %s%s\n' "$store" "$size" "$(_sc_store_cleaner "$store")" "$note"
+		while IFS= read -r line; do
+			if [[ -n "$line" ]]; then printf '%-14s %-9s %s\n' "" "" "$line"; fi
+		done <<<"$wt_lines"
 		if [[ "$store" == "docker" ]]; then
 			printf '%-14s %-9s %s\n' "" "" "docker system df: $(_sc_docker_summary || true)"
 		fi
@@ -343,12 +470,21 @@ _sc_canonical_repos() {
 	return 0
 }
 
+# Human size for a byte count.
+_sc_human_bytes() {
+	local bytes="$1"
+	[[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+	_sc_human_kb "$(((bytes + 1023) / 1024))"
+	return 0
+}
+
 # Runs repair-stale-locks (preview or --apply) per canonical repository and
 # prints a line for each repository with findings or errors, then a total.
+# Pack temporaries are sized even while the age gate keeps them (GH#40476).
 # The helper enforces every age/holder gate.
 _sc_gitlocks() {
 	local mode="$1" repo="" out="" rc=0 repo_rc=0 repos=0 locks="" packs="" removed="" found=0
-	local repo_list=""
+	local repo_list="" pack_bytes=0 young_bytes=0 young_note="" total_pack_bytes=0 total_young_bytes=0
 	local -a apply_args=()
 	[[ "$mode" == "$SC_APPLY" ]] && apply_args=(--apply)
 	repo_list=$(_sc_canonical_repos) || return 1
@@ -361,21 +497,33 @@ _sc_gitlocks() {
 		locks=$(sed -n 's/^STALE_LOCK_CANDIDATES=//p' <<<"$out")
 		packs=$(sed -n 's/^TMP_PACK_CANDIDATES=//p' <<<"$out")
 		removed=$(sed -n 's/^REMOVED=//p' <<<"$out")
+		pack_bytes=$(sed -n 's/^TMP_PACK_BYTES=//p' <<<"$out")
+		young_bytes=$(sed -n 's/^TMP_PACK_YOUNG_BYTES=//p' <<<"$out")
+		[[ "$pack_bytes" =~ ^[0-9]+$ ]] || pack_bytes=0
+		[[ "$young_bytes" =~ ^[0-9]+$ ]] || young_bytes=0
 		if [[ "$repo_rc" -eq "$SC_GITLOCKS_BUSY" ]]; then
 			printf '  %s: skipped (canonical recovery lock held)\n' "${repo##*/}"
 			continue
 		fi
-		[[ "$repo_rc" -eq 0 && "$locks" == "0" && "$packs" == "0" ]] && continue
+		[[ "$repo_rc" -eq 0 && "$locks" == "0" && "$packs" == "0" && "$pack_bytes" -eq 0 ]] && continue
 		found=$((found + 1))
-		printf '  %s: stale_locks=%s tmp_packs=%s%s\n' "${repo##*/}" "${locks:-?}" "${packs:-?}" \
-			"${removed:+ removed=${removed}}"
+		total_pack_bytes=$((total_pack_bytes + pack_bytes))
+		total_young_bytes=$((total_young_bytes + young_bytes))
+		young_note=""
+		[[ "$young_bytes" -gt 0 ]] && young_note=" (young $(_sc_human_bytes "$young_bytes") kept until 2+ days old)"
+		printf '  %s: stale_locks=%s tmp_packs=%s tmp_pack_bytes=%s%s%s\n' "${repo##*/}" "${locks:-?}" "${packs:-?}" \
+			"$(_sc_human_bytes "$pack_bytes")" "$young_note" "${removed:+ removed=${removed}}"
 		grep -E '^(CANDIDATE|REMOVED|KEPT) ' <<<"$out" | sed 's/^/    /' || true
 		if [[ "$repo_rc" -ne 0 ]]; then
 			printf '    exit %s: %s\n' "$repo_rc" "$(awk '/^(BLOCKED|FAILED)/ && !seen { print; seen = 1 }' <<<"$out")"
 			rc=1
 		fi
 	done <<<"$repo_list"
-	printf 'Scanned %s canonical repositories; %s with stale Git debris or errors.\n' "$repos" "$found"
+	printf 'Scanned %s canonical repositories; %s with Git debris or errors.\n' "$repos" "$found"
+	if [[ "$total_pack_bytes" -gt 0 ]]; then
+		printf 'Pack temporaries: %s found, %s still inside the 2-day age gate (kept).\n' \
+			"$(_sc_human_bytes "$total_pack_bytes")" "$(_sc_human_bytes "$total_young_bytes")"
+	fi
 	[[ "$mode" == "$SC_APPLY" ]] || printf 'Apply removes only the candidates listed above, re-checking each gate.\n'
 	return "$rc"
 }
@@ -384,10 +532,7 @@ _sc_dry_run_store() {
 	local store="$1" rc=0
 	case "$store" in
 	tmp) _sc_preview_tmp || rc=$? ;;
-	worktrees)
-		printf 'Linked worktrees: %s under %s%s\n' "$(_sc_worktree_count)" "$(aidevops_worktree_base_dir_configured)" "$(_sc_last_worktree_refusals)"
-		printf 'Apply removes only worktrees whose branches are merged or closed; dirty work is archived first.\n'
-		;;
+	worktrees) _sc_preview_worktrees || rc=$? ;;
 	artefacts) _sc_preview_artefacts || rc=$? ;;
 	opencode)
 		printf 'Superseded/expired layout-migration backups (dry run):\n'

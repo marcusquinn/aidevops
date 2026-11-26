@@ -115,6 +115,13 @@ if [[ "$dry_output" == *"SKIP reason=fresh kind=lock path=logs/refs/heads/featur
 else
 	fail "dry run skip reasons incomplete: $dry_output"
 fi
+# GH#40476: pack temporaries are sized even while the age gate keeps them.
+if [[ "$dry_output" == *"SKIP reason=fresh kind=tmp-pack path=objects/pack/tmp_idx_fresh size=12"* &&
+	"$dry_output" == *$'\nTMP_PACK_BYTES=25\n'* && "$dry_output" == *$'\nTMP_PACK_YOUNG_BYTES=12\n'* ]]; then
+	pass "dry run sizes stale and young pack temporaries"
+else
+	fail "dry run pack temporary sizes missing: $dry_output"
+fi
 if [[ -f "$STALE_LOCK" && -f "$PACKED_LOCK" && -f "$OLD_PACK" && ! -e "$AUDIT_FILE" ]]; then
 	pass "dry run removes nothing and writes no audit entry"
 else

@@ -188,12 +188,22 @@ _pc_thirdparty_candidate() {
 }
 
 # Bounded rotating scan; report-only by default until rollout is explicitly
-# enabled after a clean report cycle.
+# enabled after a clean report cycle. Covers the configured base and any
+# legacy bases (GH#40476) as one rotation, so the 8-entry budget and cursor
+# stay shared.
 _pc_cleanup_central_unregistered() {
-	local base="" repos_json="${HOME}/.config/aidevops/repos.json" cursor="" last="" candidate="" canonical="" scanned=0
+	local base="" bases="" repos_json="${HOME}/.config/aidevops/repos.json" cursor="" last="" candidate="" canonical="" scanned=0
 	local candidates=() entry="" index=0 start=0 length=0 decision="" cache="" bytes=0 eligible=0 candidate_bytes=0 removed=0 archived=0 kept_open_pr=0 apply="${WORKTREE_UNREGISTERED_APPLY:-0}" budget=""
-	base=$(aidevops_worktree_base_dir_configured) || { printf '0\n'; return 0; }
-	[[ -d "$base" && ! -L "$base" ]] || { printf '0\n'; return 0; }
+	if declare -F aidevops_worktree_base_dirs >/dev/null 2>&1; then
+		bases=$(aidevops_worktree_base_dirs) || bases=""
+	else
+		bases=$(aidevops_worktree_base_dir_configured) || bases=""
+	fi
+	local usable=0
+	while IFS= read -r base; do
+		[[ -n "$base" && -d "$base" && ! -L "$base" ]] && usable=1
+	done <<<"$bases"
+	[[ "$usable" -eq 1 ]] || { printf '0\n'; return 0; }
 	[[ -f "$repos_json" ]] && jq -e '.initialized_repos | type == "array"' "$repos_json" >/dev/null 2>&1 || { printf '0\n'; return 0; }
 	[[ "$apply" == 0 || "$apply" == 1 ]] || { printf '0\n'; return 0; }
 	budget=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || budget=""
@@ -201,9 +211,12 @@ _pc_cleanup_central_unregistered() {
 		printf '[pulse-cleanup] thirdparty skip=api-budget\n' >>"${LOGFILE:-/dev/null}"
 		printf '0\n'; return 0;
 	}
-	for entry in "$base"/*; do
-		[[ -d "$entry" && ! -L "$entry" ]] && candidates+=("$entry")
-	done
+	while IFS= read -r base; do
+		[[ -n "$base" && -d "$base" && ! -L "$base" ]] || continue
+		for entry in "$base"/*; do
+			[[ -d "$entry" && ! -L "$entry" ]] && candidates+=("$entry")
+		done
+	done <<<"$bases"
 	length=${#candidates[@]}
 	[[ "$length" -gt 0 ]] || {
 		printf '[pulse-cleanup] thirdparty eligible=0 candidate_bytes=0 removed=0 archived=0 kept_open_pr=0 scanned=0\n' >>"${LOGFILE:-/dev/null}"

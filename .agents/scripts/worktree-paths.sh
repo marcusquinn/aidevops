@@ -63,6 +63,58 @@ aidevops_worktree_base_dir() {
 	return 0
 }
 
+# Prints the symlink-resolved path of an existing directory.
+aidevops_physical_dir() {
+	local dir="$1"
+	[[ -d "$dir" ]] || return 1
+	(cd -P -- "$dir" 2>/dev/null && pwd -P) || return 1
+	return 0
+}
+
+# Legacy linked-worktree bases still on disk after worktree_base_dir moved
+# (GH#40476): the historical default base (_worktrees under the Git root) when
+# it differs from the configured base, then each entry of the colon-separated
+# AIDEVOPS_LEGACY_WORKTREE_BASES. Prints existing, non-symlink, absolute
+# directories that neither equal nor nest with the configured base or each
+# other. Never guesses other locations.
+aidevops_legacy_worktree_base_dirs() {
+	local configured="" seen="" list="" entry="" candidate="" physical="" known="" overlap=0
+	local -a extra=()
+	configured=$(aidevops_worktree_base_dir_configured)
+	seen=$(aidevops_physical_dir "$configured") || seen="$configured"
+	[[ -n "${HOME:-}" ]] && list="${HOME}/Git/_worktrees"
+	if [[ -n "${AIDEVOPS_LEGACY_WORKTREE_BASES:-}" ]]; then
+		IFS=':' read -r -a extra <<<"$AIDEVOPS_LEGACY_WORKTREE_BASES"
+		for entry in ${extra[@]+"${extra[@]}"}; do
+			[[ -n "$entry" ]] || continue
+			list="${list}${list:+$'\n'}$(aidevops_expand_home_path "$entry")"
+		done
+	fi
+	while IFS= read -r candidate; do
+		[[ "$candidate" == /?* ]] || continue
+		candidate="${candidate%/}"
+		[[ -d "$candidate" && ! -L "$candidate" ]] || continue
+		physical=$(aidevops_physical_dir "$candidate") || continue
+		overlap=0
+		while IFS= read -r known; do
+			case "$physical" in "$known" | "$known"/*) overlap=1 ;; esac
+			case "$known" in "$physical"/*) overlap=1 ;; esac
+		done <<<"$seen"
+		[[ "$overlap" -eq 0 ]] || continue
+		seen="${seen}"$'\n'"${physical}"
+		printf '%s\n' "$candidate"
+	done <<<"$list"
+	return 0
+}
+
+# Every linked-worktree base in use: the configured base first (printed even
+# before it exists; callers check), then aidevops_legacy_worktree_base_dirs.
+aidevops_worktree_base_dirs() {
+	aidevops_worktree_base_dir_configured
+	aidevops_legacy_worktree_base_dirs
+	return 0
+}
+
 aidevops_branch_slug() {
 	local branch="$1"
 	printf '%s\n' "$branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]'
