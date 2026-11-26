@@ -119,6 +119,24 @@ _tbr_pending_tier_stop() {
 	return 3
 }
 
+# GH#40471: returns 0 when entry $1 does not belong to scan pass $2. Passes 1
+# and 2 take entries after / up to the cursor $3; pass 3 takes only entries
+# that timed out on an earlier pass, so they run after everything else.
+_tbr_pending_pass_skip() {
+	local name="$1" pass="$2" cursor="$3"
+	if [[ -f "${TBR_ROOT}/entry_timeouts/${name}" ]]; then
+		[[ "$pass" -eq 3 ]] || return 0
+		return 1
+	fi
+	[[ "$pass" -ne 3 ]] || return 0
+	if [[ "$pass" -eq 1 ]]; then
+		[[ "$name" > "$cursor" ]] || return 0
+	else
+		[[ "$name" > "$cursor" ]] && return 0
+	fi
+	return 1
+}
+
 # Scan one queue tier for tbr_pending; runs inside its scope (mode, entry_mode,
 # cursor_name, count, incomplete, observed, self_resolved, decided_set,
 # tier0_deadline). Resume in sorted order, then wrap, skipping entries already
@@ -142,19 +160,17 @@ _tbr_pending_scan_tier() {
 	# with the supervisor's pending pass, so it stops the cursor just before
 	# the first entry it counts; that pass then starts with that entry.
 	saved="$cursor"
-	for pass in 1 2; do
+	# GH#40471: pass 3 retries entries that timed out on an earlier pass, after
+	# every other entry has had its turn. A timeout never drops an entry.
+	for pass in 1 2 3; do
 		for file in "${TBR_ROOT}"/queue/*.json; do
 			[[ -f "$file" ]] || continue
 			name="${file##*/}"
+			_tbr_pending_pass_skip "$name" "$pass" "$cursor" && continue
 			decided=0
 			case "$decided_set" in *";${name};"*) decided=1 ;; esac
 			[[ "$decided" -eq "$tier" ]] || continue
 			case "$observed" in *";${name};"*) continue ;; esac
-			if [[ "$pass" -eq 1 ]]; then
-				[[ "${file##*/}" > "$cursor" ]] || continue
-			else
-				[[ "${file##*/}" > "$cursor" ]] && continue
-			fi
 			if [[ "$SECONDS" -ge "$deadline" ]]; then
 				_tbr_pending_tier_stop "$deadline" "$queue_deadline"
 				return $?
@@ -186,7 +202,7 @@ _tbr_pending_scan_tier() {
 				_tbr_pending_tier_stop "$deadline" "$queue_deadline"
 				return $?
 			fi
-			if [[ "$hold" -eq 0 ]]; then
+			if [[ "$hold" -eq 0 && "$pass" -ne 3 ]]; then
 				before="$saved"
 				_tbr_save_cursor "$tier_cursor_name" "${file##*/}" || return 2
 				saved="${file##*/}"
@@ -202,6 +218,7 @@ _tbr_pending_scan_tier() {
 			else
 				_tbr_run_stage entry _tbr_check_entry "$file" "$entry_mode" "$issue_batch_file" || rc=$?
 			fi
+			_tbr_pending_note_timeout "$name" "$rc"
 			[[ "$rc" -ne 0 ]] || count=$((count + 1))
 			[[ "$rc" -lt 2 ]] || incomplete=1
 			# GH#39010: the reservation, not the queue window, cut this entry short.
@@ -212,6 +229,25 @@ _tbr_pending_scan_tier() {
 			fi
 		done
 	done
+	return 0
+}
+
+# GH#40471: remember an entry whose stage timed out (rc=124) so later passes
+# try it after the others; clear that memory once it finishes. A timeout is
+# non-evidence: the entry stays queued and every hold stays in place.
+# Dynamic scope: reads TBR_LAST_STAGE_RC set by _tbr_run_stage.
+_tbr_pending_note_timeout() {
+	local name="$1" rc="$2" dir="${TBR_ROOT}/entry_timeouts"
+	if [[ "$rc" -ge 2 && "${TBR_LAST_STAGE_RC:-0}" -eq 124 ]]; then
+		mkdir -p "$dir" || return 0
+		if [[ -f "${TBR_ROOT}/entry_inflight/${name}" ]]; then
+			mv -f "${TBR_ROOT}/entry_inflight/${name}" "${dir}/${name}" || true
+		else
+			: >"${dir}/${name}"
+		fi
+	elif [[ "${TBR_LAST_STAGE_RC:-0}" -ne 124 ]]; then
+		rm -f "${dir}/${name}" "${TBR_ROOT}/entry_inflight/${name}"
+	fi
 	return 0
 }
 
