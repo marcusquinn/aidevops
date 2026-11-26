@@ -249,6 +249,41 @@ else
 	_fail "unknown capacity did not fail closed (rc=$rc) — output: $out"
 fi
 
+# GH#40439: the gate sizes from live pages, not the file. A DB that is mostly
+# free pages must VACUUM when free space covers 3x its live data, even though
+# it is below 3x the file size.
+sqlite3 "$OPENCODE_DIR/opencode.db" <<'SQL' >/dev/null
+CREATE TABLE bloat (b blob);
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400)
+INSERT INTO bloat SELECT zeroblob(8192) FROM n;
+PRAGMA wal_checkpoint(TRUNCATE);
+DROP TABLE bloat;
+PRAGMA wal_checkpoint(TRUNCATE);
+SQL
+live_pages=$(sqlite3 "$OPENCODE_DIR/opencode.db" "SELECT (SELECT page_count FROM pragma_page_count) - (SELECT freelist_count FROM pragma_freelist_count);")
+live_kb=$(((live_pages * $(sqlite3 "$OPENCODE_DIR/opencode.db" "PRAGMA page_size;") + 1023) / 1024))
+file_kb=$((($(wc -c <"$OPENCODE_DIR/opencode.db") + 1023) / 1024))
+mid_kb=$(((live_kb * 3 + file_kb * 3) / 2))
+cat >"$capacity_bin/df" <<MOCK_DF_MID
+#!/usr/bin/env bash
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\n' 'mock 999999999 1 ${mid_kb} 1% /'
+exit 0
+MOCK_DF_MID
+chmod +x "$capacity_bin/df"
+
+set +e
+out=$(PATH="$capacity_bin:$PATH" VACUUM_FREELIST_THRESHOLD=0.5 _run_helper maintain --force 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$mid_kb" -lt $((file_kb * 3)) ]] && grep -q "Step 3/3: VACUUM (" <<<"$out" &&
+	grep -q '"outcome": "success"' "$state_file" &&
+	grep -q '"vacuum_ran": true' "$state_file"; then
+	_pass "fragmented DB vacuums when free space covers 3x live data but not 3x file size"
+else
+	_fail "live-page capacity gate did not VACUUM (rc=$rc live_kb=$live_kb file_kb=$file_kb available_kb=$mid_kb) — output: $out"
+fi
+
 # -----------------------------------------------------------------------------
 # Test 5d: attempted VACUUM failure remains a partial non-success outcome
 # -----------------------------------------------------------------------------
