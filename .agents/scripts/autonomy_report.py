@@ -168,7 +168,8 @@ def count_queries(scope_rows, windows, repos, now):
                              if row == slug.split("/")[0])
         queries[("unregistered", row)] = scope + exclusions + " " + QUEUE["available_idle_7d"].format(**dates)
     for slug in repos:
-        queries[("pulse", slug)] = "repo:" + slug + " " + QUEUE["available_idle_7d"].format(**dates)
+        scope = scope_rows.get(slug, "repo:" + slug + " archived:false")
+        queries[("pulse", slug)] = scope + " " + QUEUE["available_idle_7d"].format(**dates)
     return queries
 
 
