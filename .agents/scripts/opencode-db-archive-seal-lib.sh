@@ -7,8 +7,8 @@
 # Writer side of tiered archive storage. New archive batches go to the segment
 # for the current month (opencode-archive-YYYY-MM.db). Once the month has ended
 # plus a grace period, the segment is sealed: journal_mode=DELETE, VACUUM,
-# quick_check, manifest row {segment, sessions, bytes, sha256, sealed_at}, then
-# chmod 0444. A sealed segment is never written again.
+# quick_check, chmod 0444, then atomic manifest publication of
+# {segment, sessions, bytes, sha256, sealed_at}. A sealed segment is never written again.
 #
 # Sourced; defines functions only. Requires sqlite3. Opt-in writer switch:
 # OPENCODE_ARCHIVE_SEGMENTED=1 (see opencode-db-archive.sh).
@@ -23,7 +23,9 @@ readonly OPENCODE_ARCHIVE_DEFAULT_SEAL_GRACE_DAYS=7
 # opencode_archive_manifest_path <legacy-archive-path>
 opencode_archive_manifest_path() {
 	local legacy="$1"
-	printf '%s/opencode-archive-manifest.tsv\n' "${legacy%/*}"
+	local dir="${legacy%/*}"
+	[[ "$dir" == "$legacy" ]] && dir="."
+	printf '%s/opencode-archive-manifest.tsv\n' "$dir"
 	return 0
 }
 
@@ -31,7 +33,9 @@ opencode_archive_manifest_path() {
 opencode_archive_segment_path() {
 	local legacy="$1"
 	local month="$2"
-	printf '%s/opencode-archive-%s.db\n' "${legacy%/*}" "$month"
+	local dir="${legacy%/*}"
+	[[ "$dir" == "$legacy" ]] && dir="."
+	printf '%s/opencode-archive-%s.db\n' "$dir" "$month"
 	return 0
 }
 
@@ -40,7 +44,7 @@ opencode_archive_segment_path() {
 opencode_archive_current_segment() {
 	local legacy="$1"
 	local month=""
-	month="${OPENCODE_ARCHIVE_MONTH_OVERRIDE:-$(date +%Y-%m)}"
+	month="${OPENCODE_ARCHIVE_MONTH_OVERRIDE:-$(date -u +%Y-%m)}"
 	opencode_archive_segment_path "$legacy" "$month"
 	return 0
 }
@@ -60,24 +64,41 @@ opencode_archive_is_sealed() {
 # _opencode_archive_sha256 <file>
 _opencode_archive_sha256() {
 	local file="$1"
+	local output="" digest=""
 	if command -v sha256sum >/dev/null 2>&1; then
-		sha256sum "$file" | awk '{print $1}'
+		output=$(sha256sum "$file") || return 1
 	else
-		shasum -a 256 "$file" | awk '{print $1}'
+		output=$(shasum -a 256 "$file") || return 1
 	fi
+	digest="${output%% *}"
+	[[ "$digest" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+	printf '%s\n' "$digest"
 	return 0
 }
 
 # opencode_archive_seal_segment <segment-path> <legacy-archive-path>
 # Seals one segment. Returns 0 sealed (or already sealed), 1 failure; the
 # segment is left writable on failure so a later pass can retry.
-opencode_archive_seal_segment() {
+opencode_archive_seal_segment() (
 	local segment="$1"
 	local legacy="$2"
 	local manifest="" check="" sessions="" bytes="" digest="" sealed_at=""
+	local lock="" pending="" attempt=0 retry_writable=0
 	[[ -f "$segment" && ! -L "$segment" ]] || return 1
+	manifest=$(opencode_archive_manifest_path "$legacy")
+	# One manifest lock covers both the segment contents and publication. A
+	# subshell-scoped EXIT trap releases it on every return and signal path.
+	lock="${manifest}.lock"
+	until mkdir "$lock" 2>/dev/null; do
+		attempt=$((attempt + 1))
+		((attempt < 100)) || return 1
+		sleep 0.1
+	done
+	trap '[[ -z "$pending" ]] || rm -f "$pending"; ((retry_writable == 0)) || chmod u+w "$segment"; rmdir "$lock"' EXIT
+	trap 'exit 1' HUP INT TERM
 	opencode_archive_is_sealed "$segment" "$legacy" && return 0
-	chmod u+w "$segment" 2>/dev/null || true
+	retry_writable=1
+	chmod u+w "$segment" || return 1
 	sqlite3 "$segment" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || return 1
 	sqlite3 "$segment" "PRAGMA journal_mode=DELETE;" >/dev/null 2>&1 || return 1
 	sqlite3 "$segment" "VACUUM;" >/dev/null 2>&1 || return 1
@@ -85,13 +106,20 @@ opencode_archive_seal_segment() {
 	[[ "$check" == "ok" ]] || return 1
 	sessions=$(sqlite3 -readonly "$segment" "SELECT COUNT(*) FROM session;" 2>/dev/null) || sessions=0
 	bytes=$(wc -c <"$segment" | tr -d ' ')
-	digest=$(_opencode_archive_sha256 "$segment")
+	digest=$(_opencode_archive_sha256 "$segment") || return 1
+	[[ "$digest" =~ ^[[:xdigit:]]{64}$ ]] || return 1
 	sealed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	manifest=$(opencode_archive_manifest_path "$legacy")
-	printf '%s\t%s\t%s\t%s\t%s\n' "${segment##*/}" "$sessions" "$bytes" "$digest" "$sealed_at" >>"$manifest" || return 1
+	pending=$(mktemp "${manifest}.XXXXXX") || return 1
+	if [[ -f "$manifest" ]]; then
+		cp "$manifest" "$pending" || return 1
+	fi
+	printf '%s\t%s\t%s\t%s\t%s\n' "${segment##*/}" "$sessions" "$bytes" "$digest" "$sealed_at" >>"$pending" || return 1
 	chmod 0444 "$segment" || return 1
+	mv -f "$pending" "$manifest" || return 1
+	pending=""
+	retry_writable=0
 	return 0
-}
+)
 
 # opencode_archive_seal_due <legacy-archive-path> [grace-days]
 # Seals every unsealed monthly segment whose month ended more than grace-days

@@ -90,5 +90,127 @@ else
 	_fail "seal command did not seal: ${cli_out}"
 fi
 
+if [[ "$(opencode_archive_manifest_path archive.db)" == ./opencode-archive-manifest.tsv && "$(opencode_archive_segment_path archive.db 2026-11)" == ./opencode-archive-2026-11.db ]]; then
+	_pass "bare archive filenames use the current directory"
+else
+	_fail "bare archive filenames produce invalid paths"
+fi
+
+# Simulate UTC November while the local calendar is still October.
+if (
+	date() {
+		if [[ "$*" == '-u +%Y-%m' ]]; then
+			printf '2026-11\n'
+		else
+			printf '2026-10\n'
+		fi
+		return 0
+	}
+	unset OPENCODE_ARCHIVE_MONTH_OVERRIDE
+	[[ "$(opencode_archive_current_segment archive.db)" == ./opencode-archive-2026-11.db ]]
+); then
+	_pass "writer month uses UTC at the month boundary"
+else
+	_fail "writer month disagrees with UTC sealing boundary"
+fi
+
+failure_segment="${SANDBOX}/opencode-archive-2026-07.db"
+sqlite3 "$failure_segment" 'CREATE TABLE session (id text PRIMARY KEY);'
+if (
+	sha256sum() { return 1; }
+	! opencode_archive_seal_segment "$failure_segment" "$LEGACY" &&
+		! opencode_archive_is_sealed "$failure_segment" "$LEGACY" && [[ -w "$failure_segment" ]]
+); then
+	_pass "checksum command failure leaves no completion row"
+else
+	_fail "checksum command failure was ignored"
+fi
+if (
+	sha256sum() { printf 'not-a-digest\n'; return 0; }
+	! opencode_archive_seal_segment "$failure_segment" "$LEGACY" &&
+		! opencode_archive_is_sealed "$failure_segment" "$LEGACY"
+); then
+	_pass "malformed checksum output is rejected"
+else
+	_fail "malformed checksum was published"
+fi
+if (
+	chmod() {
+		local mode="$1"
+		[[ "$mode" != 0444 ]] || return 1
+		command chmod "$@"
+		return 0
+	}
+	! opencode_archive_seal_segment "$failure_segment" "$LEGACY" &&
+		! opencode_archive_is_sealed "$failure_segment" "$LEGACY" && [[ -w "$failure_segment" ]]
+); then
+	_pass "chmod failure leaves no completion row"
+else
+	_fail "chmod failure published completion"
+fi
+if (
+	mv() { return 1; }
+	! opencode_archive_seal_segment "$failure_segment" "$LEGACY" &&
+		! opencode_archive_is_sealed "$failure_segment" "$LEGACY" && [[ -w "$failure_segment" ]]
+); then
+	_pass "manifest publication failure restores a writable retryable segment"
+else
+	_fail "manifest publication failure left untracked sealed state"
+fi
+
+opencode_archive_seal_segment "$failure_segment" "$LEGACY" &
+first_pid=$!
+opencode_archive_seal_segment "$failure_segment" "$LEGACY" &
+second_pid=$!
+if wait "$first_pid" && wait "$second_pid" &&
+	[[ "$(awk -F'\t' '$1 == "opencode-archive-2026-07.db" { n++ } END { print n }' "$manifest")" == 1 ]] &&
+	[[ "$(awk -F'\t' '$1 == "opencode-archive-2026-07.db" { print $4 }' "$manifest")" == "$(_opencode_archive_sha256 "$failure_segment")" ]]; then
+	_pass "concurrent seals publish one matching digest after failed attempts"
+else
+	_fail "concurrent seals corrupted or duplicated completion"
+fi
+
+# A split family with stale legacy copies and a duplicate child. Use the real
+# restore CLI, with segmented writing disabled, to exercise read precedence.
+restore_dir="${SANDBOX}/restore"
+mkdir "$restore_dir"
+active="${restore_dir}/active.db"
+legacy="${restore_dir}/archive.db"
+september="${restore_dir}/opencode-archive-2026-09.db"
+october="${restore_dir}/opencode-archive-2026-10.db"
+for db in "$active" "$legacy" "$september" "$october"; do
+	sqlite3 "$db" 'CREATE TABLE project (id text PRIMARY KEY);
+CREATE TABLE session (id text PRIMARY KEY, parent_id text, project_id text, title text);
+CREATE TABLE message (id text PRIMARY KEY, session_id text, data text);'
+done
+sqlite3 "$legacy" "INSERT INTO project VALUES ('p'); INSERT INTO session VALUES ('parent',NULL,'p','stale'),('child','parent','p','stale'); INSERT INTO message VALUES ('mc','child','stale');"
+sqlite3 "$september" "INSERT INTO project VALUES ('p'); INSERT INTO session VALUES ('parent',NULL,'p','new-parent'),('child','parent','p','older-child'); INSERT INTO message VALUES ('mp','parent','parent-data'),('mc','child','older-data');"
+sqlite3 "$october" "INSERT INTO project VALUES ('p'); INSERT INTO session VALUES ('child','parent','p','new-child'); INSERT INTO message VALUES ('mc','child','new-data');"
+opencode_archive_seal_segment "$september" "$legacy"
+opencode_archive_seal_segment "$october" "$legacy"
+before=$(_opencode_archive_sha256 "$september")
+cli_out=$(OPENCODE_DB_PATH="$active" OPENCODE_ARCHIVE_DB="$legacy" OPENCODE_ARCHIVE_SEGMENTED=0 bash "$HELPER" restore --session parent --dry-run)
+if [[ "$(sqlite3 "$active" 'SELECT COUNT(*) FROM session;')" == 0 ]]; then
+	_pass "split-family dry run does not modify the active DB"
+else
+	_fail "split-family dry run modified the active DB"
+fi
+cli_out=$(OPENCODE_DB_PATH="$active" OPENCODE_ARCHIVE_DB="$legacy" OPENCODE_ARCHIVE_SEGMENTED=0 bash "$HELPER" restore --session parent)
+if [[ "$(sqlite3 "$active" 'SELECT group_concat(title) FROM (SELECT title FROM session ORDER BY id);')" == new-child,new-parent &&
+	"$(sqlite3 "$active" "SELECT data FROM message WHERE id='mc';")" == new-data &&
+	"$before" == "$(_opencode_archive_sha256 "$september")" ]]; then
+	_pass "split-family restore selects newest copy per ID and preserves sealed files"
+else
+	_fail "split-family restore mismatch: ${cli_out}"
+fi
+# Retry with an already-active parent must still recover archived children.
+sqlite3 "$active" "DELETE FROM message WHERE session_id='child'; DELETE FROM session WHERE id='child';"
+cli_out=$(OPENCODE_DB_PATH="$active" OPENCODE_ARCHIVE_DB="$legacy" bash "$HELPER" restore --session parent)
+if [[ "$(sqlite3 "$active" "SELECT title FROM session WHERE id='child';")" == new-child ]]; then
+	_pass "restore retries finish children when the parent is already active"
+else
+	_fail "restore retry skipped archived children: ${cli_out}"
+fi
+
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
