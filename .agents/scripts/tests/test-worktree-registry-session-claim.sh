@@ -124,6 +124,9 @@ test_source_preflight_reclaims_only_dead_same_session_owner() {
 		print_result "source preflight repairs only a dead same-session owner" 1
 		return 0
 	}
+	"$GIT_BIN" -C "$canonical_path" remote add origin https://github.com/example/test.git || rc=1
+	printf '{"initialized_repos":[{"slug":"example/test","path":"%s"}]}\n' "$canonical_path" >"${TEST_ROOT}/repos.json"
+	export REPOS_JSON="${TEST_ROOT}/repos.json"
 	mkdir -p "${TEST_ROOT}/bin"
 	printf '#!/usr/bin/env bash\nprintf "WORKTREE_PATH=%%s\\n" "%s"\n' "$linked_path" >"${TEST_ROOT}/bin/pre-edit-check.sh"
 	chmod +x "${TEST_ROOT}/bin/pre-edit-check.sh"
