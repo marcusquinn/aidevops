@@ -982,6 +982,16 @@ _tbr_finish_held_entry() {
 	return $?
 }
 
+# GH#40471: leave an in-flight marker so the queue loop can tell, after a
+# timeout kills the entry stage, which revision timed out. Evidence of a slow
+# entry only; it never releases or drops anything.
+_tbr_mark_inflight() {
+	local file="$1" updated_at="$2"
+	mkdir -p "${TBR_ROOT}/entry_inflight" 2>/dev/null || return 0
+	printf '%s\n' "$updated_at" >"${TBR_ROOT}/entry_inflight/${file##*/}" 2>/dev/null || true
+	return 0
+}
+
 #######################################
 # Re-verify one entry against GitHub. Prints a JSON line when the circuit is
 # still active and unowned; retires the entry when resolved. Returns 0 when
@@ -1024,11 +1034,7 @@ _tbr_check_entry() {
 	_tbr_check_intake_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$reason" "$opened_at" "$intake" || intake_rc=$?
 	[[ "$intake_rc" -eq 3 ]] || return "$intake_rc"
 	updated_at=$(printf '%s' "$issue_json" | jq -r '.updated_at // ""')
-	# GH#40471: leave an in-flight marker so the queue loop can tell, after a
-	# timeout kills this stage, which revision timed out. Evidence of a slow
-	# entry only; it never releases or drops anything.
-	mkdir -p "${TBR_ROOT}/entry_inflight" 2>/dev/null &&
-		printf '%s\n' "$updated_at" >"${TBR_ROOT}/entry_inflight/${file##*/}" 2>/dev/null || true
+	_tbr_mark_inflight "$file" "$updated_at"
 	_tbr_skip_decided_unchanged "$key" "$updated_at" "$mode" "$repo" "$issue" && return 1
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
