@@ -299,6 +299,22 @@ Open backups are never pruned automatically, including when a linked PR closes.
 Only explicitly acknowledged or restored evidence becomes eligible for terminal
 PR/age pruning. Use `.keep` inside a backup directory for indefinite retention.
 
+`prune --force` also removes interrupted `.capture.*` / `.verify.*` scratch
+directories older than the retention window.
+
+Orphan refs (a `refs/aidevops/dirty-worktree-backups/*` ref whose backup
+directory is gone) are invisible to `prune`/`delete`. Audit and remove them with:
+
+```bash
+dirty-worktree-backup-helper.sh orphans --repo PATH
+dirty-worktree-backup-helper.sh delete-orphan --repo PATH --ref REF \
+  --confirm DELETE_ORPHAN_DIRTY_BACKUP_REF
+```
+
+`delete-orphan` compare-and-deletes the ref. Confirmation may be omitted only
+when the snapshot adds nothing but zero-byte untracked files. Refs with a live
+backup directory are never listed or deleted.
+
 Manual prune:
 
 ```bash
