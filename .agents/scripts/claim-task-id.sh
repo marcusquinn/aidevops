@@ -607,6 +607,32 @@ _validate_description_scope_before_allocation() {
 	return 0
 }
 
+# _validate_privacy_before_allocation — run the same public-write privacy guard
+# that gh_create_issue applies, on the title, description and brief, before the
+# CAS counter advances. Fail-open only when the guard library is unavailable;
+# the post-allocation issue write still enforces it.
+_validate_privacy_before_allocation() {
+	local slug="$1"
+	[[ -n "$slug" ]] || return 0
+	if ! command -v privacy_guard_public_write >/dev/null 2>&1; then
+		[[ -r "${SCRIPT_DIR}/privacy-guard-helper.sh" ]] || return 0
+		# shellcheck source=privacy-guard-helper.sh
+		source "${SCRIPT_DIR}/privacy-guard-helper.sh" || return 0
+		command -v privacy_guard_public_write >/dev/null 2>&1 || return 0
+	fi
+	local text="$TASK_TITLE"
+	[[ -n "$TASK_DESCRIPTION" ]] && text+=$'\n'"$TASK_DESCRIPTION"
+	if [[ -n "$TASK_BRIEF_FILE" && -f "$TASK_BRIEF_FILE" && -r "$TASK_BRIEF_FILE" ]]; then
+		text+=$'\n'"$(<"$TASK_BRIEF_FILE")"
+	fi
+	if ! privacy_guard_public_write "$slug" "$text"; then
+		log_error "The issue title or body would be blocked by the public-write privacy guard; no task ID was allocated."
+		log_error "Recovery: replace private repository names and local paths with placeholders, then retry."
+		return 1
+	fi
+	return 0
+}
+
 # t2436: Scan TODO.md for the task entry matching task_id and derive
 # creation-time labels from its tags. Closes the race window where
 # parent-task (and other protected labels) would otherwise only be applied
@@ -2018,16 +2044,17 @@ _main_preflight_allocation() {
 		return 4
 	fi
 
+	# True when this run will create a GitHub issue after allocation.
+	local _github_issue_write="false" _val_slug=""
+	if [[ "$OFFLINE_MODE" == "false" && "$DRY_RUN" == "false" && "$NO_ISSUE" == "false" && "$platform" == "github" ]]; then
+		_github_issue_write="true"
+		_val_slug=$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME")
+	fi
+
 	# --- t2800: Pre-flight label validation (before counter is advanced) ---
 	# Only validate when issuing to GitHub, labels are provided, and not skipped.
 	# Fail-open (validation function returns 0) on any API error.
-	if [[ "$SKIP_LABEL_VALIDATION" == "false" ]] \
-		&& [[ "$OFFLINE_MODE" == "false" ]] \
-		&& [[ "$DRY_RUN" == "false" ]] \
-		&& [[ "$NO_ISSUE" == "false" ]] \
-		&& [[ "$platform" == "github" ]]; then
-		local _val_slug=""
-		_val_slug=$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME")
+	if [[ "$SKIP_LABEL_VALIDATION" == "false" && "$_github_issue_write" == "true" ]]; then
 		if [[ -n "$_val_slug" ]]; then
 			# Framework-injected label: ensure it exists so a new repository
 			# cannot strand the ID after the counter advances.
@@ -2040,6 +2067,13 @@ _main_preflight_allocation() {
 				return 3
 			fi
 		fi
+	fi
+
+	# The issue write runs the public-write privacy guard after allocation;
+	# run it first so a blocked title/body cannot strand the task ID.
+	if [[ "$_github_issue_write" == "true" ]] \
+		&& ! _validate_privacy_before_allocation "$_val_slug"; then
+		return 3
 	fi
 
 	# Reject body-normalization failures before the monotonic CAS allocation so
