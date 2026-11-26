@@ -507,8 +507,9 @@ validate_positional_parameters() {
 # rejects literals that START with "$", not inter-argument spans. (GH#20505)
 #
 # Sed patterns (ERE, -E works on both BSD and GNU sed):
-#   \\"                           → backslash-escaped quote; removed first so the
-#                                   span between two escaped quotes is not a literal
+#   \\\\ then \\"                 → masked as @B@ / @Q@ (left to right, so backslash-run
+#                                   parity is respected): escaped quotes are not
+#                                   delimiters but stay part of the literal identity
 #   "\$[A-Za-z_][A-Za-z0-9_]*"   → "$var", "$name", "$_private"
 #   "\$\{[^}]*\}"                 → "${var}", "${var:-default}", "${#var}"
 #   "\$@"                         → special array-expansion token
@@ -521,7 +522,8 @@ _count_repeated_literals() {
 	local _ext_varref='^"\$'
 	grep -v '^[[:space:]]*#' |
 		sed -E '
-			s/\\"//g
+			s/\\\\/@B@/g
+			s/\\"/@Q@/g
 			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
 			s/"\$\{[^}]*\}"//g
 			s/"\$@"//g
@@ -555,7 +557,8 @@ _show_repeated_literals() {
 	local listing
 	listing=$(grep -v '^[[:space:]]*#' |
 		sed -E '
-			s/\\"//g
+			s/\\\\/@B@/g
+			s/\\"/@Q@/g
 			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
 			s/"\$\{[^}]*\}"//g
 			s/"\$@"//g

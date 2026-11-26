@@ -381,6 +381,30 @@ q "same literal" r
 		print_result "real repeated literals still detected alongside escape fix" 1 \
 			"expected 1, got: $count"
 	fi
+
+	# Escaped quotes stay part of literal identity: three different values.
+	local mixed='echo "alpha \"beta\""
+echo "alpha beta"
+echo "alpha \"beta"
+'
+	count=$(printf '%s' "$mixed" | _count_repeated_literals)
+	if [ "$count" -eq 0 ]; then
+		print_result "escaped quotes preserved in literal identity" 0
+	else
+		print_result "escaped quotes preserved in literal identity" 1 "expected 0, got: $count"
+	fi
+
+	# Even backslash run: the quote after it closes the string.
+	local even='echo "path\\"
+echo "path\\"
+echo "path\\"
+'
+	count=$(printf '%s' "$even" | _count_repeated_literals)
+	if [ "$count" -eq 1 ]; then
+		print_result "closing quote after even backslash run preserved" 0
+	else
+		print_result "closing quote after even backslash run preserved" 1 "expected 1, got: $count"
+	fi
 	return 0
 }
 
