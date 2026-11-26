@@ -93,6 +93,17 @@ if [[ "$_archive_default_dir" == "$ACTIVE_DB" ]]; then
 fi
 ARCHIVE_DB="${OPENCODE_ARCHIVE_DB:-${_archive_default_dir}/opencode-archive.db}"
 unset _archive_default_dir
+# Tiered archive storage (GH#40419 phase 2). ARCHIVE_LEGACY_DB anchors segment
+# discovery, the manifest and the index. With OPENCODE_ARCHIVE_SEGMENTED=1 new
+# batches go to the current month's segment, so sealed months never change.
+# shellcheck source=opencode-db-archive-segments-lib.sh
+source "${_oda_dir}/opencode-db-archive-segments-lib.sh"
+# shellcheck source=opencode-db-archive-seal-lib.sh
+source "${_oda_dir}/opencode-db-archive-seal-lib.sh"
+ARCHIVE_LEGACY_DB="$ARCHIVE_DB"
+if [[ "${OPENCODE_ARCHIVE_SEGMENTED:-0}" == "1" ]]; then
+	ARCHIVE_DB=$(opencode_archive_current_segment "$ARCHIVE_LEGACY_DB")
+fi
 
 # Headless runtime ledger: worker_sessions records every merged worker session
 # (including subagent children); provider_sessions holds resumable worker IDs.
@@ -1204,6 +1215,10 @@ _archive_move_candidates() {
 	# Create archive DB and schema
 	local archive_created=0
 	[[ -f "$ARCHIVE_DB" ]] || archive_created=1
+	if opencode_archive_is_sealed "$ARCHIVE_DB" "$ARCHIVE_LEGACY_DB"; then
+		print_error "Archive segment ${ARCHIVE_DB##*/} is sealed and immutable; active data was left untouched."
+		return 3
+	fi
 	create_archive_schema "$ARCHIVE_DB"
 	if ! opencode_archive_schema_supported "$ARCHIVE_DB" required; then
 		local archive_schema_diagnostic=""
@@ -1695,6 +1710,7 @@ COMMANDS:
   archive-all  Archive selected/default DB and fixed-depth isolated project DBs
   prune     PERMANENTLY delete sessions older than N days from archive then active DB
   prune-all Prune selected/default DB and fixed-depth isolated project DBs
+  seal      Seal completed monthly archive segments (OPENCODE_ARCHIVE_SEAL_GRACE_DAYS, default 7)
   restore   Move one archived session (and subagent children) back to the active DB
   retention-days  Print storage.opencode_session_retention_days (0 = keep all)
   stats     Show row counts and sizes (active + archive databases)
@@ -1802,6 +1818,9 @@ main() {
 		;;
 	restore)
 		cmd_restore "$@" || rc=$?
+		;;
+	seal)
+		opencode_archive_seal_due "$ARCHIVE_LEGACY_DB" "${OPENCODE_ARCHIVE_SEAL_GRACE_DAYS:-$OPENCODE_ARCHIVE_DEFAULT_SEAL_GRACE_DAYS}" || rc=$?
 		;;
 	retention-days)
 		cmd_retention_days || rc=$?

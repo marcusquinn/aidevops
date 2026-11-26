@@ -143,3 +143,14 @@ not grant a generic helper authority to delete across `~/.aidevops`.
 An interrupted staged cleanup leaves either the original or an attributable
 producer-local trash copy. Inventory includes trash bytes as protected until a
 producer can complete or an operator can diagnose the interrupted action.
+
+## OpenCode archive segments (GH#40419)
+
+With `OPENCODE_ARCHIVE_SEGMENTED=1`, `opencode-db-archive.sh` writes new archive
+batches to `opencode-archive-YYYY-MM.db` for the current month. Run
+`opencode-db-archive.sh seal` (grace: `OPENCODE_ARCHIVE_SEAL_GRACE_DAYS`, default 7)
+to checkpoint, VACUUM, `quick_check`, record `{segment, sessions, bytes, sha256,
+sealed_at}` in `opencode-archive-manifest.tsv`, then `chmod 0444` completed months.
+Sealed segments are never written: restore copies from them without deleting, and
+the archiver refuses to write to one. The legacy `opencode-archive.db` stays one
+unsealed segment until the phase 3 migration.

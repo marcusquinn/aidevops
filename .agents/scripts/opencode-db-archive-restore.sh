@@ -119,7 +119,27 @@ EPOCH_DEFAULTS
 		copy_sql="${copy_sql}INSERT OR IGNORE INTO main.${table_name} (${columns}) SELECT ${select_columns} FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'
 		delete_sql="DELETE FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'"${delete_sql}"
 	done
+	# A sealed segment is immutable: copy only, never delete from it.
+	if opencode_archive_is_sealed "$ARCHIVE_DB" "$ARCHIVE_LEGACY_DB"; then
+		printf '%s' "$copy_sql"
+		return 0
+	fi
 	printf '%s%sDELETE FROM archive.session WHERE id IN (%s);\n' "$copy_sql" "$delete_sql" "$ids"
+	return 0
+}
+
+# _archive_restore_select_segment <session_id_sql>
+# Points ARCHIVE_DB at the newest archive segment holding the session so a
+# restore reads the newest copy. Keeps the current ARCHIVE_DB when none match.
+_archive_restore_select_segment() {
+	local sid="$1"
+	local segment found="" count
+	while IFS= read -r segment; do
+		[[ -n "$segment" ]] || continue
+		count=$(sqlite3 -readonly -cmd '.timeout 5000' "$segment" "SELECT COUNT(*) FROM session WHERE id = ${sid} OR parent_id = ${sid};" 2>/dev/null) || continue
+		[[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] && found="$segment"
+	done <<<"$(opencode_archive_segments "$ARCHIVE_LEGACY_DB"; [[ -f "$ARCHIVE_DB" ]] && printf '%s\n' "$ARCHIVE_DB")"
+	[[ -n "$found" ]] && ARCHIVE_DB="$found"
 	return 0
 }
 
@@ -159,6 +179,7 @@ cmd_restore() {
 		print_info "Session ${session_id} is already in the active DB"
 		return 0
 	fi
+	_archive_restore_select_segment "$sid"
 	if [[ ! -f "$ARCHIVE_DB" ]] || [[ "$ARCHIVE_DB" -ef "$ACTIVE_DB" ]]; then
 		print_warning "No archive DB for ${ACTIVE_DB}; session ${session_id} not found"
 		return 4
