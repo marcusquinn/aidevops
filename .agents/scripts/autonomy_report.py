@@ -45,6 +45,7 @@ NOTES = [
     "PRs without origin labels contribute only to all; dual-origin PRs count in both origins.",
     "Windows are the latest completed Monday-Sunday UTC weeks; queue health is current.",
     "Owner rows cover the whole owner, including unregistered repos; only eligible registry entries define local pulse state.",
+    "Archived repositories are excluded.",
     "Lead times sample latest-updated merged PRs in the week and the first closing issue, omitting missing references.",
     "Targets are initial heuristics, not gates; missing ratios/percentiles are null (n/a in text).",
 ]
@@ -106,7 +107,7 @@ def scopes(repos, framework):
         data = graphql("query{repositoryOwner(login:" + json.dumps(owner) + "){__typename}}")
         kind = data["repositoryOwner"]["__typename"]
         scope = {"User": "user:", "Organization": "org:"}[kind] + owner
-        rows[owner] = scope + " -repo:" + framework
+        rows[owner] = scope + " -repo:" + framework + " archived:false"
     return rows
 
 
