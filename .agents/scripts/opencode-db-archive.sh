@@ -845,6 +845,9 @@ cmd_archive() {
 	local inbox_session_tables=""
 	_archive_parse_options "$@" || return 1
 	_archive_validate_options || return 1
+	# The caller's budget, before any automatic catch-up raise. Only a larger
+	# requested budget retries oversized sessions (_archive_oversized_exclude_clause).
+	local requested_max_duration="$max_duration"
 	if [[ "${OPENCODE_ARCHIVE_BUDGET_CHILD:-0}" != 1 ]]; then
 		# Only full apply passes use the catch-up budget (cmd_archive_all records
 		# the streak for the same passes; see _archive_args_full_pass).
@@ -1315,7 +1318,13 @@ _archive_run_batches() {
 		batch_start=$(date +%s)
 		# GH#40418: sizing a window over huge part/message tables can itself eat
 		# the whole budget. Mark before sizing so a killed pass halves the window.
-		_archive_adapt_mark sessions "$batch_limit" "$byte_limit"
+		# At the 1-row floor also record the head candidate, so a sizing pass
+		# killed there quarantines that session like a killed write does.
+		local head_id=""
+		if ((next_limit == 1)); then
+			head_id=$(_archive_active_query "SELECT id FROM session WHERE $candidate_filter ORDER BY time_updated, time_created, id LIMIT 1;") || return 1
+		fi
+		_archive_adapt_mark sessions "$batch_limit" "$byte_limit" "$head_id"
 		session_ids=$(_archive_select_batch "$batch_limit" "$byte_limit" "$((start_time + max_duration))") || return $?
 		_ARCHIVE_T_SIZING=$((_ARCHIVE_T_SIZING + $(date +%s) - batch_start))
 

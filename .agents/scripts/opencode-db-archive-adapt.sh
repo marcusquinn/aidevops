@@ -4,7 +4,7 @@
 # Persisted batch adaptation and payload sizing helpers (GH#35510).
 # Source only through opencode-db-archive.sh, which supplies configuration,
 # SQLite helpers and output functions. No work runs on import.
-# shellcheck disable=SC2154 # max_duration/dry_run are the calling archive command's locals (dynamic scope)
+# shellcheck disable=SC2154 # max_duration/requested_max_duration/dry_run are the calling archive command's locals (dynamic scope)
 
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 [[ -n "${_OPENCODE_DB_ARCHIVE_ADAPT_LOADED:-}" ]] && return 0
@@ -147,7 +147,10 @@ _archive_oversized_exclude_clause() {
 	local base sid list=""
 	base=$(_archive_state_base sessions) || return 0
 	[[ -f "${base}.oversized" ]] || return 0
-	if ((max_duration > DEFAULT_MAX_DURATION)); then
+	# An automatic catch-up raise (GH#40418) is not a requested long run: it
+	# must keep the quarantine, or a session too large even for the raised
+	# budget would block every catch-up pass at the queue head.
+	if ((${requested_max_duration:-$max_duration} > DEFAULT_MAX_DURATION)); then
 		# Manual long run: retry deferred sessions; failures are re-recorded.
 		# A dry run only previews, so it must not drop the persisted list.
 		((dry_run)) || rm -f "${base}.oversized" 2>/dev/null || true
