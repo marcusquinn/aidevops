@@ -1448,7 +1448,30 @@ _archive_write_batch() {
 	return $?
 }
 
+# Serialize with the sealer: hold the manifest lock across the sealed re-check
+# and the whole write transaction so a seal digest can never go stale.
 _archive_execute_batch() {
+	local lock rc=0 attempt=0
+	lock="$(opencode_archive_manifest_path "$ARCHIVE_LEGACY_DB").lock"
+	until mkdir "$lock" 2>/dev/null; do
+		attempt=$((attempt + 1))
+		if ((attempt >= 300)); then
+			print_error "Archive segment lock busy (sealing in progress); active rows were not deleted."
+			return 1
+		fi
+		sleep 0.1
+	done
+	if opencode_archive_is_sealed "$ARCHIVE_DB" "$ARCHIVE_LEGACY_DB"; then
+		rmdir "$lock"
+		print_error "Archive segment ${ARCHIVE_DB##*/} was sealed during the pass; active rows were not deleted."
+		return 3
+	fi
+	_archive_execute_batch_locked || rc=$?
+	rmdir "$lock"
+	return "$rc"
+}
+
+_archive_execute_batch_locked() {
 	# ATTACH and DETACH are within the same sqlite3 invocation — the attachment
 	# is released automatically when the process exits. The trap above ensures
 	# the archive WAL is checkpointed on any exit path between batches.

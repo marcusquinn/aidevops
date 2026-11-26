@@ -135,12 +135,17 @@ EPOCH_DEFAULTS
 # Points ARCHIVE_DB at the newest segment holding this exact session ID.
 _archive_restore_select_segment() {
 	local sid="$1"
-	local segment found="" count
+	local segment found="" count failed=0
 	while IFS= read -r segment; do
 		[[ -n "$segment" ]] || continue
-		count=$(sqlite3 -readonly -cmd '.timeout 5000' "$segment" "SELECT COUNT(*) FROM session WHERE id = ${sid};" 2>/dev/null) || continue
+		count=$(sqlite3 -readonly -cmd '.timeout 5000' "$segment" "SELECT COUNT(*) FROM session WHERE id = ${sid};" 2>/dev/null) || {
+			failed=1
+			continue
+		}
 		[[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] && found="$segment"
 	done <<<"$(opencode_archive_segments "$ARCHIVE_LEGACY_DB")"
+	# An unreadable/busy segment may hold the session: never report not-found.
+	((failed == 0)) || return 2
 	[[ -n "$found" ]] || return 1
 	ARCHIVE_DB="$found"
 	return 0
@@ -191,7 +196,13 @@ cmd_restore() {
 	check_active_db || return 1
 	sid=$(_archive_sql_quote "$session_id")
 	active_count=$(sqlite3 -cmd '.timeout 5000' "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE id = ${sid};") || return 1
-	if ! _archive_restore_select_segment "$sid" && [[ "$active_count" != 1 ]]; then
+	local select_rc=0
+	_archive_restore_select_segment "$sid" || select_rc=$?
+	if ((select_rc == 2)); then
+		print_error "Could not inspect every archive segment for ${session_id}; nothing changed"
+		return 1
+	fi
+	if ((select_rc != 0)) && [[ "$active_count" != 1 ]]; then
 		print_warning "Session ${session_id} not found in archive"
 		return 4
 	fi
@@ -202,7 +213,13 @@ cmd_restore() {
 	while IFS= read -r restore_id; do
 		[[ -n "$restore_id" ]] || continue
 		child=$(_archive_sql_quote "$restore_id")
-		_archive_restore_select_segment "$child" || continue
+		select_rc=0
+		_archive_restore_select_segment "$child" || select_rc=$?
+		if ((select_rc == 2)); then
+			print_error "Could not inspect every archive segment for ${restore_id}; nothing changed"
+			return 1
+		fi
+		((select_rc == 0)) || continue
 		[[ "$ARCHIVE_DB" -ef "$ACTIVE_DB" ]] && return 1
 		if ! restore_sql=$(_archive_restore_sql "$child" 1); then
 			print_error "Archive and active schemas are incompatible for restore; nothing changed"
