@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -47,8 +48,11 @@ NOTES = [
 
 def graphql(query):
     """Run one read query, rejecting partial responses and avoiding retries."""
-    result = subprocess.run(
-        ["gh", "api", "graphql", "-f", "query=" + query],
+    executable = shutil.which("gh")
+    if executable is None:
+        raise ValueError("gh is not available on PATH")
+    result = subprocess.run(  # nosec B603 -- resolved gh, fixed read-only API argv, no shell
+        [str(Path(executable).absolute()), "api", "graphql", "-f", "query=" + query],
         capture_output=True, text=True, timeout=120, check=False,
     )
     if result.returncode:
