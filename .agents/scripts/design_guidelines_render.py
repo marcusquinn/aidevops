@@ -83,7 +83,8 @@ def _append_colours(lines: list[str], colors: list[tuple[str, str]]) -> None:
     lines.append("::: brand-swatch-grid")
     for key, value in colors:
         accent = key.replace("on-", "").replace("_", "-")
-        lines.extend([f"::: swatch-card accent={accent}", "", f"### {key}", "", f"`{value}`", ":::"])
+        swatch = f" swatch={value}" if re.fullmatch(r"#[0-9a-fA-F]{3,8}", value) else ""
+        lines.extend([f"::: swatch-card accent={accent}{swatch}", "", f"### {key}", "", f"`{value}`", ":::"])
     lines.extend([":::", ""])
 
 
