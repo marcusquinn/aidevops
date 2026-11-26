@@ -87,7 +87,7 @@ def registry(path):
     repos = {}
     for entry in entries:
         slug = entry.get("slug", "")
-        if entry.get("local_only") is True or entry.get("role", "maintainer") != "maintainer":
+        if entry.get("local_only") is True or entry.get("role") != "maintainer":
             continue
         if "/" not in slug:
             continue
