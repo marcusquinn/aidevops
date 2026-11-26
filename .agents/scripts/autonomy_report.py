@@ -103,9 +103,7 @@ def scopes(repos, framework):
     for owner in sorted({slug.split("/")[0] for slug in repos}):
         data = graphql("query{repositoryOwner(login:" + json.dumps(owner) + "){__typename}}")
         kind = data["repositoryOwner"]["__typename"]
-        if kind not in ("User", "Organization"):
-            raise ValueError("Unsupported GitHub owner type")
-        scope = ("user:" if kind == "User" else "org:") + owner
+        scope = {"User": "user:", "Organization": "org:"}[kind] + owner
         rows[owner] = scope + " -repo:" + framework
     return rows
 
@@ -264,7 +262,10 @@ def main():
     except OSError:
         print("autonomy-report: cannot read registry or execute gh", file=sys.stderr)
         return 1
-    except (ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+    except subprocess.TimeoutExpired:
+        print("autonomy-report: GitHub query timed out", file=sys.stderr)
+        return 1
+    except (ValueError, KeyError, TypeError) as error:
         print(f"autonomy-report: {error}", file=sys.stderr)
         return 1
     print(json.dumps(result, allow_nan=False)) if args.json else print_text(result)
