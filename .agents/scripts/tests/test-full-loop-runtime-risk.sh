@@ -829,6 +829,138 @@ assert_accepted "merge helper accepts runtime-verified PR body" \
 assert_rejected "merge helper fails closed when the body read fails" \
 	_merge_check_runtime_evidence 7 owner/repo ""
 
+# GH#40444: exercise the production waiver entry points with local approval
+# and audit transports. No live merge or maintainer credentials are used.
+for waiver_function in _merge_parse_command_args _merge_prepare_rbg_override \
+	_merge_prepare_runtime_waiver _merge_verify_runtime_waiver_approval \
+	_merge_lift_runtime_waiver_hold _merge_record_runtime_waiver _merge_execute; do
+	# shellcheck disable=SC2312
+	eval "$(sed -n "/^${waiver_function}() {/,/^}/p" "${SCRIPT_DIR_TEST}/full-loop-helper-merge.sh")"
+done
+# shellcheck source=../full-loop-helper-verify-runtime.sh
+source "${SCRIPT_DIR_TEST}/full-loop-helper-verify-runtime.sh"
+SCRIPT_DIR="${TEST_ROOT}/waiver"
+mkdir -p "$SCRIPT_DIR"
+cat >"${SCRIPT_DIR}/approval-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${WAIVER_LOG}.approval"
+printf '%s\n' "${WAIVER_VERDICT:-VERIFIED}"
+exit "${WAIVER_APPROVAL_RC:-0}"
+STUB
+cat >"${SCRIPT_DIR}/audit-log-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"${WAIVER_LOG}.audit"
+STUB
+chmod +x "${SCRIPT_DIR}/approval-helper.sh" "${SCRIPT_DIR}/audit-log-helper.sh"
+export WAIVER_LOG="${SCRIPT_DIR}/record"
+waiver_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+waiver_reason="No paid sandbox is available; documented API and local checks reviewed"
+_FULL_LOOP_RBG_OVERRIDE_MIN_REASON_CHARS=20
+FULL_LOOP_MERGE_BODY_FILE_FLAG=--body-file
+_merge_is_headless_session() { [[ "${waiver_headless:-false}" == true ]] && return 0; return 1; }
+approval_cli_prefix() { printf 'aidevops'; return 0; }
+waiver_headless=true
+assert_rejected "headless waiver refuses before remote reads" \
+	_merge_parse_command_args "--waive-runtime-verification=${waiver_reason}"
+waiver_headless=false
+assert_rejected "short waiver reason refuses" _merge_parse_command_args '--waive-runtime-verification=too short'
+assert_rejected "blank waiver reason refuses" _merge_parse_command_args '--waive-runtime-verification=                      '
+assert_rejected "empty waiver reason refuses" _merge_parse_command_args '--waive-runtime-verification='
+assert_rejected "bare waiver flag refuses" _merge_parse_command_args --waive-runtime-verification
+assert_rejected "duplicate waiver flag refuses" _merge_parse_command_args \
+	"--waive-runtime-verification=${waiver_reason}" "--waive-runtime-verification=${waiver_reason}"
+assert_rejected "waiver cannot queue auto-merge" _merge_parse_command_args \
+	--auto "--waive-runtime-verification=${waiver_reason}"
+assert_accepted "interactive waiver parses without forcing admin" _merge_parse_command_args \
+	owner/repo "--waive-runtime-verification=${waiver_reason}"
+assert_contains "waiver does not force admin bypass" "$FULL_LOOP_MERGE_PARSED_ADMIN" '0'
+_flm_gh_read() { printf '%s\n' "$waiver_head"; return 0; }
+pending_json=$(jq -cn --arg body "$pending_body" '{body:$body}')
+assert_accepted "signed waiver accepts Critical runtime-pending unchanged" \
+	_merge_check_runtime_evidence 7 owner/repo "$pending_json"
+assert_accepted "signed waiver accepts High self-assessed unchanged" \
+	_merge_check_runtime_evidence 7 owner/repo "$(jq -cn --arg body "$downgraded_body" '{body:$body}')"
+assert_contains "waiver pins approved head" "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" "$waiver_head"
+assert_contains "approval verification expects exact head" "$(<"${WAIVER_LOG}.approval")" "--expect-head ${waiver_head}"
+assert_rejected "waiver keeps malformed risk refusal" _merge_check_runtime_evidence \
+	7 owner/repo "$(jq -cn --arg body "$unknown_risk_body" '{body:$body}')"
+assert_rejected "waiver keeps malformed verification refusal" _merge_check_runtime_evidence \
+	7 owner/repo "$(jq -cn --arg body "$undelimited_body" '{body:$body}')"
+assert_rejected "waiver keeps ambiguous section refusal" _merge_check_runtime_evidence \
+	7 owner/repo "$(jq -cn --arg body "$example_section_body" '{body:$body}')"
+for verdict in NO_APPROVAL STALE_APPROVAL INVALID_SIGNATURE LEGACY_APPROVAL; do
+	export WAIVER_VERDICT="$verdict"
+	assert_rejected "waiver rejects approval ${verdict}" _merge_check_runtime_evidence 7 owner/repo "$pending_json"
+done
+export WAIVER_VERDICT=VERIFIED WAIVER_APPROVAL_RC=1
+assert_rejected "failed approval command cannot authorize waiver" _merge_check_runtime_evidence 7 owner/repo "$pending_json"
+export WAIVER_APPROVAL_RC=0
+waiver_head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+assert_rejected "head drift refuses waiver" _merge_check_runtime_evidence 7 owner/repo "$pending_json"
+waiver_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# The actual merge executor must reverify approval, even after earlier checks.
+_merge_check_admin_capability() { return 0; }
+_merge_verify_rbg_override_approval() { return 0; }
+_merge_resolve_subject_for_method() { printf 'feat: runtime waiver\n'; return 0; }
+_merge_describe_flags() { printf 'fixture squash\n'; return 0; }
+_merge_resolve_match_head() { printf '%s\n' "$FULL_LOOP_EXPECTED_PR_HEAD_SHA"; return 0; }
+_merge_revalidate_transport_authority() { return 0; }
+_merge_run_bounded_write() { printf '%s\n' "$*" >>"${WAIVER_LOG}.transport"; return 0; }
+print_info() { return 0; }
+print_success() { return 0; }
+FULL_LOOP_MERGE_SUBJECT_FLAG=--subject
+export WAIVER_VERDICT=STALE_APPROVAL
+assert_rejected "merge transport refuses approval invalidated after precheck" _merge_execute 7 owner/repo --squash 0 0
+assert_accepted "invalid approval reaches no transport" test ! -e "${WAIVER_LOG}.transport"
+export WAIVER_VERDICT=VERIFIED
+assert_accepted "approved waiver reaches normal merge transport" _merge_execute 7 owner/repo --squash 0 0
+assert_contains "waived merge transport binds exact head" "$(<"${WAIVER_LOG}.transport")" "--match-head-commit ${waiver_head}"
+
+# Production hold decision and lifting preserve unknown, mixed and PR-only
+# holds; no special waiver path bypasses their trust checks.
+waiver_scope=runtime-pending
+waiver_pr_only=false
+waiver_hold=true
+_latest_trusted_hold_scope() { printf '%s\n' "$waiver_scope"; return 0; }
+_verify_runtime_linked_issue_refs() { printf 'owner/repo#7\n'; return 0; }
+_issue_pr_only_contract_state() { [[ "$waiver_pr_only" == true ]] && return 0; return 1; }
+_flm_gh_read() {
+	if [[ "$*" == *'--json headRefOid --jq'* ]]; then
+		printf '%s\n' "$waiver_head"
+	elif [[ "$*" == *'--json labels --jq'* ]]; then
+		printf '\n'
+	else
+		jq -cn --arg head "$waiver_head" --arg body "$pending_body" --arg held "$waiver_hold" \
+			'{headRefOid:$head, body:$body, labels:(if $held == "true" then [{name:"hold-for-review"}] else [] end)}'
+	fi
+	return 0
+}
+gh_pr_edit_safe() { printf '%s\n' "$*" >>"${WAIVER_LOG}.labels"; waiver_hold=false; return 0; }
+print_info() { return 0; }
+assert_accepted "waiver lifts recorded runtime-only hold" _merge_lift_runtime_waiver_hold 7 owner/repo
+assert_contains "only hold label is removed" "$(<"${WAIVER_LOG}.labels")" '--remove-label hold-for-review'
+waiver_hold=true
+waiver_scope=runtime-pending,pr-only
+assert_rejected "waiver keeps mixed hold scope" _merge_lift_runtime_waiver_hold 7 owner/repo
+waiver_scope=unknown
+assert_rejected "waiver keeps unknown hold scope" _merge_lift_runtime_waiver_hold 7 owner/repo
+waiver_scope=runtime-pending
+waiver_pr_only=true
+assert_rejected "waiver keeps linked PR-only contract hold" _merge_lift_runtime_waiver_hold 7 owner/repo
+waiver_pr_only=false
+gh_pr_comment() { printf '%s\n' "$*" >"${WAIVER_LOG}.comment"; return 0; }
+gh-signature-helper.sh() { return 0; }
+FULL_LOOP_VERIFIED_PR_HEAD_SHA="$waiver_head"
+assert_accepted "post-merge waiver records audit transports" _merge_record_runtime_waiver 7 owner/repo cccccccccccccccccccccccccccccccccccccccc
+for record in comment audit; do
+	recorded=$(<"${WAIVER_LOG}.${record}")
+	assert_contains "${record} records waiver reason" "$recorded" "$waiver_reason"
+	assert_contains "${record} records approved head" "$recorded" "$waiver_head"
+	assert_contains "${record} records merge SHA" "$recorded" cccccccccccccccccccccccccccccccccccccccc
+done
+assert_accepted "a later invocation without flag resets waiver" _merge_parse_command_args owner/repo
+assert_rejected "no-flag merge still refuses pending after waiver" _merge_check_runtime_evidence 7 owner/repo "$pending_json"
+
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0
