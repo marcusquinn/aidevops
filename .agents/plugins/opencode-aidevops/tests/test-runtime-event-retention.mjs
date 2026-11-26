@@ -162,7 +162,8 @@ test("archive is dry-run first, interruption-safe, resumable, and append-only", 
     assert.ok(inventory.archive_bytes > 0);
     assert.ok(inventory.protected_bytes > 0);
     assert.equal(inventory.candidate_bytes, 0);
-    assert.equal(inventory.reclaimable_bytes, 0);
+    // Freed pages left by the verified delete are reclaimable (GH#40498).
+    assert.ok(inventory.reclaimable_bytes > 0);
     assert.doesNotMatch(JSON.stringify(inventory), /payload_json|fixture:|observability\.db/);
   } finally {
     rmSync(tempDir, { force: true, recursive: true });

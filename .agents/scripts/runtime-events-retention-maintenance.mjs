@@ -30,7 +30,10 @@ function maintenanceConfig(options, dependencies) {
   delete archiveOptions.clock;
   delete archiveOptions.maxDurationSeconds;
   delete archiveOptions.maxPartitions;
-  return { archiveOptions, clock, maxDurationSeconds, maxPartitions };
+  const reclaim = typeof dependencies.reclaim === "function"
+    ? (deadline) => dependencies.reclaim({ ...archiveOptions, clock, deadline })
+    : null;
+  return { archiveOptions, clock, maxDurationSeconds, maxPartitions, reclaim };
 }
 
 function planMaintenance(config, archive) {
@@ -82,6 +85,14 @@ function maintenanceSummary(totals, config, stopReason, lastResult) {
   });
 }
 
+function spaceMutated(space) {
+  return [
+    space.tool_calls_deleted,
+    space.reclaimed_bytes,
+    space.incremental_vacuum_enabled ? 1 : 0,
+  ].some((value) => Number(value || 0) > 0);
+}
+
 function applyMaintenance(config, archive) {
   const startedAt = config.clock();
   const totals = newTotals();
@@ -109,7 +120,15 @@ function applyMaintenance(config, archive) {
       break;
     }
   }
-  return maintenanceSummary(totals, config, stopReason, lastResult);
+  const summary = maintenanceSummary(totals, config, stopReason, lastResult);
+  const space = config.reclaim ? config.reclaim(startedAt + config.maxDurationSeconds * 1000) : {};
+  const reclaimed = spaceMutated(space);
+  return Object.freeze({
+    ...summary,
+    ...space,
+    applied: summary.applied || reclaimed,
+    status: reclaimed ? "maintained" : summary.status,
+  });
 }
 
 export function runRuntimeEventMaintenance(options, dependencies) {

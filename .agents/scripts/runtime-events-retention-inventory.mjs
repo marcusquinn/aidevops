@@ -3,6 +3,11 @@
 
 import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import {
+  countToolCallCandidates,
+  physicalShareBytes,
+  readSpaceStats,
+} from "./runtime-events-retention-space.mjs";
 
 function fileSize(filePath) {
   try {
@@ -77,9 +82,33 @@ function inventoryErrorReason(error) {
   return "inventory-unavailable";
 }
 
+/**
+ * Physical sizing (GH#40498): payload_bytes ignores row overhead and indexes, so
+ * prefer a dbstat row-share estimate and fall back to payload bytes when absent.
+ */
+function physicalSpace(dbPath, cutoffAt, aggregates, sqlEscape, sqliteRows) {
+  const result = { candidateBytes: null, freelistBytes: 0, toolCallBytes: 0 };
+  try {
+    const timeoutMs = inventoryTimeoutMs();
+    const stats = readSpaceStats(dbPath, sqliteRows, { timeoutMs });
+    result.freelistBytes = stats.freelistBytes;
+    result.candidateBytes = physicalShareBytes(
+      stats,
+      "runtime_events",
+      Number(aggregates.candidate_rows || 0),
+      Number(aggregates.total_rows || 0),
+    );
+    const toolCalls = countToolCallCandidates(dbPath, cutoffAt, sqlEscape, { timeoutMs });
+    result.toolCallBytes = physicalShareBytes(stats, "tool_calls", toolCalls.candidate, toolCalls.total) || 0;
+  } catch {
+    // Sizing stays conservative: payload-byte candidates, no reclaimable estimate.
+  }
+  return result;
+}
+
 function runtimeDbInventory(dbPath, cutoffAt, archiveDir, archiveStorage, dependencies) {
   const { sqlEscape, sqliteRows, verifyArchive } = dependencies;
-  const empty = { candidateBytes: 0, error: null, protectedActiveBytes: 0, verifiedArchiveBytes: 0 };
+  const empty = { candidateBytes: 0, error: null, freelistBytes: 0, toolCallBytes: 0, protectedActiveBytes: 0, verifiedArchiveBytes: 0 };
   if (!existsSync(dbPath)) return empty;
   try {
     const tables = sqliteRows(dbPath, `
@@ -92,9 +121,13 @@ function runtimeDbInventory(dbPath, cutoffAt, archiveDir, archiveStorage, depend
         COALESCE(SUM(CASE WHEN occurred_at < ${sqlEscape(cutoffAt)} AND state_version IS NULL
           THEN payload_bytes ELSE 0 END), 0) AS candidate_bytes,
         COALESCE(SUM(CASE WHEN state_version IS NOT NULL THEN payload_bytes ELSE 0 END), 0)
-          AS protected_active_bytes
+          AS protected_active_bytes,
+        COALESCE(SUM(CASE WHEN occurred_at < ${sqlEscape(cutoffAt)} AND state_version IS NULL
+          THEN 1 ELSE 0 END), 0) AS candidate_rows,
+        COUNT(*) AS total_rows
       FROM runtime_events;
     `, { readonly: true, timeoutMs: inventoryTimeoutMs() })[0] || {};
+    const space = physicalSpace(dbPath, cutoffAt, aggregates, sqlEscape, sqliteRows);
     const hasArchiveTable = tables.some((row) => row.name === "runtime_event_archives");
     const manifests = hasArchiveTable
       ? sqliteRows(
@@ -110,8 +143,10 @@ function runtimeDbInventory(dbPath, cutoffAt, archiveDir, archiveStorage, depend
       verifyArchive,
     );
     return {
-      candidateBytes: Number(aggregates.candidate_bytes || 0),
+      candidateBytes: space.candidateBytes ?? Number(aggregates.candidate_bytes || 0),
       error: archiveInventory.error,
+      freelistBytes: space.freelistBytes,
+      toolCallBytes: space.toolCallBytes,
       protectedActiveBytes: Number(aggregates.protected_active_bytes || 0),
       verifiedArchiveBytes: archiveInventory.verifiedArchiveBytes,
     };
@@ -152,11 +187,15 @@ export function buildRuntimeEventRetentionInventory(options, dependencies) {
     active_bytes: activeBytes,
     archive_bytes: archiveStorage.total,
     candidate_bytes: dbInventory.candidateBytes,
+    tool_calls_candidate_bytes: dbInventory.toolCallBytes,
     error,
     next_action: "observability-helper.sh retention --dry-run",
     policy: `${options.activeDays || activeDaysDefault}-day active window; verified archives; state recovery evidence pinned active`,
     protected_bytes: protectedBytes,
-    reclaimable_bytes: 0,
+    reclaimable_bytes: Math.min(
+      totalBytes,
+      dbInventory.freelistBytes + dbInventory.candidateBytes + dbInventory.toolCallBytes,
+    ),
     sizing_confidence: error ? "unavailable" : "estimated",
     total_bytes: totalBytes,
     unknown_bytes: Math.max(0, totalBytes - protectedBytes),
