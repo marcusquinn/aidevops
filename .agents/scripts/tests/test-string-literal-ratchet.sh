@@ -408,6 +408,64 @@ echo "path\\"
 	return 0
 }
 
+test_marker_identity_and_source_length() {
+	source_literal_helpers
+
+	local input count shown expected
+	# None of these distinct source literals occurs three times.
+	input='echo "alpha \"beta\""
+echo "alpha @Q@beta@Q@"
+echo "alpha @Q@beta@Q@"
+echo "path\\suffix"
+echo "path@B@suffix"
+echo "path@B@suffix"
+echo "alpha @A@Q@beta@A@Q@"
+echo "alpha @A@Q@beta@A@Q@"'
+	count=$(printf '%s\n' "$input" | _count_repeated_literals)
+	shown=$(printf '%s\n' "$input" | _show_repeated_literals all)
+	if [ "$count" -eq 0 ] && [ -z "$shown" ]; then
+		print_result "source marker text stays distinct from generated markers" 0
+	else
+		print_result "source marker text stays distinct from generated markers" 1 \
+			"expected zero and empty display, got count=$count display=$shown"
+	fi
+
+	input='echo "\\a"
+echo "\\a"
+echo "\\a"
+echo "\"a"
+echo "\"a"
+echo "\"a"'
+	count=$(printf '%s\n' "$input" | _count_repeated_literals)
+	shown=$(printf '%s\n' "$input" | _show_repeated_literals all)
+	if [ "$count" -eq 0 ] && [ -z "$shown" ]; then
+		print_result "three-source-character bodies remain below threshold" 0
+	else
+		print_result "three-source-character bodies remain below threshold" 1 \
+			"expected zero and empty display, got count=$count display=$shown"
+	fi
+
+	input='echo "\\ab"
+echo "\\ab"
+echo "\\ab"
+echo "\"ab"
+echo "\"ab"
+echo "\"ab"
+echo "@Q@@B@@A@"
+echo "@Q@@B@@A@"
+echo "@Q@@B@@A@"'
+	expected=$(printf '%s\n' '  3x: "\\ab"' '  3x: "\"ab"' '  3x: "@Q@@B@@A@"' | sort)
+	count=$(printf '%s\n' "$input" | _count_repeated_literals)
+	shown=$(printf '%s\n' "$input" | _show_repeated_literals all | sort)
+	if [ "$count" -eq 3 ] && [ "$shown" = "$expected" ]; then
+		print_result "four-character bodies detected and source identities displayed" 0
+	else
+		print_result "four-character bodies detected and source identities displayed" 1 \
+			"expected count=3 display=[$expected], got count=$count display=[$shown]"
+	fi
+	return 0
+}
+
 main() {
 	if [ ! -f "$HOOK_SCRIPT" ]; then
 		printf '%bERROR%b pre-commit-hook.sh not found at %s\n' \
@@ -424,6 +482,7 @@ main() {
 	test_show_matches_count_no_phantom
 	test_posix_grep_comment_filter
 	test_negative_escaped_quote_spans
+	test_marker_identity_and_source_length
 	test_local_linter_preexisting_debt_nonblocking
 
 	echo ""
