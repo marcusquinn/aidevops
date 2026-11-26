@@ -94,9 +94,59 @@ opencode_archive_migrate() {
 		done
 		return 0
 	fi
+	_opencode_archive_migrate_locked "$legacy" "$months" "$tables"
+	return $?
+}
+
+# _opencode_archive_migrate_missing_projects <legacy> <months>
+# Prints source project ids absent from every segment (identity, not counts).
+_opencode_archive_migrate_missing_projects() {
+	local legacy="$1"
+	local months="$2"
+	local month seg have="" ids=""
+	for month in $months; do
+		seg=$(opencode_archive_segment_path "$legacy" "$month")
+		ids=$(sqlite3 -readonly "$seg" "SELECT id FROM project;") || return 1
+		have="${have}${ids}"$'\n'
+	done
+	comm -23 <(sqlite3 -readonly "$legacy" "SELECT id FROM project;" | LC_ALL=C sort -u) <(printf '%s' "$have" | LC_ALL=C sort -u)
+	return 0
+}
+
+# _opencode_archive_migrate_locked <legacy> <months> <tables>
+# Subshell holding the manifest lock (same lock as archive writes) across copy,
+# verification and source move. Removes only this attempt's segments on
+# failure so a retry is not blocked by partial outputs.
+_opencode_archive_migrate_locked() (
+	local legacy="$1"
+	local months="$2"
+	local tables="$3"
+	local seg_n=0 month seg subq table filter src_n dst_n check missing
+	local trash="" created="" lock="" attempt=0 rc=1 f
+	lock="$(opencode_archive_manifest_path "$legacy").lock"
+	until mkdir "$lock" 2>/dev/null; do
+		attempt=$((attempt + 1))
+		if ((attempt >= 300)); then
+			printf 'migrate: manifest lock busy; nothing changed\n' >&2
+			return 1
+		fi
+		sleep 0.1
+	done
+	_opencode_archive_migrate_release() {
+		if ((rc != 0)); then
+			for f in $created; do
+				rm -f "$f" "${f}-wal" "${f}-shm"
+			done
+		fi
+		rmdir "$lock" 2>/dev/null
+		return 0
+	}
+	trap _opencode_archive_migrate_release EXIT
+	trap 'exit 1' HUP INT TERM
 	for month in $months; do
 		seg=$(opencode_archive_segment_path "$legacy" "$month")
 		subq="SELECT id FROM src.session WHERE strftime('%Y-%m', COALESCE(time_updated, time_created)/1000, 'unixepoch') = '${month}'"
+		created="${created} ${seg}"
 		sqlite3 -readonly "$legacy" ".schema" | sqlite3 "$seg" || return 1
 		for table in $tables; do
 			filter=$(_opencode_archive_migrate_filter "$table" "$legacy" "$subq") || continue
@@ -119,8 +169,9 @@ opencode_archive_migrate() {
 			dst_n=$((dst_n + seg_n))
 		done
 		if [[ "$table" == project ]]; then
-			((dst_n >= src_n)) || {
-				printf 'migrate: project rows missing (%s < %s)\n' "$dst_n" "$src_n" >&2
+			missing=$(_opencode_archive_migrate_missing_projects "$legacy" "$months") || return 1
+			[[ -z "$missing" ]] || {
+				printf 'migrate: project rows missing from segments; original kept\n' >&2
 				return 1
 			}
 		elif ((dst_n != src_n)); then
@@ -133,6 +184,7 @@ opencode_archive_migrate() {
 	mv "$legacy" "$trash/" || return 1
 	[[ -f "${legacy}-wal" ]] && mv "${legacy}-wal" "$trash/"
 	[[ -f "${legacy}-shm" ]] && mv "${legacy}-shm" "$trash/"
+	rc=0
 	printf 'migrated into %s segment(s); original moved to %s\n' "$(grep -c . <<<"$months")" "$trash"
 	return 0
-}
+)
