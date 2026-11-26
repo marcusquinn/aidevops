@@ -295,7 +295,22 @@ _storage_opencode_residual_measurement() {
 	while IFS= read -r archive_path; do
 		archive_args+=("$archive_path")
 	done < <(_storage_archive_paths "$archive_db")
-	for component_path in "$@" "${archive_args[@]}"; do
+	# Build the subtraction set first: skip archive paths nested inside an
+	# included component (already counted there), regardless of argument order.
+	local subtract_paths=("$@")
+	local included=""
+	local nested=0
+	for archive_path in "${archive_args[@]}"; do
+		nested=0
+		for included in "$@"; do
+			if [[ "$archive_path" == "$included" || "$archive_path" == "$included/"* ]]; then
+				nested=1
+				break
+			fi
+		done
+		[[ "$nested" -eq 1 ]] || subtract_paths+=("$archive_path")
+	done
+	for component_path in "${subtract_paths[@]}"; do
 		if [[ "$component_path" != "$root_path" && "$component_path" != "$root_path/"* ]]; then
 			continue
 		fi
