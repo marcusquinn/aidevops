@@ -44,6 +44,9 @@ def component_attrs(raw_attrs: str) -> str:
         value = raw_value.strip().strip('"').strip("'")
         if key in {"accent", "priority", "severity", "status"}:
             attrs.append(f' data-{html.escape(key)}="{html.escape(value)}"')
+        elif key == "swatch" and re.fullmatch(r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})", value):
+            # Literal token colour for brand swatches; hex-only keeps inline style injection-safe.
+            attrs.append(f' data-swatch="{value}" style="--swatch-color: {value}"')
     return "".join(attrs)
 
 

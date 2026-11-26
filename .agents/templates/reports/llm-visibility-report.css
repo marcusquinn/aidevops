@@ -1659,6 +1659,8 @@ blockquote {
 .swatch-card[data-accent="paper"]::before { background: var(--report-paper); }
 .swatch-card[data-accent="surface"]::before { background: var(--report-surface); }
 .swatch-card[data-accent="raised"]::before { background: var(--report-paper-raised); }
+/* Literal DESIGN.md token colour wins over the report-theme accent. */
+.swatch-card[data-swatch]::before { background: var(--swatch-color); }
 
 .type-specimen::before {
   min-height: 0;
