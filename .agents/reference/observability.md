@@ -329,9 +329,7 @@ Use it for repeatable noisy flows such as diagnostics, CI logs, worker output, a
 Do not use it for file reads, JSON assertions, security scans, exact diffs, or credential-sensitive commands where verbatim output must stay directly visible or be handled by a dedicated redaction path.
 The helper also bypasses common exact-output commands and redacts simple secret patterns before storage.
 
-Maintenance: `output-sandbox-helper.sh cleanup --max-age-days 14` removes old
-raw files, deletes matching SQLite rows, and runs `VACUUM` to keep the local
-store bounded.
+Maintenance: `output-sandbox-helper.sh cleanup --max-age-days 14` removes old raw files, deletes matching SQLite rows, and runs `VACUUM` to keep the local store bounded.
 
 ### 5. Session output-efficiency evidence
 
@@ -339,8 +337,7 @@ store bounded.
 It reports only aggregate, model-visible tool-output evidence: unchanged snapshots, duplicate results, repeated lines/blocks, successful oversized results, raw fallbacks, and exact-output bypasses.
 Receipt-declared background evidence bytes are reported separately; background content is not scanned or copied into model context. Inputs, commands, outputs, transcript paths, and raw fragments remain omitted.
 
-The report is a diagnostic lead, not a policy verdict. Correlate fingerprints
-with the conversation timeline before changing a safeguard or exact-output path.
+The report is a diagnostic lead, not a policy verdict. Correlate fingerprints with the conversation timeline before changing a safeguard or exact-output path.
 
 ### 6. Autonomy outcomes (GitHub)
 
