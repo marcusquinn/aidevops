@@ -73,13 +73,32 @@ _maintain_should_vacuum() {
 	return 0
 }
 
-# _maintain_vacuum_capacity <before_bytes>
-# Emits "available_kb required_kb reason". VACUUM may need one database-sized
-# temporary copy plus one database-sized WAL. Requiring 3x the DB size as free
-# space reserves an additional database-sized safety margin.
-_maintain_vacuum_capacity() {
+# _maintain_vacuum_basis_bytes <before_bytes> <freelist_count> <page_count>
+# Echoes the byte count VACUUM rewrites: live pages, (page_count - freelist) *
+# page_size. Free pages are dropped, so they need no temporary copy or WAL
+# space (GH#40439). Falls back to the file size when any pragma is unusable.
+_maintain_vacuum_basis_bytes() {
 	local before_bytes="$1"
-	local db_kb=$(((before_bytes + 1023) / 1024))
+	local freelist_count="$2"
+	local page_count="$3"
+	local page_size=""
+	page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
+	if [[ "$freelist_count" =~ ^[0-9]+$ && "$page_count" =~ ^[0-9]+$ && "$page_size" =~ ^[1-9][0-9]*$ ]] &&
+		[[ "$freelist_count" -le "$page_count" ]]; then
+		printf '%s' "$(((page_count - freelist_count) * page_size))"
+		return 0
+	fi
+	printf '%s' "$before_bytes"
+	return 0
+}
+
+# _maintain_vacuum_capacity <basis_bytes>
+# Emits "available_kb required_kb reason". VACUUM may need one temporary copy
+# of the live data plus a WAL of the same size. Requiring 3x the live data as
+# free space reserves an additional live-data-sized safety margin (GH#30310).
+_maintain_vacuum_capacity() {
+	local basis_bytes="$1"
+	local db_kb=$(((basis_bytes + 1023) / 1024))
 	local required_kb=$((db_kb * VACUUM_FREE_SPACE_MULTIPLIER))
 	local available_kb=0
 	local reason="capacity-unknown"
@@ -134,8 +153,9 @@ _maintain_run_steps() {
 	read -r do_vacuum freelist_count page_count size_mb <<<"$vacuum_decision"
 
 	if [[ "$do_vacuum" == true ]]; then
-		local capacity_result capacity_rc=0 available_kb=0 required_kb=0 capacity_reason=""
-		capacity_result=$(_maintain_vacuum_capacity "$before_bytes") || capacity_rc=$?
+		local capacity_result capacity_rc=0 available_kb=0 required_kb=0 capacity_reason="" basis_bytes
+		basis_bytes=$(_maintain_vacuum_basis_bytes "$before_bytes" "$freelist_count" "$page_count")
+		capacity_result=$(_maintain_vacuum_capacity "$basis_bytes") || capacity_rc=$?
 		read -r available_kb required_kb capacity_reason <<<"$capacity_result"
 		if [[ "$capacity_rc" -ne 0 ]]; then
 			vacuum_deferred=true

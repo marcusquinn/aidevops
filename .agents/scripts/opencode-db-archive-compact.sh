@@ -37,10 +37,17 @@ _archive_archive_checkpoint() {
 	return $?
 }
 
-# Free-space guard, mirroring _maintain_vacuum_capacity (3x DB size).
+# Free-space guard, mirroring _maintain_vacuum_capacity: 3x the live data that
+# VACUUM rewrites, (pages - freelist) * page_size (GH#40439). Falls back to the
+# file size when the page size is unusable.
 _archive_compact_capacity_ok() {
-	local bytes="$1" required_kb=0 lib="${_oda_dir}/disk-capacity-lib.sh"
-	required_kb=$((((bytes + 1023) / 1024) * 3))
+	local bytes="$1" freelist="$2" pages="$3" required_kb=0 lib="${_oda_dir}/disk-capacity-lib.sh"
+	local page_size="" basis="$bytes"
+	page_size=$(sqlite3 -readonly "$ARCHIVE_DB" "PRAGMA page_size;" 2>/dev/null || true)
+	if [[ "$page_size" =~ ^[1-9][0-9]*$ && "$freelist" -le "$pages" ]]; then
+		basis=$(((pages - freelist) * page_size))
+	fi
+	required_kb=$((((basis + 1023) / 1024) * 3))
 	if ! declare -f aidevops_disk_capacity_snapshot >/dev/null 2>&1 && [[ -f "$lib" ]]; then
 		# shellcheck source=disk-capacity-lib.sh
 		source "$lib"
@@ -93,7 +100,7 @@ _archive_compact_archive_db() {
 		return 2
 	}
 	before=$(_file_size_bytes "$ARCHIVE_DB")
-	_archive_compact_capacity_ok "$before" || return 2
+	_archive_compact_capacity_ok "$before" "$freelist" "$pages" || return 2
 	print_info "Archive VACUUM: ${freelist}/${pages} free pages, $(format_bytes "$before"); pre-checkpoint..."
 	_archive_archive_checkpoint || {
 		print_warning "Archive VACUUM deferred — pre-VACUUM checkpoint was busy or unavailable."
