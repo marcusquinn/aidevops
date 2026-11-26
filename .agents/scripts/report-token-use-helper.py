@@ -34,6 +34,7 @@ from report_token_use_render import as_dict, session_kind_summary, write_html, w
 
 
 DEFAULT_OPENCODE_DB = Path.home() / ".local/share/opencode/opencode.db"
+DEFAULT_INTERACTIVE_ROOT = Path.home() / ".aidevops/.agent-workspace/work/opencode-interactive"
 DEFAULT_OBS_DB = Path.home() / ".aidevops/.agent-workspace/observability/llm-requests.db"
 DEFAULT_REPORT_ROOT = Path.home() / ".aidevops/_reports/token-use"
 DEFAULT_OPENCODE_CONFIG = Path.home() / ".config/opencode/opencode.json"
@@ -455,8 +456,41 @@ def _opencode_report_from_group(
     )
 
 
+def _opencode_db_paths() -> list[Path]:
+    """OpenCode DBs to read: env override (single), else global + per-project interactive DBs."""
+    override = os.environ.get("AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB")
+    if override:
+        return [Path(override)]
+    root = Path(os.environ.get("AIDEVOPS_REPORT_TOKEN_USE_INTERACTIVE_ROOT", DEFAULT_INTERACTIVE_ROOT))
+    paths = [DEFAULT_OPENCODE_DB]
+    if root.is_dir():
+        for project in sorted(root.iterdir()):
+            for name in ("opencode.db", "opencode-archive.db"):
+                candidate = project / "opencode" / name
+                if candidate.is_file():
+                    paths.append(candidate)
+    return paths
+
+
 def _opencode_reports(args: argparse.Namespace) -> list[SessionReport]:
-    db_path = Path(os.environ.get("AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB", DEFAULT_OPENCODE_DB))
+    paths = _opencode_db_paths()
+    seen: set[str] = set()
+    reports: list[SessionReport] = []
+    for db_path in paths:
+        for report in _opencode_reports_from_db(args, db_path):
+            if report.session_id in seen:
+                continue
+            seen.add(report.session_id)
+            reports.append(report)
+            if args.session:
+                print(f"Session {report.session_id} found in {db_path}", file=sys.stderr)
+    reports.sort(key=lambda row: row.finished_at, reverse=True)
+    if args.session and not reports and args.runtime == "opencode":
+        print(f"session not found in {len(paths)} databases", file=sys.stderr)
+    return reports[: args.limit]
+
+
+def _opencode_reports_from_db(args: argparse.Namespace, db_path: Path) -> list[SessionReport]:
     obs_db = Path(os.environ.get("AIDEVOPS_REPORT_TOKEN_USE_OBS_DB", DEFAULT_OBS_DB))
     conn = _connect(db_path)
     if conn is None:
@@ -480,8 +514,9 @@ def _opencode_reports(args: argparse.Namespace) -> list[SessionReport]:
                 continue
             root = by_id.get(root_id, group[0])
             reports.append(_opencode_report_from_group(context, root_id, root, group))
-        reports.sort(key=lambda row: row.finished_at, reverse=True)
-        return reports[: args.limit]
+        return reports
+    except sqlite3.Error:
+        return []
     finally:
         conn.close()
 
@@ -586,7 +621,12 @@ def _collect_reports(args: argparse.Namespace) -> list[SessionReport]:
     if args.runtime == "claude":
         return _claude_reports(args)
     reports = _opencode_reports(args)
-    return reports if reports else _claude_reports(args)
+    if reports:
+        return reports
+    claude = _claude_reports(args)
+    if args.session and not claude:
+        print(f"session not found in {len(_opencode_db_paths())} OpenCode databases or Claude metrics", file=sys.stderr)
+    return claude
 
 
 def _daily_usage(reports: list[SessionReport]) -> list[DailyUsage]:
