@@ -349,6 +349,7 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/session-bus-plugin.mjs"
 		"plugins/opencode-aidevops/session-bus-compaction.mjs"
 		"plugins/opencode-aidevops/session-bus-tool.mjs"
+		"plugins/opencode-aidevops/session-bus-delivery-notes.mjs"
 		"plugins/opencode-aidevops/session-bus-replies.mjs"
 		"plugins/opencode-aidevops/session-bus-sender.mjs"
 		"plugins/opencode-aidevops/session-bus-cli.mjs"
