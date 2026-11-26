@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.285] - 2026-11-26
+
+### Added
+
+- share hardened ManageSieve client and keep-and-copy commands (#40433)
+
+### Changed
+
+- Tests: make deadline cases load-tolerant (GH#40452) (#40454)
+- Maintenance: sync GitHub issue refs to TODO.md (#40446)
+
+### Fixed
+
+- OAuth MCP login reaches aidevops-launched OpenCode sessions (#40464)
+- report-token-use reads per-project interactive OpenCode DBs (GH#40457) (#40458)
+- catch-up budget after repeated deferrals (GH#40418) (#40436)
+- size OpenCode DB VACUUM free-space gate from live pages (#40453)
+- permission-broker proc read test passes on macOS (t19403) (#40456)
+- scan recent pulse logs in one pass and treat Darwin killpg EPERM as an empty group
+- stop rearm receipt replay re-releasing a newer status:blocked (GH#40445)
+- let the elapsed cap wait for an in-flight tool's declared timeout (#40442)
+- checkpoint triage can classify live lock contention as resource_contended (#40438)
+
 ## [3.39.284] - 2026-11-25
 
 ### Added
