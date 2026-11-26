@@ -2538,6 +2538,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t19381 fix(worktree-deps): fail fast on pnpm hoisted node-linker instead of walking every workspace member #bug #performance #interactive tier:standard assignee:marcusquinn ref:GH#40383 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19381-brief.md] pr:#40387 completed:2026-11-25
 - [x] t19391 fix(pulse-merge): held runtime-pending CI gate lets absent downstream required contexts mask a terminal failure #bug #pulse #interactive tier:standard assignee:marcusquinn ref:GH#40403 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19391-brief.md] pr:#40404 completed:2026-11-25
 
+- [ ] t19408 CodeFactor failure guidance: read check-run annotations, not the client-rendered details page #auto-dispatch #bug ref:GH#40495
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

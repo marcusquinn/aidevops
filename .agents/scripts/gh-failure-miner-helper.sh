@@ -1052,12 +1052,14 @@ render_issue_body_markdown() {
 				 or (($signature // "") | test("Pulse[[:space:]]+unbound-var[[:space:]]+violations[[:space:]]+found|multi-var[[:space:]]+local[[:space:]]+without[[:space:]]+init|pulse-unbound-var"; "i")));
 		def systemic_fix_guidance($check_name; $signature):
 			if ((($check_name // "") | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
-				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
-				"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
+				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; the file, line, and rule are GitHub check-run annotations (listed as `reported findings` in Evidence when the miner fetched them).\n" +
+				"- Read the annotations with `gh api \"repos/<owner>/<repo>/commits/<head-sha>/check-runs?check_name=CodeFactor\" --jq \".check_runs[].id\"`, then `gh api repos/<owner>/<repo>/check-runs/<check-run-id>/annotations --jq \"map({path, start_line, title, message})\"`. The CodeFactor details URL renders client-side, so fetching it usually returns no findings; use it only as a browser fallback.\n" +
+				"- If neither the annotations nor the details URL are accessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
 				"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
+				"- A ShellCheck code (`SC####`) that local ShellCheck does not report can come from a newer ShellCheck release; fix the cited pattern at the cited line rather than guessing at nearby code.\n" +
 				"\n## Worker Guidance\n" +
-				"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
-				"2. If CodeFactor details are unavailable, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
+				"1. Read the CodeFactor check-run annotations first (`reported findings` in Evidence, or the annotations API above); do not infer the reported file/rule from the GitHub run alone.\n" +
+				"2. If CodeFactor details are unavailable from both the annotations API and the details URL, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
 				"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
 			elif qlty_empty_sarif_signature($check_name; $signature) then
 				"- Qlty Smell Threshold empty-SARIF failures are shared tooling failures, not PR-specific smell regressions.\n" +
@@ -1264,13 +1266,15 @@ build_systemic_issue_body() {
 				 or (($signature // "") | test("Pulse[[:space:]]+unbound-var[[:space:]]+violations[[:space:]]+found|multi-var[[:space:]]+local[[:space:]]+without[[:space:]]+init|pulse-unbound-var"; "i")));
 		def systemic_fix_guidance($check_name; $signature):
 			if ((($check_name // "") | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
-				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
-				"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
+				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; the file, line, and rule are GitHub check-run annotations (listed as `reported findings` in Evidence when the miner fetched them).\n" +
+				"- Read the annotations with `gh api \"repos/<owner>/<repo>/commits/<head-sha>/check-runs?check_name=CodeFactor\" --jq \".check_runs[].id\"`, then `gh api repos/<owner>/<repo>/check-runs/<check-run-id>/annotations --jq \"map({path, start_line, title, message})\"`. The CodeFactor details URL renders client-side, so fetching it usually returns no findings; use it only as a browser fallback.\n" +
+				"- If neither the annotations nor the details URL are accessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
 				"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
+				"- A ShellCheck code (`SC####`) that local ShellCheck does not report can come from a newer ShellCheck release; fix the cited pattern at the cited line rather than guessing at nearby code.\n" +
 				"\n" +
 				"## Worker Guidance\n" +
-				"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
-				"2. If CodeFactor details are unavailable, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
+				"1. Read the CodeFactor check-run annotations first (`reported findings` in Evidence, or the annotations API above); do not infer the reported file/rule from the GitHub run alone.\n" +
+				"2. If CodeFactor details are unavailable from both the annotations API and the details URL, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
 				"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
 			elif qlty_empty_sarif_signature($check_name; $signature) then
 				"- Qlty Smell Threshold empty-SARIF failures are shared tooling failures, not PR-specific smell regressions.\n" +
