@@ -114,7 +114,14 @@ function applyMaintenance(config, archive) {
   }
   const summary = maintenanceSummary(totals, config, stopReason, lastResult);
   const space = config.reclaim ? config.reclaim(startedAt + config.maxDurationSeconds * 1000) : {};
-  return Object.freeze({ ...summary, ...space });
+  const mutated = summary.applied || Number(space.tool_calls_deleted || 0) > 0 ||
+    space.incremental_vacuum_enabled === true || Number(space.reclaimed_bytes || 0) > 0;
+  return Object.freeze({
+    ...summary,
+    ...space,
+    applied: mutated,
+    status: mutated && !summary.applied ? "maintained" : summary.status,
+  });
 }
 
 export function runRuntimeEventMaintenance(options, dependencies) {

@@ -81,8 +81,9 @@ function deadlineLeft(clock, deadline) {
  */
 export function pruneToolCalls(dbPath, cutoffAt, { clock, deadline, sqlEscape }) {
   let deleted = 0;
-  const probe = { timeoutMs: Math.min(30000, Math.max(1, deadlineLeft(clock, deadline))) };
-  if (!tableExists(dbPath, "tool_calls", probe)) return { deleted, complete: true };
+  const probeMs = Math.min(30000, deadlineLeft(clock, deadline));
+  if (probeMs <= 0) return { deleted, complete: false };
+  if (!tableExists(dbPath, "tool_calls", { timeoutMs: probeMs })) return { deleted, complete: true };
   for (;;) {
     const left = deadlineLeft(clock, deadline);
     if (left <= 0) return { deleted, complete: false };
@@ -98,16 +99,21 @@ export function pruneToolCalls(dbPath, cutoffAt, { clock, deadline, sqlEscape })
 }
 
 /** One-off conversion; needs free disk about the file size and an idle writer. */
-export function enableIncrementalVacuum(dbPath, { timeoutMs = 3600000 } = {}) {
-  if (numberPragma(dbPath, "auto_vacuum") === AUTO_VACUUM_INCREMENTAL) return false;
-  sqlite(dbPath, "PRAGMA auto_vacuum = INCREMENTAL; VACUUM;", { timeoutMs });
+export function enableIncrementalVacuum(dbPath, { clock, deadline }) {
+  const left = deadlineLeft(clock, deadline);
+  if (left <= 0) return false;
+  if (numberPragma(dbPath, "auto_vacuum", { timeoutMs: Math.min(30000, left) }) === AUTO_VACUUM_INCREMENTAL) return false;
+  const vacuumMs = deadlineLeft(clock, deadline);
+  if (vacuumMs <= 0) return false;
+  // A timeout kills sqlite3 and rolls the VACUUM back; rerun with a longer budget.
+  sqlite(dbPath, "PRAGMA auto_vacuum = INCREMENTAL; VACUUM;", { timeoutMs: vacuumMs });
   return true;
 }
 
 /** After verified deletes: prune tool_calls, then return free pages (GH#40498). */
 export function reclaimAfterArchive(dbPath, cutoffAt, { clock, deadline, enableIncrementalVacuum: convert }, sqlEscape) {
-  if (deadline - clock() <= 0) return { space_reclaim_skipped: "max_duration" };
-  const converted = convert ? enableIncrementalVacuum(dbPath) : false;
+  if (deadlineLeft(clock, deadline) <= 0) return { space_reclaim_skipped: "max_duration" };
+  const converted = convert ? enableIncrementalVacuum(dbPath, { clock, deadline }) : false;
   const toolCalls = pruneToolCalls(dbPath, cutoffAt, { clock, deadline, sqlEscape });
   const pages = reclaimFreePages(dbPath, { clock, deadline });
   return {
@@ -120,12 +126,21 @@ export function reclaimAfterArchive(dbPath, cutoffAt, { clock, deadline, enableI
   };
 }
 
+/** Run one pragma read within the remaining budget; null when none remains. */
+function budgetedPragma(dbPath, pragma, { clock, deadline }) {
+  const left = Math.min(30000, deadlineLeft(clock, deadline));
+  return left > 0 ? numberPragma(dbPath, pragma, { timeoutMs: left }) : null;
+}
+
 /** Return freelist pages to the filesystem in bounded chunks. */
-export function reclaimFreePages(dbPath, { clock, deadline }) {
-  const probe = { timeoutMs: Math.min(30000, Math.max(1, deadlineLeft(clock, deadline))) };
-  const autoVacuum = numberPragma(dbPath, "auto_vacuum", probe);
-  const pageSize = numberPragma(dbPath, "page_size", probe);
-  const before = numberPragma(dbPath, "freelist_count", probe);
+export function reclaimFreePages(dbPath, budget) {
+  const { clock, deadline } = budget;
+  const autoVacuum = budgetedPragma(dbPath, "auto_vacuum", budget);
+  const pageSize = budgetedPragma(dbPath, "page_size", budget);
+  const before = budgetedPragma(dbPath, "freelist_count", budget);
+  if (autoVacuum === null || pageSize === null || before === null) {
+    return { auto_vacuum: autoVacuum, reclaimed_bytes: 0, vacuum_required: false };
+  }
   if (autoVacuum !== AUTO_VACUUM_INCREMENTAL) {
     return { auto_vacuum: autoVacuum, reclaimed_bytes: 0, vacuum_required: before > 0 || autoVacuum === 0 };
   }
@@ -134,8 +149,9 @@ export function reclaimFreePages(dbPath, { clock, deadline }) {
     const left = deadlineLeft(clock, deadline);
     if (left <= 0) break;
     sqlite(dbPath, `PRAGMA incremental_vacuum(${INCREMENTAL_VACUUM_CHUNK_PAGES});`, { timeoutMs: Math.min(30000, left) });
-    remaining = numberPragma(dbPath, "freelist_count", { timeoutMs: 30000 });
+    remaining = budgetedPragma(dbPath, "freelist_count", budget) ?? remaining;
   }
-  sqlite(dbPath, "PRAGMA wal_checkpoint(TRUNCATE);", { timeoutMs: 30000 });
+  const checkpointMs = Math.min(30000, deadlineLeft(clock, deadline));
+  if (checkpointMs > 0) sqlite(dbPath, "PRAGMA wal_checkpoint(TRUNCATE);", { timeoutMs: checkpointMs });
   return { auto_vacuum: autoVacuum, reclaimed_bytes: (before - remaining) * pageSize, vacuum_required: false };
 }
