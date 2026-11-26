@@ -145,6 +145,7 @@ _tbr_run_stage() {
 	local stage="$1" action="$2"
 	shift 2
 	local remaining=$((TBR_DEADLINE - SECONDS)) rc=0
+	TBR_LAST_STAGE_RC=0
 	# Seed, holds and unclassified stages run after the queue pass, in its reserve.
 	if [[ "$stage" != seed && "$stage" != unclassified && "$stage" != holds && -n "${TBR_QUEUE_DEADLINE:-}" ]]; then
 		remaining=$((TBR_QUEUE_DEADLINE - SECONDS))
@@ -186,6 +187,7 @@ _tbr_run_stage() {
 		export BLOCKER_RECOVERY_HOLD_MAX="$TBR_HOLD_MAX"
 		timeout_sec "$remaining" bash "${_TBR_SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" _stage "$action" "$@"
 	) || rc=$?
+	TBR_LAST_STAGE_RC="$rc"
 	case "$rc" in
 	0) return 0 ;;
 	1)
@@ -1022,6 +1024,11 @@ _tbr_check_entry() {
 	_tbr_check_intake_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$reason" "$opened_at" "$intake" || intake_rc=$?
 	[[ "$intake_rc" -eq 3 ]] || return "$intake_rc"
 	updated_at=$(printf '%s' "$issue_json" | jq -r '.updated_at // ""')
+	# GH#40471: leave an in-flight marker so the queue loop can tell, after a
+	# timeout kills this stage, which revision timed out. Evidence of a slow
+	# entry only; it never releases or drops anything.
+	mkdir -p "${TBR_ROOT}/entry_inflight" 2>/dev/null &&
+		printf '%s\n' "$updated_at" >"${TBR_ROOT}/entry_inflight/${file##*/}" 2>/dev/null || true
 	_tbr_skip_decided_unchanged "$key" "$updated_at" "$mode" "$repo" "$issue" && return 1
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
