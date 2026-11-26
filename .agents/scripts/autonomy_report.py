@@ -168,7 +168,9 @@ def count_queries(scope_rows, windows, repos, now):
                              if row == slug.split("/")[0])
         queries[("unregistered", row)] = scope + exclusions + " " + QUEUE["available_idle_7d"].format(**dates)
     for slug in repos:
-        queries[("pulse", slug)] = "repo:" + slug + " " + QUEUE["available_idle_7d"].format(**dates)
+        # Owner rows exclude archived repos; the framework row (a plain repo: scope) does not.
+        archived = "" if slug in scope_rows else " archived:false"
+        queries[("pulse", slug)] = "repo:" + slug + archived + " " + QUEUE["available_idle_7d"].format(**dates)
     return queries
 
 
