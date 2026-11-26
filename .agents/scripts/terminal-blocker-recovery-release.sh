@@ -434,6 +434,28 @@ _tbr_rearm_reason_line() {
 	return 0
 }
 
+# GH#40445: has status:blocked been labeled after the keyed receipt comment?
+# Returns: 0 yes (a newer hold), 1 no, 2 unreadable history (fail closed).
+_tbr_reblocked_after_receipt() {
+	local repo="$1" issue="$2" comments="$3" receipt="$4"
+	local receipt_at="" events="" verdict=""
+	receipt_at=$(printf '%s' "$comments" | jq -r --arg marker "$receipt" '
+		[.[] | select((.body // "") | contains($marker)) | .created_at // empty] | min // ""
+	' 2>/dev/null) || return 2
+	[[ -n "$receipt_at" ]] || return 2
+	events=$(gh api "repos/${repo}/issues/${issue}/events?per_page=100" --paginate --slurp 2>/dev/null) || return 2
+	local page_type='array' added_event='labeled'
+	verdict=$(printf '%s' "$events" | jq -r --arg at "$receipt_at" --arg pt "$page_type" --arg ev "$added_event" '
+		if (type == $pt and all(.[]; type == $pt)) | not then "invalid"
+		elif any(.[][]; .event == $ev and .label.name == "status:blocked" and (.created_at // "") > $at) then "yes"
+		else "no" end' 2>/dev/null) || return 2
+	case "$verdict" in
+	yes) return 0 ;;
+	no) return 1 ;;
+	esac
+	return 2
+}
+
 # Shared idempotent projection for structured and legacy re-arm decisions.
 # Optional $8: extra receipt lines (GH#37970 re-arm reason, GH#36342 window
 # brief record).
@@ -455,6 +477,17 @@ _tbr_project_rearm() {
 			[.labels[]?.name] | other_holds($blocked) | length == 0' >/dev/null || return 2
 		printf '%s' "$live_issue" | jq -e --arg blocked status:blocked "${interrupted_jq}"'
 			[.labels[]?.name] | (index($blocked) != null) or interrupted_release' >/dev/null || return 0
+		# GH#40445: the receipt only repairs a projection it interrupted. A
+		# status:blocked applied after the receipt is a newer hold (dated
+		# external trigger, dependency normalizer); replaying the old receipt
+		# would release it again on every pass, flapping the labels.
+		local reblocked_rc=0
+		_tbr_reblocked_after_receipt "$repo" "$issue" "$comments" "$receipt" || reblocked_rc=$?
+		[[ "$reblocked_rc" -ne 0 ]] || {
+			printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=reblocked_after_receipt\n' "$issue" "$observed_rev" "$current_rev" >&2
+			return 0
+		}
+		[[ "$reblocked_rc" -eq 1 ]] || return 2
 		# Do not clear a newer owner's block with the old receipt. Changed brief
 		# or coordination evidence restarts the decision on the next queue pass.
 		printf '%s' "$live_issue" | jq -e --argjson old "$issue_json" '
