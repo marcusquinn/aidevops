@@ -1009,7 +1009,10 @@ _posture_env_line_secret_reason() {
 	local line="$1"
 	local pem_re='-----BEGIN [A-Z ]*PRIVATE KEY-----'
 	# Shared scrub prefixes plus detection-only live-key prefixes (AWS, Stripe, Google).
-	local token_re="(^|[^A-Za-z0-9_-])(${AIDEVOPS_CREDENTIAL_PREFIX_ERE}|AKIA|ASIA|sk_live_|rk_live_)([A-Za-z0-9_-]{10,})"
+	# AIza stays explicit although the shared default also lists it: a caller
+	# that presets a narrower AIDEVOPS_CREDENTIAL_PREFIX_ERE must not lose
+	# Google API key detection (GH#40482 review). Not a redundant alternative.
+	local token_re="(^|[^A-Za-z0-9_-])(${AIDEVOPS_CREDENTIAL_PREFIX_ERE}|AIza|AKIA|ASIA|sk_live_|rk_live_)([A-Za-z0-9_-]{10,})"
 	local url_re='[A-Za-z][A-Za-z0-9+.-]*://[^/:@[:space:]]+:([^/@[:space:]]+)@([^/:?#[:space:]]+)'
 	local assign_re='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_.]*)[[:space:]]*=[[:space:]]*(.*)$'
 
