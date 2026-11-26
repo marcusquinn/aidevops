@@ -40,17 +40,17 @@ fi
 _PROFILE_DATA_LIB_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_PROFILE_DATA_LIB_DIR" != "${BASH_SOURCE[0]}" ]] || _PROFILE_DATA_LIB_DIR="."
 
-# --- Resolve OpenCode archive segments for ATTACH (GH#40419 phase 1) ---
-# Sets _PROFILE_ARCHIVE_ATTACH_SQL (ATTACH statements) and
-# _PROFILE_ARCHIVE_ALIASES (space-separated schema aliases: archive,
-# archive_1, ...). Both are empty when no archive segment exists. SQLite allows
-# 10 attached databases by default, so at most 9 segments (oldest first) attach.
-_PROFILE_ARCHIVE_ATTACH_SQL=""
-_PROFILE_ARCHIVE_ALIASES=""
-_profile_archive_attach_init() {
-	local seg="" alias_name="" escaped="" count=0
-	_PROFILE_ARCHIVE_ATTACH_SQL=""
-	_PROFILE_ARCHIVE_ALIASES=""
+# --- Load OpenCode archive segments into a temp table (GH#40419 phase 1) ---
+# SQLite allows 10 attached databases by default, so segments are attached one
+# at a time: ATTACH, copy the small projected rows into a TEMP table, DETACH.
+# Every segment is read regardless of count, and the final grouping (models,
+# distinct sessions, totals) runs once over the combined rows.
+# Usage: _profile_archive_load_sql <rows|tokens>
+# Prints SQL (empty when no archive segment exists). It creates temp table
+# `archive_rows`; the caller UNIONs it with the active message rows.
+_profile_archive_load_sql() {
+	local kind="$1"
+	local seg="" escaped="" projection="" out=""
 	# Lazy source (fixtures copy only some libs); fall back to the single
 	# legacy archive file when the segments library is not beside this one.
 	if ! declare -F opencode_archive_segments >/dev/null 2>&1; then
@@ -67,15 +67,27 @@ _profile_archive_attach_init() {
 	fi
 	while IFS= read -r seg; do
 		[[ -n "$seg" ]] || continue
-		[[ "$count" -lt 9 ]] || break
-		alias_name="archive"
-		[[ "$count" -eq 0 ]] || alias_name="archive_${count}"
 		escaped="${seg//\'/\'\'}"
-		_PROFILE_ARCHIVE_ATTACH_SQL="${_PROFILE_ARCHIVE_ATTACH_SQL}ATTACH DATABASE '${escaped}' AS ${alias_name};
+		if [[ "$kind" == "tokens" ]]; then
+			[[ -n "$out" ]] || out="CREATE TEMP TABLE archive_rows(input_tokens, output_tokens, cache_read_tokens, cache_write_tokens);
 "
-		_PROFILE_ARCHIVE_ALIASES="${_PROFILE_ARCHIVE_ALIASES:+${_PROFILE_ARCHIVE_ALIASES} }${alias_name}"
-		count=$((count + 1))
+			projection="SELECT json_extract(data, '\$.tokens.input'),
+	json_extract(data, '\$.tokens.output'),
+	json_extract(data, '\$.tokens.cache.read'),
+	json_extract(data, '\$.tokens.cache.write')
+FROM archive_seg.message
+WHERE json_extract(data, '\$.role') = 'assistant'"
+		else
+			[[ -n "$out" ]] || out="CREATE TEMP TABLE archive_rows(session_id, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms);
+"
+			projection=$(_opencode_assistant_rows_sql archive_seg.message)
+		fi
+		out="${out}ATTACH DATABASE '${escaped}' AS archive_seg;
+INSERT INTO archive_rows ${projection};
+DETACH DATABASE archive_seg;
+"
 	done < <(opencode_archive_segments "$OPENCODE_ARCHIVE_DB_FILE")
+	printf '%s' "$out"
 	return 0
 }
 
@@ -412,14 +424,12 @@ _get_model_usage_from_opencode() {
 	local attach_clause=""
 	local assistant_rows_sql=""
 	assistant_rows_sql=$(_opencode_assistant_rows_sql message)
-	local _alias=""
-	_profile_archive_attach_init
-	attach_clause="$_PROFILE_ARCHIVE_ATTACH_SQL"
-	for _alias in $_PROFILE_ARCHIVE_ALIASES; do
+	attach_clause=$(_profile_archive_load_sql rows)
+	if [[ -n "$attach_clause" ]]; then
 		assistant_rows_sql="${assistant_rows_sql}
 UNION ALL
-$(_opencode_assistant_rows_sql "${_alias}.message")"
-	done
+SELECT * FROM temp.archive_rows"
+	fi
 	raw_json=$(_profile_sqlite_read "$OPENCODE_DB_FILE" "
 		${attach_clause}
 		WITH assistant_messages_raw AS (
@@ -729,19 +739,13 @@ _token_totals_from_opencode_db() {
 	fi
 
 	local _totals_attach="" _totals_union=""
-	local _alias=""
-	_profile_archive_attach_init
-	_totals_attach="$_PROFILE_ARCHIVE_ATTACH_SQL"
-	for _alias in $_PROFILE_ARCHIVE_ALIASES; do
-		_totals_union="${_totals_union}
+	_totals_attach=$(_profile_archive_load_sql tokens)
+	if [[ -n "$_totals_attach" ]]; then
+		_totals_union="
 			UNION ALL
-			SELECT json_extract(data, '\$.tokens.input'),
-				json_extract(data, '\$.tokens.output'),
-				json_extract(data, '\$.tokens.cache.read'),
-				json_extract(data, '\$.tokens.cache.write')
-			FROM ${_alias}.message
-			WHERE json_extract(data, '\$.role') = 'assistant'"
-	done
+			SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+			FROM temp.archive_rows"
+	fi
 
 	local oc_stats total_input total_output total_cache_read total_cache_write
 	oc_stats=$(_profile_sqlite_read "$OPENCODE_DB_FILE" "
