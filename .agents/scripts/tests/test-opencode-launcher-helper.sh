@@ -240,31 +240,39 @@ else
     _fail "isolated launcher output unexpected: ${output}"
 fi
 
-# GH#40451: a terminal MCP OAuth login reaches the session store without
-# overwriting the session's own (possibly refreshed) entries.
+# GH#40451: a terminal MCP OAuth login seeds a session store that has none,
+# and never replaces an existing (possibly refreshed) session store.
 mcp_session_dir="${work_dir}/opencode-interactive/mcp-auth-merge/opencode"
 mkdir -p "${mcp_session_dir}"
-printf '{"alpha":{"tokens":"global-a"},"beta":{"tokens":"global-b"}}\n' >"${home_dir}/.local/share/opencode/mcp-auth.json"
-printf '{"beta":{"tokens":"session-b"}}\n' >"${mcp_session_dir}/mcp-auth.json"
-mcp_output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
-    "${HELPER}" --dir "${launch_dir}" --session-id mcp-auth-merge -- --version 2>&1)
-mcp_merged=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
-mcp_mode=$(stat -f '%Lp' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || stat -c '%a' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
-if [[ "${mcp_merged}" == '{"alpha":{"tokens":"global-a"},"beta":{"tokens":"session-b"}}' && "${mcp_mode}" == "600" ]] &&
-    [[ "${mcp_output}" != *"global-a"* && "${mcp_output}" != *"session-b"* ]]; then
-    _pass "launcher merges global mcp-auth.json entries without overwriting session entries (GH#40451)"
-else
-    _fail "mcp-auth.json merge unexpected: merged=${mcp_merged} mode=${mcp_mode}"
-fi
-# A source holding more than one JSON value leaves the session store untouched.
+_run_mcp_seed() {
+    PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
+        "${HELPER}" --dir "${launch_dir}" --session-id mcp-auth-merge -- --version 2>&1 || true
+    return 0
+}
+# A source holding more than one JSON value never creates a store.
 printf '{"alpha":1}\n{"beta":"global"}\n' >"${home_dir}/.local/share/opencode/mcp-auth.json"
-PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
-    "${HELPER}" --dir "${launch_dir}" --session-id mcp-auth-merge -- --version >/dev/null 2>&1 || true
-mcp_after=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
-if [[ "${mcp_after}" == "${mcp_merged}" ]]; then
-    _pass "launcher leaves the session mcp-auth.json untouched when the source is not one object (GH#40451)"
+_run_mcp_seed >/dev/null
+if [[ ! -e "${mcp_session_dir}/mcp-auth.json" ]]; then
+    _pass "launcher does not seed mcp-auth.json from a source that is not one object (GH#40451)"
 else
-    _fail "malformed global mcp-auth.json changed the session store: ${mcp_after}"
+    _fail "malformed global mcp-auth.json created a session store"
+fi
+printf '{"alpha":{"tokens":"global-a"}}\n' >"${home_dir}/.local/share/opencode/mcp-auth.json"
+mcp_output=$(_run_mcp_seed)
+mcp_seeded=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+mcp_mode=$(stat -f '%Lp' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || stat -c '%a' "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+if [[ "${mcp_seeded}" == '{"alpha":{"tokens":"global-a"}}' && "${mcp_mode}" == "600" && "${mcp_output}" != *"global-a"* ]]; then
+    _pass "launcher seeds a missing session mcp-auth.json from the global store (GH#40451)"
+else
+    _fail "mcp-auth.json seed unexpected: seeded=${mcp_seeded} mode=${mcp_mode}"
+fi
+printf '{"beta":{"tokens":"session-b"}}\n' >"${mcp_session_dir}/mcp-auth.json"
+_run_mcp_seed >/dev/null
+mcp_after=$(jq -c -S . "${mcp_session_dir}/mcp-auth.json" 2>/dev/null || true)
+if [[ "${mcp_after}" == '{"beta":{"tokens":"session-b"}}' ]]; then
+    _pass "launcher never replaces an existing session mcp-auth.json (GH#40451)"
+else
+    _fail "existing session mcp-auth.json changed: ${mcp_after}"
 fi
 rm -f "${home_dir}/.local/share/opencode/mcp-auth.json"
 

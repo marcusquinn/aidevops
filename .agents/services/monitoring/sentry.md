@@ -46,7 +46,7 @@ aidevops launches OpenCode with a per-project `XDG_DATA_HOME`, so each session r
 XDG_DATA_HOME="<session data dir>" opencode mcp auth sentry
 ```
 
-A plain `opencode mcp auth sentry` writes the global store (`~/.local/share/opencode/mcp-auth.json`). Newly launched sessions merge its entries into their own store without overwriting entries the session already has (GH#40451); sessions that are already running need the session-store command.
+A plain `opencode mcp auth sentry` writes the global store (`~/.local/share/opencode/mcp-auth.json`). A session store that has no `mcp-auth.json` yet receives a copy of it at launch (GH#40451). An existing session store is never replaced, because OAuth refresh rotates tokens inside it. Existing stores and running sessions need the session-store command.
 
 The registry replaces any legacy local `@sentry/mcp-server` + access-token entry in `opencode.json`. Remove that entry's token from your config.
 
