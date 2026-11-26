@@ -212,18 +212,19 @@ _interactive_start_parse_args() {
 }
 
 _interactive_start_prepare_sources() {
+	local work_dir="$1"
 	local session_id="${AIDEVOPS_OPENCODE_SESSION_ID:-${OPENCODE_SESSION_ID:-}}"
 	if [[ -z "$session_id" || -z "${AIDEVOPS_SOURCE_CONTEXT_SOCKET:-}" || "$_INTERACTIVE_START_BACKGROUND" -ne 0 ]]; then
 		printf 'ERROR: source preflight requires a live interactive OpenCode context; no approval was issued\n' >&2
 		return 1
 	fi
 	local pre_edit_output=""
-	pre_edit_output=$(pre-edit-check.sh --loop-mode --issue "$_INTERACTIVE_START_ISSUE" --task "$_INTERACTIVE_START_TASK" 2>&1) || {
+	pre_edit_output=$(cd "$work_dir" && pre-edit-check.sh --loop-mode --issue "$_INTERACTIVE_START_ISSUE" --task "$_INTERACTIVE_START_TASK" 2>&1) || {
 		printf '%s\n' "$pre_edit_output" >&2
 		return 1
 	}
 	local worktree_path=""
-	worktree_path=$(_interactive_start_resolve_worktree "$pre_edit_output") || return 1
+	worktree_path=$(cd "$work_dir" && _interactive_start_resolve_worktree "$pre_edit_output") || return 1
 	_interactive_start_reclaim_dead_owner "$worktree_path" "$session_id" || return 1
 	local proposal_args=(propose --session "$session_id" --repo "$_INTERACTIVE_START_REPO" --issue "$_INTERACTIVE_START_ISSUE"
 		--reason 'secret-bearing basename' --context-socket "$AIDEVOPS_SOURCE_CONTEXT_SOCKET")
@@ -304,7 +305,7 @@ _interactive_start_dir_matches_repo() {
 	local dir="$1"
 	local repo_slug="$2"
 	local origin=""
-	origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 1
+	origin=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$dir" remote get-url origin 2>/dev/null) || return 1
 	origin=${origin%.git}
 	case "$origin" in
 	"https://github.com/${repo_slug}" | "git@github.com:${repo_slug}" | "ssh://git@github.com/${repo_slug}" | "ssh://git@github.com:22/${repo_slug}") return 0 ;;
@@ -317,7 +318,7 @@ _interactive_start_dir_matches_repo() {
 _interactive_start_resolve_work_dir() {
 	local repo_slug="$1"
 	local top="" target=""
-	top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+	top=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git rev-parse --show-toplevel 2>/dev/null) || top=""
 	if [[ -n "$top" ]] && _interactive_start_dir_matches_repo "$top" "$repo_slug"; then
 		printf '%s' "$PWD"
 		return 0
@@ -359,8 +360,10 @@ main() {
 		return 0
 	fi
 	_interactive_start_probe_session_location "$_INTERACTIVE_START_REPO" || return 1
+	local work_dir=""
+	work_dir=$(_interactive_start_resolve_work_dir "$_INTERACTIVE_START_REPO") || return 1
 	if [[ -n "${_INTERACTIVE_START_SOURCE_PATHS[*]:-}" ]]; then
-		_interactive_start_prepare_sources
+		_interactive_start_prepare_sources "$work_dir"
 		return $?
 	fi
 	local issue="$_INTERACTIVE_START_ISSUE"
@@ -375,8 +378,6 @@ main() {
 	export AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION=1
 	# Retain --auto-dispatch for CLI compatibility; takeover is now unconditional.
 	: "$auto_dispatch"
-	local work_dir=""
-	work_dir=$(_interactive_start_resolve_work_dir "$repo") || return 1
 	local initial_claim_args=(claim "$issue" "$repo" --implementing --defer-comment)
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
 		initial_claim_args+=(--replace-pr "$replacement_pr" --replacement-reason "$replacement_reason")
