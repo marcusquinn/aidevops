@@ -2557,6 +2557,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19421 perf(pulse): make the cross-cycle negative cache hit so repeatedly refused candidates skip the dedup ceremony #auto-dispatch #feat #framework #pulse ref:GH#40538
 
+- [x] t19422 fix(audit-log): stale-lock reclaim acts on a newer holder's lock, wedging or overlapping concurrent writers #auto-dispatch #bug ref:GH#40549 pr:#40557 completed:2026-11-27
+
+- [ ] t19423 fix(tests): explain intermittent double reservation in checkpoint test_decision_policy_races on hosted runners #bug ref:GH#40562
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

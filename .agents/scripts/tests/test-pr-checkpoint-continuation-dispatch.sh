@@ -70,7 +70,11 @@ DECISION_WRITE
 		'api repos/owner/repo/git/ref/'*) ref="refs/${args#*git/ref/}"; test -d "${root}/${ref//\//_}" ;;
 		*) return 1 ;;
 		esac
-		return $?
+		local rc=$?
+		# GH#40529: per-process ref trace for the concurrent-decision diagnostic.
+		# BASHPID is Bash 4+; on 3.2 the fallback records the parent PID.
+		[[ -z "$ref" ]] || printf '%s t=%s root=%s %s rc=%s\n' "${BASHPID:-$$}" "${EPOCHREALTIME:-}" "$root" "${args%% -f sha=*}" "$rc" >>"${DECISION_ROOT}/gh.log"
+		return "$rc"
 	}
 	_pcc_issue_comments() { jq . "${root}/comments.json"; return 0; }
 	_pcc_approval_template() {
@@ -180,9 +184,21 @@ test_decision_policy_races() (
 	first=$!
 	_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" &
 	second=$!
-	wait "$first" || return 1
-	wait "$second" || return 1
-	[[ "$(wc -l <"${root}/inferences")" -eq 1 && "$(wc -l <"${root}/writes")" -eq 2 ]] || return 1
+	local first_rc=0 second_rc=0 inferences=0 writes=0
+	wait "$first" || first_rc=$?
+	wait "$second" || second_rc=$?
+	[[ -f "${root}/inferences" ]] && inferences=$(wc -l <"${root}/inferences")
+	[[ -f "${root}/writes" ]] && writes=$(wc -l <"${root}/writes")
+	if [[ "$first_rc" -ne 0 || "$second_rc" -ne 0 || "$inferences" -ne 1 || "$writes" -ne 2 ]]; then
+		# GH#40529: this fails only on loaded CI runners; report the observed state.
+		printf 'FAIL concurrent decision: rc=%s,%s inferences=%s writes=%s [%s] refs=[%s]\n' \
+			"$first_rc" "$second_rc" "${inferences// /}" "${writes// /}" \
+			"$(tr '\n' ',' <"${root}/writes" 2>/dev/null)" \
+			"$(find "$root" -maxdepth 1 -name 'refs_*' -exec basename {} \; | tr '\n' ',')" >&2
+		# The FAIL prefix keeps these lines in the health artifact's early-failure excerpt.
+		sed 's/^/FAIL trace gh-ref: /' "${root}/gh.log" >&2 2>/dev/null || true
+		return 1
+	fi
 	return 0
 )
 
