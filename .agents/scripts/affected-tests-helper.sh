@@ -41,7 +41,8 @@ parser.add_argument("--ubiquity", type=float, default=0.1,
                     help="scripts sourced by more than this share of scripts are not expanded")
 parser.add_argument("--compare-base", action="store_true")
 parser.add_argument("--log-dir", default=None,
-                    help="write the last 80 output lines of each non-pass suite here")
+                    help="write the last 80 output lines of each non-pass suite here, "
+                         "preceded by up to 40 earlier failure lines")
 parser.add_argument("--retries", type=int, default=2,
                     help="reruns for a would-be regression before it counts; 0 disables")
 args = parser.parse_args()
@@ -271,6 +272,10 @@ def suite_timeout(path):
     return args.timeout
 
 LOG_TAIL_LINES = 80
+# GH#40529: a long suite's failing assertion often sits above the tail; keep
+# bounded earlier failure lines so the artifact still names it.
+LOG_EARLY_FAILURE_LINES = 40
+early_failure_line = re.compile(rb"\bFAIL\b|\bnot ok\b|Traceback|\bERROR\b")
 log_scratch = tempfile.mkdtemp(prefix="affected-tests-logs-") if args.log_dir else None
 
 def log_name(suite):
@@ -404,8 +409,14 @@ if log_scratch:
         if head[suite] == 0 or not os.path.isfile(source):
             continue
         with open(source, "rb") as handle:
-            tail = handle.read().splitlines(keepends=True)[-LOG_TAIL_LINES:]
+            lines = handle.read().splitlines(keepends=True)
+        head_lines, tail = lines[:-LOG_TAIL_LINES], lines[-LOG_TAIL_LINES:]
+        early = [line for line in head_lines if early_failure_line.search(line)][:LOG_EARLY_FAILURE_LINES]
         with open(os.path.join(args.log_dir, log_name(suite)), "wb") as handle:
+            if early:
+                handle.write(b"--- failure lines before the last %d lines ---\n" % LOG_TAIL_LINES)
+                handle.writelines(line if line.endswith(b"\n") else line + b"\n" for line in early)
+                handle.write(b"--- last %d lines ---\n" % LOG_TAIL_LINES)
             handle.writelines(tail)
     shutil.rmtree(log_scratch, ignore_errors=True)
 sys.exit(1 if regression else 0)

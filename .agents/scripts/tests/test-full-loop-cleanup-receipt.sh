@@ -3,6 +3,9 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 set -euo pipefail
+# GH#40529: an unexpected set -e exit printed nothing, so name the failing line.
+set -E
+trap 'printf "FAIL unexpected exit at line %s (rc=%s): %s\n" "$LINENO" "$?" "$BASH_COMMAND"' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -854,11 +857,16 @@ printf 'PASS authorization-gap evidence remains detached from terminal cleanup r
 	jq -n --arg path "$marker_repo" \
 		'{initialized_repos:[{path:$path,slug:"example/repo"}]}' >"${TEST_ROOT}/marker-native-repos.json"
 	mkdir -p "${TEST_ROOT}/marker-native-archives"
-	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
+	# GH#40529: the registry reports refusals as JSON on stdout; keep it for a failure.
+	retire_rc=0
+	retire_output=$(python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
 		retire-enrolled-only --path "$marker_worktree" --confirm \
 		--repos-config "${TEST_ROOT}/marker-native-repos.json" \
-		--output-root "${TEST_ROOT}/marker-native-archives" >/dev/null
-	[[ ! -e "$marker_worktree" ]]
+		--output-root "${TEST_ROOT}/marker-native-archives" 2>&1) || retire_rc=$?
+	if [[ "$retire_rc" -ne 0 || -e "$marker_worktree" ]]; then
+		printf 'FAIL registry retirement rc=%s output=%s\n' "$retire_rc" "$retire_output"
+		exit 1
+	fi
 	[[ ! -f "$AIDEVOPS_CLEANUP_LOG" ]]
 	full_loop_mark_cleanup_cleaned_for_identity example/repo 106 "$marker_worktree"
 	jq -e '.resource_cleanup_state == "CLEANED" and .cleanup_lease.state == "released"' "$marker_receipt" >/dev/null
