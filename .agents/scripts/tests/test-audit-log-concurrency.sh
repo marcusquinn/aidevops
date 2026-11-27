@@ -124,8 +124,23 @@ else
 fi
 assert_chain "hash chain remains intact after ownerless-lock reclaim" "$LOG_FILE"
 
+# Many writers race to reclaim the same dead-owner lock (GH#40549). Exactly one
+# may remove it; none may remove a lock a faster writer created afterwards.
+mkdir "$LOCK_DIR"
+printf '999999 stale-owner\n' >"${LOCK_DIR}/owner"
+before_race_count="$(wc -l <"$LOG_FILE" | tr -d ' ')"
+run_parallel_writers "$LOG_FILE" 12 "stale-race"
+after_race_count="$(wc -l <"$LOG_FILE" | tr -d ' ')"
+if [[ "$((after_race_count - before_race_count))" -eq 12 && ! -e "$LOCK_DIR" && ! -e "${LOCK_DIR}.reclaim" ]]; then
+	pass "racing reclaimers append every writer once and leave no lock residue"
+else
+	fail "racing reclaimers lost writers or left lock residue (appended $((after_race_count - before_race_count)) of 12)"
+fi
+assert_chain "hash chain remains intact after racing stale-lock reclaim" "$LOG_FILE"
+
 SIGNAL_LOCK_DIR="${TEST_ROOT}/signal.jsonl.lock.d"
 SIGNAL_READY="${TEST_ROOT}/signal.ready"
+SIGNAL_ELECTION="${TEST_ROOT}/signal.reclaim"
 (
 	# Keep shared-constants from replacing this Bash 3.2 fixture process.
 	export AIDEVOPS_BASH_REEXECED=1
@@ -134,6 +149,7 @@ SIGNAL_READY="${TEST_ROOT}/signal.ready"
 	# shellcheck disable=SC1090
 	source "$HELPER"
 	_audit_acquire_lock "$SIGNAL_LOCK_DIR"
+	_audit_elect_reclaimer "$SIGNAL_ELECTION"
 	_audit_arm_lock_cleanup
 	: >"$SIGNAL_READY"
 	while true; do
@@ -155,6 +171,12 @@ if [[ -f "$SIGNAL_READY" && -d "$SIGNAL_LOCK_DIR" ]]; then
 	else
 		fail "Bash 3.2 fallback recorded PID ${signal_owner_pid}, expected ${signal_pid}"
 	fi
+	signal_claims=("$SIGNAL_ELECTION"/claim.*)
+	if [[ "${signal_claims[0]}" == "${SIGNAL_ELECTION}/claim.${signal_pid}."* ]]; then
+		pass "Bash 3.2 fallback records the reclaiming subshell PID"
+	else
+		fail "election claim did not record the reclaiming subshell PID"
+	fi
 	kill -TERM "$signal_pid"
 	signal_rc=0
 	wait "$signal_pid" || signal_rc=$?
@@ -167,6 +189,27 @@ else
 	fail "signal cleanup fixture did not acquire its lock"
 	kill -TERM "$signal_pid" 2>/dev/null || true
 	wait "$signal_pid" 2>/dev/null || true
+fi
+
+if (
+	export AIDEVOPS_BASH_REEXECED=1
+	# shellcheck disable=SC1090
+	source "$HELPER"
+	# The first attempt retires the killed subshell's exact claim; the next wins.
+	if _audit_elect_reclaimer "$SIGNAL_ELECTION"; then
+		exit 1
+	fi
+	_audit_elect_reclaimer "$SIGNAL_ELECTION" || exit 1
+	# Simulate a retire operation delayed until after a replacement election won.
+	_audit_retire_election "$SIGNAL_ELECTION" "${signal_claims[0]##*/claim.}"
+	_audit_retire_election "$SIGNAL_ELECTION" ""
+	_audit_election_still_held "$SIGNAL_ELECTION" || exit 1
+	_audit_retire_election "$SIGNAL_ELECTION" "$_AUDIT_ELECTION_TOKEN"
+	[[ ! -e "$SIGNAL_ELECTION" ]]
+); then
+	pass "dead elections recover and delayed retirement preserves live replacements"
+else
+	fail "election recovery or replacement protection failed"
 fi
 
 ROTATE_LOG="${TEST_ROOT}/rotate.jsonl"
