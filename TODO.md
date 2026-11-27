@@ -2549,7 +2549,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19417 fix(tests): surface and fix Linux-only red suites cleanup-receipt and pr-checkpoint in Shell Suite Main Health #bug ref:GH#40529
 
-- [ ] t19418 perf(pulse): make the split dispatch lock the default (PULSE_DISPATCH_LOCK_SPLIT=0 opts out) #auto-dispatch #feat #framework #pulse ref:GH#40535
+- [x] t19418 perf(pulse): make the split dispatch lock the default (PULSE_DISPATCH_LOCK_SPLIT=0 opts out) #auto-dispatch #feat #framework #pulse ref:GH#40535 pr:#40542 completed:2026-11-27
 
 - [ ] t19419 refactor(pulse): run the LLM supervisor on its own schedule and remove the drain-escape layers #auto-dispatch #framework #pulse #refactor ref:GH#40536
 
