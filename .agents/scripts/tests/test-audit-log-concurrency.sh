@@ -124,6 +124,20 @@ else
 fi
 assert_chain "hash chain remains intact after ownerless-lock reclaim" "$LOG_FILE"
 
+# Many writers race to reclaim the same dead-owner lock (GH#40549). Exactly one
+# may remove it; none may remove a lock a faster writer created afterwards.
+mkdir "$LOCK_DIR"
+printf '999999 stale-owner\n' >"${LOCK_DIR}/owner"
+before_race_count="$(wc -l <"$LOG_FILE" | tr -d ' ')"
+run_parallel_writers "$LOG_FILE" 12 "stale-race"
+after_race_count="$(wc -l <"$LOG_FILE" | tr -d ' ')"
+if [[ "$((after_race_count - before_race_count))" -eq 12 && ! -e "$LOCK_DIR" && ! -e "${LOCK_DIR}.reclaim" ]]; then
+	pass "racing reclaimers append every writer once and leave no lock residue"
+else
+	fail "racing reclaimers lost writers or left lock residue (appended $((after_race_count - before_race_count)) of 12)"
+fi
+assert_chain "hash chain remains intact after racing stale-lock reclaim" "$LOG_FILE"
+
 SIGNAL_LOCK_DIR="${TEST_ROOT}/signal.jsonl.lock.d"
 SIGNAL_READY="${TEST_ROOT}/signal.ready"
 (
