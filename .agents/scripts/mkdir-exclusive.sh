@@ -25,13 +25,19 @@ if [[ "$(command mkdir --version 2>/dev/null || true)" == *uutils* ]]; then
 		# Python issues mkdir(2) directly and preserves EEXIST. Do not fall back
 		# to the unsafe command if Python is missing. -p is not a mutex and can
 		# retain the native implementation. Unsupported modes fail closed.
+		_AIDEVOPS_MKDIR_PYTHON=$(type -P python3 || true)
+		_AIDEVOPS_MKDIR_NATIVE=$(type -P mkdir || true)
 		aidevops_mkdir_exclusive() {
-			python3 -c '
+			if [[ -z "$_AIDEVOPS_MKDIR_PYTHON" ]]; then
+				printf 'mkdir: exclusive creation requires gnumkdir or python3\n' >&2
+				return 1
+			fi
+			"$_AIDEVOPS_MKDIR_PYTHON" -c '
 import getopt, os, subprocess, sys
 try:
-    options, paths = getopt.gnu_getopt(sys.argv[1:], "pm:v", ["parents", "mode=", "verbose", "help", "version"])
+    options, paths = getopt.gnu_getopt(sys.argv[2:], "pm:v", ["parents", "mode=", "verbose", "help", "version"])
     if any(key in ("-p", "--parents", "--help", "--version") for key, _ in options):
-        sys.exit(subprocess.call(["mkdir"] + sys.argv[1:]))
+        sys.exit(subprocess.call([sys.argv[1]] + sys.argv[2:]))
     mode, verbose = 0o777, False
     for key, value in options:
         if key in ("-m", "--mode"):
@@ -58,7 +64,7 @@ for path in paths:
         print("mkdir: " + str(error), file=sys.stderr)
         status = 1
 sys.exit(status)
-' "$@"
+' "$_AIDEVOPS_MKDIR_NATIVE" "$@"
 			return $?
 		}
 	fi

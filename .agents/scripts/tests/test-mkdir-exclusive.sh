@@ -82,6 +82,9 @@ race plain-mkdir-negative-control 1
 	source "$TEST_SCRIPT_DIR/../mkdir-exclusive.sh"
 	[[ "$(type -t mkdir)" == function ]]
 	race python-fallback
+	PATH="$TEST_ROOT" mkdir "$TEST_ROOT/python-pinned-path"
+	PATH="$TEST_ROOT" mkdir -p "$TEST_ROOT/python-pinned-parents/child"
+	[[ -d "$TEST_ROOT/python-pinned-path" && -d "$TEST_ROOT/python-pinned-parents/child" ]]
 	mkdir -p "$TEST_ROOT/parents/child"
 	mkdir -- "$TEST_ROOT/space and dash-"
 	if mkdir -- "$TEST_ROOT/space and dash-" 2>/dev/null; then exit 1; fi
