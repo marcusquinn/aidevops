@@ -17,6 +17,7 @@ import sys
 
 import worktree_process_attestation as attestation
 from worktree_process_census import require_proc_visibility
+from worktree_process_diagnostics import diagnostic_name, unreadable_tasks
 
 
 def attestation_enabled(proc_root: Path) -> bool:
@@ -104,64 +105,6 @@ def collect(proc_root: Path) -> tuple[list[str], list[Path]]:
                 continue
             paths.append(target)
     return paths, denied
-
-
-def diagnostic_name(process: Path) -> str:
-    try:
-        name = (process / "comm").read_text().strip()
-    except (OSError, UnicodeError):
-        return "unknown"
-    return "".join(char for char in name if 32 <= ord(char) < 127)[:32] or "unknown"
-
-
-def diagnostic_task(process: Path, task: Path) -> None:
-    """Print unreadable CWD evidence, never treating foreign ownership as clearance."""
-    try:
-        os.readlink(task / "cwd")
-        return
-    except (FileNotFoundError, ProcessLookupError):
-        return
-    except OSError:
-        pass
-    try:
-        fields = dict(line.split(":", 1) for line in
-                      (task / "status").read_text(errors="surrogateescape").splitlines() if ":" in line)
-    except (FileNotFoundError, ProcessLookupError):
-        return
-    except OSError:
-        fields = {}
-    if fields.get("State", "").split()[:1] in (["Z"], ["X"], ["x"]):
-        return
-    identities = fields.get("Uid", "").split()
-    valid = len(identities) == 4 and all(value.isascii() and value.isdigit() for value in identities)
-    uids = ",".join(identities) if valid else "unknown"
-    foreign = valid and all(int(value) != os.geteuid() for value in identities)
-    remedy = "foreign-review" if foreign else "unprivileged-review"
-    print(f"{process.name}\t{diagnostic_name(task)}\t{remedy}\t{uids}\t{task.name}")
-
-
-def unreadable_tasks(proc_root: Path) -> int:
-    """Manual diagnostic only: all visible UIDs/threads, no attestation or sudo.
-
-    Native retirement inspects each thread, whereas the CWD snapshot can skip
-    foreign identities and attested tasks. Keep this listing independent of
-    snapshot exclusions so a native refusal's PID/TID remains discoverable.
-    """
-    try:
-        for process in sorted(proc_root.iterdir(), key=lambda item: item.name):
-            if not process.name.isascii() or not process.name.isdigit():
-                continue
-            try:
-                tasks = list((process / "task").iterdir())
-            except (FileNotFoundError, ProcessLookupError):
-                # Also support a process-only proc fixture. Live thread inventory
-                # failures other than disappearance must fail the diagnostic.
-                tasks = [process]
-            for task in sorted(tasks, key=lambda item: item.name):
-                diagnostic_task(process, task)
-    except OSError:
-        return 1
-    return 0
 
 
 def cwd_map_line(entry: os.DirEntry, attest: bool = False) -> str:
