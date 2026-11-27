@@ -1983,15 +1983,15 @@ jobs:
                 echo "Already labelled as wontfix"
                 LABEL=""
               else
-                # Check closing comment for hints about the reason
+                # Require explicit closing intent, not incidental review keywords.
                 LAST_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
                   --jq 'last | .body // ""' 2>/dev/null || echo "")
 
-                if echo "$LAST_COMMENT" | grep -qiE 'duplicate|dupe|already exists'; then
+                if echo "$LAST_COMMENT" | grep -qiE 'duplicate of #[0-9]+|closing as (a )?duplicate|<!-- issue-dedup:auto-closed -->'; then
                   LABEL="duplicate"
-                elif echo "$LAST_COMMENT" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
+                elif echo "$LAST_COMMENT" | grep -qiE 'already (fixed|resolved|implemented|addressed) (by|in) #[0-9]+|closing as superseded'; then
                   LABEL="already-fixed"
-                elif echo "$LAST_COMMENT" | grep -qiE 'wontfix|won'\''t fix|will not'; then
+                elif echo "$LAST_COMMENT" | grep -qiE 'wontfix|won'\''t fix|will not fix'; then
                   LABEL="wontfix"
                 else
                   LABEL="not-planned"
