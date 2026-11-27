@@ -103,7 +103,7 @@ _pmpc_branch_claim_matches() {
 	local repo_slug="$1" head_ref="$2" author="$3"
 	local claims_json
 	local stamp="" issue_num="" branch_iso=""
-	[[ "$head_ref" =~ ^feature/auto-([0-9]{8})-([0-9]{6})-gh([0-9]+)$ ]] || return 1
+	[[ "$head_ref" =~ ^feature/auto-([0-9]{8})-([0-9]{6})-gh([0-9]+)(-s[0-9]+)?$ ]] || return 1
 	stamp="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
 	issue_num="${BASH_REMATCH[3]}"
 	[[ "$author" =~ ^[A-Za-z0-9-]+$ ]] || return 1
@@ -136,7 +136,7 @@ _pmpc_branch_claim_matches() {
 _pmpc_worker_branch_provenance() {
 	local pr_body="$4"
 	local repo_slug="$1" head_ref="$2" author="$3" permission=""
-	[[ "$head_ref" =~ ^feature/auto-[0-9]{8}-[0-9]{6}-gh[0-9]+$ ]] || return 1
+	[[ "$head_ref" =~ ^feature/auto-[0-9]{8}-[0-9]{6}-gh[0-9]+(-s[0-9]+)?$ ]] || return 1
 	[[ "$author" =~ ^[A-Za-z0-9-]+$ ]] || return 1
 	# aidevops:trust-boundary: require current repository write access.
 	permission=$(_pmpc_gh_read api "repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null) || return 1
@@ -861,7 +861,7 @@ _pmpc_closed_checkpoint_rows() {
 		| select(.merged_at == null and (.closed_at | type) == "string" and (.number | type) == "number")
 		| select(.head.repo.full_name? == $slug)
 		| select((.closed_at | fromdateiso8601) >= $floor)
-		| (.head.ref // "" | capture("^feature/auto-[0-9]{8}-[0-9]{6}-gh(?<issue>[0-9]+)$").issue) as $issue
+		| (.head.ref // "" | capture("^feature/auto-[0-9]{8}-[0-9]{6}-gh(?<issue>[0-9]+)(-s[0-9]+)?$").issue) as $issue
 		| "\(.number) \($issue)")
 	' 2>/dev/null || return 1
 	return 0
