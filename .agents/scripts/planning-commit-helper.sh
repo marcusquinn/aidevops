@@ -663,7 +663,7 @@ commit_planning_files() {
 		if [[ "$PLANNING_PUBLISH_RESULT" == "published_receipt_failed" ]]; then
 			log_error "Planning files reached the remote branch, but receipt persistence failed; retry to reconstruct the safe handoff"
 		else
-			log_error "Planning file publication failed; see the publication output above for remote, PR and worktree state"
+			log_error "Planning file publication failed; see the publication output above for remote, PR and worktree state. On a reported merge conflict, do not reset or move HEAD: preserve local commits, staged changes and the original snapshot base. Reconcile the conflicting planning edits with origin/${default_branch}, then retry using the same base (HEAD, or the existing AIDEVOPS_PLANNING_BASE_SHA if set)"
 		fi
 		return 1
 	fi
