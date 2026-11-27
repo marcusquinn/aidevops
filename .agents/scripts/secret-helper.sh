@@ -189,13 +189,12 @@ get_secret_value() {
 			continue
 		fi
 		local value
-		# Strip 'export NAME=', strip surrounding double quotes, then unescape
-		# \" -> " and \\ -> \ (order matters: unescape \" before \\).
-		# Trailing whitespace/CR after the closing quote is dropped first so the
-		# quote still matches, as the shell does when sourcing the line (GH#38844).
-		value=$(grep -m1 "^export ${name}=" "$cred_file" 2>/dev/null | sed 's/^export [^=]*=//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
+		# Share literal quote decoding with injection and redaction; never source
+		# the file or evaluate shell expressions in credential values.
+		value=$(grep -m1 "^export ${name}=" "$cred_file" 2>/dev/null) || value=""
+		value=$(decode_credential_value "${value#*=}")
 		if [[ -n "$value" ]]; then
-			echo "$value"
+			printf '%s\n' "$value"
 			return 0
 		fi
 	done < <(resolve_credential_files)
@@ -237,7 +236,7 @@ get_injected_gopass_value() {
 		gopass show -n "$secret_path" 2>/dev/null || return 1
 	else
 		local timeout
-		timeout=$(injected_gopass_timeout) || return 1
+		timeout=$(injected_gopass_timeout 1) || return 1
 		python3 -c '
 import os, signal, subprocess, sys
 
