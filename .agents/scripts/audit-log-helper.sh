@@ -544,8 +544,9 @@ _audit_acquire_lock() {
 		return 1
 	fi
 
-	local started_at=""
-	started_at="$(date '+%s')" || return 1
+	# SECONDS is a Bash 3.2-compatible elapsed clock. Forking date on every
+	# contender's poll can starve the lock holder on a shared CI runner.
+	local started_at="$SECONDS"
 	local election_dir="${lock_dir}.reclaim"
 	while :; do
 		# Publication and reclamation must share the same namespace fence. A
@@ -568,9 +569,7 @@ _audit_acquire_lock() {
 			continue
 		fi
 
-		local now=""
-		now="$(date '+%s')" || return 1
-		if [[ $((now - started_at)) -ge $timeout ]]; then
+		if [[ $((SECONDS - started_at)) -ge $timeout ]]; then
 			_audit_error "Could not acquire audit log lock after ${timeout}s"
 			return 1
 		fi
@@ -621,12 +620,9 @@ _audit_release_current_lock() {
 	local lock_dir="$_AUDIT_HELD_LOCK_DIR"
 	[[ -n "$lock_dir" ]] || return 0
 	local election_dir="${lock_dir}.reclaim"
-	local started_at=""
-	started_at="$(date '+%s')" || return 1
+	local started_at="$SECONDS"
 	while ! _audit_elect_reclaimer "$election_dir"; do
-		local now=""
-		now="$(date '+%s')" || return 1
-		if [[ $((now - started_at)) -ge ${AUDIT_LOCK_TIMEOUT_SECONDS:-${AUDIT_DEFAULT_LOCK_TIMEOUT_SECONDS}} ]]; then
+		if [[ $((SECONDS - started_at)) -ge ${AUDIT_LOCK_TIMEOUT_SECONDS:-${AUDIT_DEFAULT_LOCK_TIMEOUT_SECONDS}} ]]; then
 			_audit_error "Could not acquire audit log release fence"
 			return 1
 		fi
