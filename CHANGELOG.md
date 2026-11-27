@@ -10,6 +10,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.289] - 2026-11-27
+
+### Added
+
+- warn when an auto-dispatch issue is filed in a pulse-off repo (#40531)
+
+### Changed
+
+- Maintenance: mark t19418 complete (pr:#40542 completed:2026-11-27) (#40546)
+- Maintenance: mark t19404 complete (pr:#40531 completed:2026-11-27) (#40534)
+- Maintenance: mark t19414 complete (pr:#40519 completed:2026-11-27) (#40526)
+- Maintenance: mark t19413 complete (pr:#40514 completed:2026-11-26) (#40515)
+- Maintenance: mark t19411 complete (pr:#40512 completed:2026-11-26) (#40510)
+- Maintenance: sync GitHub issue refs to TODO.md (#40503)
+- Maintenance: mark t19408 complete (pr:#40496 completed:2026-11-26) (#40500)
+
+### Fixed
+
+- repoint same-source command symlinks from stale bundles instead of suffixing (#40545)
+- pin dep-graph refresh budget test to a virtual clock (#40540)
+- accept -sN continuation branches in provenance gate (#40527)
+- mark OpenCode runtime explicitly in gh-signature DB fixtures (#40420)
+- run privacy guard before task-ID allocation (#40519)
+- make quickfile Task-delegable from Build+ and fail fast on subagent-only headless --agent (#40520)
+- skip live title check in todo-collision tests 5-8 (#40521)
+- keywords issue sweep must not refile declined or upstream-resolved work (#40514)
+- classify generated _reports artifacts as low runtime risk (#40512)
+- render brand guideline swatches with DESIGN.md token colours (#40509)
+- exclude archived repositories from autonomy report owner scopes (Resolves #40506) (#40507)
+- restore archived worker sessions from monthly segments (Resolves #40419) (#40505)
+- skip escaped quotes in string-literal ratchet extraction (GH#40502) (#40504)
+- size retention physically, prune tool_calls, reclaim pages (GH#40498) (#40499)
+
 ## [3.39.288] - 2026-11-26
 
 ### Fixed
