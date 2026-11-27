@@ -59,25 +59,33 @@ def half_removed(path: Path) -> str | None:
     """
     if not os.path.lexists(path):
         return None
-    link = path / ".git"
-    if not os.path.lexists(link):
-        return GIT_ADMINISTRATION_ABSENT
-    try:
-        info = link.lstat()
-    except OSError:
-        return GIT_ADMINISTRATION_UNREADABLE
-    if not stat.S_ISREG(info.st_mode):
-        return None  # A directory (main checkout) or a link is not this class.
-    try:
-        with open(link, "rb") as stream:
-            raw = stream.read(4096)
-        line = raw.decode("utf-8").strip()
-    except (OSError, UnicodeDecodeError):
-        return GIT_ADMINISTRATION_UNREADABLE
-    if not line.startswith("gitdir:"):
-        return GIT_ADMINISTRATION_UNREADABLE
-    admin = Path(line.removeprefix("gitdir:").strip())
+    code, admin = _link_state(path / ".git")
+    if admin is None:
+        return code
     return None if os.path.lexists(admin) else GIT_ADMINISTRATION_ABSENT
+
+
+def _read_link(link: Path) -> str | None:
+    """Return a regular `.git` file's text; `None` for a directory or a link."""
+    if not stat.S_ISREG(link.lstat().st_mode):
+        return None  # A directory (main checkout) or a link is not this class.
+    with open(link, "rb") as stream:
+        return stream.read(4096).decode("utf-8").strip()
+
+
+def _link_state(link: Path) -> tuple[str | None, Path | None]:
+    """Return `(code, None)` or `(None, administration directory)`."""
+    if not os.path.lexists(link):
+        return GIT_ADMINISTRATION_ABSENT, None
+    try:
+        line = _read_link(link)
+    except (OSError, UnicodeDecodeError):
+        line = ""
+    if line is None:
+        return None, None
+    if not line.startswith("gitdir:"):
+        return GIT_ADMINISTRATION_UNREADABLE, None
+    return None, Path(line.removeprefix("gitdir:").strip())
 
 
 def native_timeout(arguments: tuple[str, ...]) -> int | None:

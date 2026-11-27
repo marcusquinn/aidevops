@@ -49,7 +49,7 @@ def advance(store, path):
             temporary.unlink(missing_ok=True)
 
 
-def preservation_name(path) -> bool:
+def preservation_name(path: str | Path) -> bool:
     """True when the operator marked the name as preserved; it is never a candidate."""
     patterns = ["preserved", "readonly", "recovery", "review"]
     patterns.extend(filter(None, os.environ.get(

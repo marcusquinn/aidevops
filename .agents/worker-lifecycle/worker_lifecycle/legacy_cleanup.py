@@ -19,7 +19,7 @@ from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import BOUNDARY, half_removed, removal_started
 from .interrupted_removal import require_deletion_only, validation_boundary
-from .legacy_discovery import containers, managed_root, same_tree
+from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import half_state_outcome, preservation_name
@@ -37,7 +37,8 @@ from .legacy_takeover import close_quiescent_admission
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
-from .retirement import ArchiveTarget, _git, _id, _lock, retire_worktree
+from .legacy_staging import sweep_staging  # noqa: F401 # re-exported API
+from .retirement import _git, _id, _lock
 
 
 def require_confirmation(connection, operation, confirmed):
@@ -382,68 +383,6 @@ def process_reconstructible(store, item, repositories, adapter, options):
                        dict(plan, type="reconstructible-host-probe-verified"))
         outcome["status"] = "retired"
     return outcome, 1, 1
-
-
-# Bounded per-pass staging sweep: enough to drain residue without one pass
-# spending its whole budget on a single large private tree.
-STAGING_LIMIT = 2
-
-
-def staged_plans(connection):
-    """Map each journaled private container to its retirement kind and plan."""
-    plans = {}
-    for row in connection.execute("SELECT payload FROM events"):
-        payload = json.loads(row["payload"])
-        if not isinstance(payload, dict) or not isinstance(payload.get("container"), str):
-            continue
-        if payload.get("type") in ("retirement-planned", "legacy-worktree-removal-planned"):
-            plans[payload["container"]] = (payload["type"], payload)
-    return plans
-
-
-def sweep_staging(store, repositories, adapter, options):
-    """Complete or terminally report each private retirement container (GH#40569).
-
-    Enumeration comes from the filesystem, so a container is found even when its
-    generation left the cleanup rotation of either pass. Each one re-enters its own
-    journaled retirement path, which keeps every dirty-content, identity and idle
-    guard; a container that no journal owns is reported, never deleted.
-    """
-    if not options.apply:
-        return []
-    try:
-        found = containers(managed_root())
-    except ValueError as error:
-        return [{"class": "staging", **retained_outcome({"path": "", "modern": False},
-                                                        error)}]
-    with store.connection() as connection:
-        plans = staged_plans(connection)
-    results = []
-    for container in found[:STAGING_LIMIT]:
-        kind, plan = plans.get(container, (None, None))
-        try:
-            if kind == "retirement-planned":
-                outcome = retire_worktree(
-                    store, Path(plan["source"]), plan["generation_id"],
-                    ArchiveTarget(plan["repo"], plan["base"], Path(plan["output_root"])),
-                )
-                results.append({"path": container, "class": "lifecycle-staging",
-                                "status": outcome.get("status", "retired")})
-            elif kind == "legacy-worktree-removal-planned":
-                results.append({"path": container, "class": "legacy-staging",
-                                "status": retire(store, {"path": plan["source"]},
-                                                 repositories, adapter, options)})
-            else:
-                # Never delete a private tree no journal can describe.
-                results.append({"path": container, "class": "staging",
-                                "status": "needs-operator-review",
-                                "reason": "staging-container-unjournaled",
-                                "classification": "terminal"})
-        except (ValueError, OSError, sqlite3.Error, ObservationUnavailable,
-                subprocess.SubprocessError) as error:
-            results.append({"path": container, "class": "staging",
-                            **retained_outcome({"path": container, "modern": False}, error)})
-    return results
 
 
 def run(store, config, root, **arguments):
