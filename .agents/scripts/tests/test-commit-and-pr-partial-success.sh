@@ -125,6 +125,10 @@ eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_run_pr_create_cmd() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 # shellcheck disable=SC2312
+eval "$(sed -n '/^_open_head_pr_exists() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_effective_pr_ready() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# shellcheck disable=SC2312
 eval "$(sed -n '/^_explicit_pr_create_base() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # shellcheck disable=SC2312
@@ -632,6 +636,25 @@ else
 	fail "normal success: origin label reconciled on created PR" \
 		"expected set_origin_label for PR 888; got: $(cat "$STUB_LOG" 2>/dev/null)"
 fi
+
+# GH#40622: gh_create_pr succeeds by returning an existing open PR for the head
+# (hand-written draft). The stale body must still be reconciled.
+: >"$STUB_LOG"
+GH_CREATE_PR_FAIL=0
+GH_RECOVER_PR_URL="https://github.com/owner/repo/pull/999"
+GH_CREATE_PR_URL="https://github.com/owner/repo/pull/999"
+REMOTE_PR_TITLE="stale title"
+REMOTE_PR_BODY="For #1"
+existing_rc=0
+_create_pr "owner/repo" "t2767: test" "body text" "origin:worker" >/dev/null 2>&1 || existing_rc=$?
+if [[ "$existing_rc" -eq 0 ]] &&
+	grep -q "gh_pr_edit_safe 999 --repo owner/repo --title t2767: test --body-file" "$STUB_LOG" 2>/dev/null; then
+	pass "existing open head PR: stale body reconciled instead of reported created (GH#40622)"
+else
+	fail "existing open head PR: stale body reconciled instead of reported created (GH#40622)" \
+		"rc=$existing_rc; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+GH_RECOVER_PR_URL=""
 
 # =============================================================================
 # Test 3a: _create_pr fails closed when origin label reconciliation fails

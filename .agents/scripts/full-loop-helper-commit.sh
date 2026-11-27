@@ -1453,6 +1453,18 @@ _effective_pr_ready() {
 	return 0
 }
 
+# GH#40622: an open PR for this head (for example a hand-written early draft
+# that references the issue with For #N) is returned by gh_create_pr as if
+# created, leaving its stale body. Succeeds when one exists so the caller
+# reconciles its metadata.
+_open_head_pr_exists() {
+	local head_branch="$1" repo="$2"
+	[[ -n "$head_branch" ]] || return 1
+	[[ -n "$(_gh_recover_pr_if_exists "$head_branch" "$repo" 2>/dev/null || true)" ]] || return 1
+	print_info "Open PR already exists for head ${head_branch}; its metadata will be reconciled (GH#40622)"
+	return 0
+}
+
 _create_pr() {
 	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
 	shift 4
@@ -1489,6 +1501,8 @@ _create_pr() {
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done
+
+	_open_head_pr_exists "$head_branch" "$repo" && recovered=1
 
 	pr_error=$(mktemp -t aidevops-pr-create-error.XXXXXX) || {
 		rm -f "$body_file"
