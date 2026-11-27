@@ -423,12 +423,13 @@ release_instance_lock() {
 #######################################
 # Dispatch lock (t19324, GH#40112; parent GH#40108)
 #
-# PULSE_DISPATCH_LOCK_SPLIT=1 gives dispatch rounds their own runner-local
+# Split mode is the default (t19418). It gives dispatch rounds their own runner-local
 # mkdir lock beside LOCKDIR. Every dispatch round (cycle stages, cycle-final
 # drain, active-pulse and early-exit recycle fills, worker-exit refill) takes it, so one
 # round runs per runner at a time, while the worker-exit refill no longer
 # waits for the instance lock held through the cycle's maintenance stages.
-# Default 0: callers run exactly as before and this lock is never created.
+# PULSE_DISPATCH_LOCK_SPLIT=0 opts out: callers run exactly as before and this
+# lock is never created.
 #
 # Same primitives as the instance lock: mkdir atomicity, PID file plus
 # post-acquire verification (GH#21433), stale-owner reclaim (dead owner, PID
@@ -487,6 +488,9 @@ pulse_dispatch_lock_split_enabled() {
 		if [[ -z "$mode" && "${PULSE_REFILL_ONLY:-0}" == "1" ]]; then
 			read -r mode 2>/dev/null <"$(_pulse_dispatch_lock_mode_file)" || mode=""
 		fi
+		if [[ -z "$mode" && "${PULSE_REFILL_ONLY:-0}" != "1" ]]; then
+			mode=1 # t19418 default; PULSE_DISPATCH_LOCK_SPLIT=0 opts out
+		fi
 		_PULSE_DISPATCH_LOCK_SPLIT_RESOLVED=0
 		[[ "$mode" == "1" ]] && _PULSE_DISPATCH_LOCK_SPLIT_RESOLVED=1
 	fi
@@ -497,9 +501,9 @@ pulse_dispatch_lock_split_enabled() {
 # Publish this cycle's mode for refill-only runs. Call only while holding the
 # instance lock, before the first dispatch stage. Atomic replace.
 pulse_dispatch_lock_publish_mode() {
-	local mode=0 mode_file temporary
+	local mode=1 mode_file temporary
 	[[ -n "${LOCKDIR:-}" ]] || return 0
-	[[ "${PULSE_DISPATCH_LOCK_SPLIT:-0}" == "1" ]] && mode=1
+	[[ "${PULSE_DISPATCH_LOCK_SPLIT:-}" == "0" ]] && mode=0
 	mode_file=$(_pulse_dispatch_lock_mode_file)
 	temporary="${mode_file}.tmp.$$"
 	if printf '%s\n' "$mode" >"$temporary" 2>/dev/null && mv -f "$temporary" "$mode_file" 2>/dev/null; then
