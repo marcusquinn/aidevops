@@ -158,15 +158,19 @@ _dispatch_negative_cache_material() {
 # ceremony may advance updatedAt before the refusal is recorded. Fetching the
 # body only afterwards then leaves an unusable metadata-only refresh anchor.
 # Never adopt a newer revision or replace the ranked ownership snapshot.
+# Always prints a candidate: any failure prints the original unchanged, so the
+# caller's command substitution can never empty the dispatch candidate.
 _dispatch_negative_cache_capture_candidate() {
-	local candidate="$1" source="" ranked="" observed=""
+	local candidate="$1" source="" ranked="" observed="" captured=""
 	if _dispatch_negative_cache_load_source "$candidate" allow_rest exact; then
 		source="$_DISPATCH_NEGATIVE_CACHE_SOURCE"
 		ranked=$(_dispatch_negative_cache_material "$(jq 'del(.body)' <<<"$candidate")") || ranked=""
 		observed=$(_dispatch_negative_cache_material "$(jq 'del(.body)' <<<"$source")") || observed=""
-		if [[ -n "$ranked" && "$ranked" == "$observed" ]]; then
-			jq -c --argjson source "$source" '.body = $source.body' <<<"$candidate"
-			return $?
+		if [[ -n "$ranked" && "$ranked" == "$observed" ]] &&
+			captured=$(jq -c --argjson source "$source" '.body = $source.body' <<<"$candidate" 2>/dev/null) &&
+			[[ -n "$captured" ]]; then
+			printf '%s\n' "$captured"
+			return 0
 		fi
 	fi
 	printf '%s\n' "$candidate"
