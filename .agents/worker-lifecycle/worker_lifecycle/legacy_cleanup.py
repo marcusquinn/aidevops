@@ -24,7 +24,7 @@ from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_lookup import pass_pull_requests, prefetched_pull_requests
 from .legacy_lookup import released_pull_requests, writer_released
 from .legacy_inventory import reconstructible, requires_reconstructible
-from .legacy_options import require_manual_confirmation, require_managed_takeover
+from .legacy_options import require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
 from .legacy_probe import checkpoint, event_id, host_probe
 from .legacy_probe import operation_id, prepare_reconstructible_probe, receipt
