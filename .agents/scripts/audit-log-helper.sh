@@ -338,12 +338,18 @@ _audit_remove_lock_dir() {
 			IFS= read -r tomb_record <"${tomb}/owner" || tomb_record=""
 		fi
 		if [[ "$tomb_record" != "$expected_record" ]]; then
-			# The elected reclaimer's marker moved with the directory. Release it
-			# before handing the changed owner's directory back, so a later dead
-			# owner can still be reclaimed. Do not touch the changed owner record.
+			# The lock changed hands. Re-create the path atomically with mkdir (a
+			# directory mv would nest the tomb inside any new holder's directory),
+			# return only the owner record, and drop the retired election marker.
+			if (umask 077 && mkdir "$lock_dir") 2>/dev/null; then
+				if [[ -f "${tomb}/owner" ]]; then
+					mv "${tomb}/owner" "${lock_dir}/owner" 2>/dev/null || _audit_error "Could not restore audit lock owner record: $lock_dir"
+				fi
+			else
+				_audit_error "Audit log lock changed owner during removal and the path was reoccupied: $lock_dir"
+			fi
 			rmdir "${tomb}/.reclaim" 2>/dev/null || true
-			# The lock changed hands; hand it back if the path is still free.
-			mv "$tomb" "$lock_dir" 2>/dev/null || _audit_error "Audit log lock changed owner during removal: $lock_dir"
+			rmdir "$tomb" 2>/dev/null || true
 			return 1
 		fi
 	fi
@@ -370,7 +376,7 @@ _audit_reclaim_stale_lock() {
 	local owner_pid=""
 	local stale_reason=""
 	if [[ -f "${lock_dir}/owner" ]]; then
-		IFS= read -r owner_record <"${lock_dir}/owner" || owner_record=""
+		{ IFS= read -r owner_record <"${lock_dir}/owner"; } 2>/dev/null || owner_record=""
 		owner_pid="${owner_record%% *}"
 		if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
 			if kill -0 "$owner_pid" 2>/dev/null; then
@@ -410,7 +416,7 @@ _audit_reclaim_stale_lock() {
 	# so re-verify the owner record it judged stale still owns the lock.
 	local current_record=""
 	if [[ -f "${lock_dir}/owner" ]]; then
-		IFS= read -r current_record <"${lock_dir}/owner" || current_record=""
+		{ IFS= read -r current_record <"${lock_dir}/owner"; } 2>/dev/null || current_record=""
 	fi
 	if [[ "$current_record" != "$owner_record" ]]; then
 		rmdir "${lock_dir}/.reclaim" 2>/dev/null || true

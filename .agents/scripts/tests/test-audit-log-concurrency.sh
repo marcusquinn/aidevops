@@ -131,6 +131,7 @@ if (
 	# shellcheck disable=SC1090
 	source "$HELPER"
 	mismatch_lock="${TEST_ROOT}/mismatch.lock.d"
+	occupy_destination=false
 	mkdir -p "${mismatch_lock}/.reclaim"
 	mv() {
 		local source_path="$1"
@@ -138,6 +139,10 @@ if (
 			printf '999999 changed-owner\n' >"${mismatch_lock}/owner"
 		fi
 		command mv "$@" || return 1
+		if [[ "$source_path" == "$mismatch_lock" && "$occupy_destination" == true ]]; then
+			mkdir "$mismatch_lock" || return 1
+			printf '%s replacement-owner\n' "$$" >"${mismatch_lock}/owner"
+		fi
 		return 0
 	}
 	if _audit_remove_lock_dir "$mismatch_lock" ""; then
@@ -147,9 +152,25 @@ if (
 	IFS= read -r preserved_owner <"${mismatch_lock}/owner"
 	[[ "$preserved_owner" == "999999 changed-owner" ]] || exit 1
 	_audit_reclaim_stale_lock "$mismatch_lock" 0 || exit 1
-	[[ ! -d "$mismatch_lock" ]]
+	[[ ! -d "$mismatch_lock" ]] || exit 1
+
+	# Reoccupy the path after rename, before rollback. The replacement must not
+	# receive a nested tomb or have its owner record overwritten.
+	occupy_destination=true
+	mkdir -p "${mismatch_lock}/.reclaim"
+	if _audit_remove_lock_dir "$mismatch_lock" ""; then
+		exit 1
+	fi
+	IFS= read -r preserved_owner <"${mismatch_lock}/owner"
+	[[ "$preserved_owner" == "$$ replacement-owner" ]] || exit 1
+	for nested_path in "$mismatch_lock"/*; do
+		[[ "$nested_path" == "${mismatch_lock}/owner" ]] || exit 1
+	done
+	for retired_tomb in "${mismatch_lock}.rm."*; do
+		[[ ! -d "${retired_tomb}/.reclaim" ]] || exit 1
+	done
 ); then
-	pass "owner mismatch releases reclaim election and preserves reclaimability"
+	pass "owner mismatch releases election and rollback never nests in a replacement"
 else
 	fail "owner mismatch stranded reclaim election or changed owner metadata"
 fi
