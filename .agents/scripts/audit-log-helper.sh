@@ -413,24 +413,41 @@ _audit_elect_reclaimer() {
 	local election_dir="$1"
 
 	# Each election carries a unique token so ownership can be verified later.
-	_AUDIT_ELECTION_TOKEN="${BASHPID:-$$}.${RANDOM}${RANDOM}"
+	local reclaimer_pid="${BASHPID:-}"
+	if [[ -z "$reclaimer_pid" ]]; then
+		reclaimer_pid="$(exec sh -c 'printf "%s" "$PPID"')" || return 1
+	fi
+	[[ "$reclaimer_pid" =~ ^[0-9]+$ ]] || return 1
+	_AUDIT_ELECTION_TOKEN="${reclaimer_pid}.${RANDOM}${RANDOM}"
 	if (umask 077 && mkdir "$election_dir") 2>/dev/null; then
-		printf '%s\n' "$_AUDIT_ELECTION_TOKEN" >"${election_dir}/owner" 2>/dev/null || true
-		return 0
+		# A token-named child pins the election: rmdir cannot vacate it while
+		# this reclaimer is live. Publication may race empty-election cleanup;
+		# proceed only if our claim is the sole claim in the current directory.
+		if (umask 077 && mkdir "${election_dir}/claim.${_AUDIT_ELECTION_TOKEN}") 2>/dev/null &&
+			_audit_election_still_held "$election_dir"; then
+			return 0
+		fi
+		_audit_retire_election "$election_dir" "$_AUDIT_ELECTION_TOKEN"
+		_AUDIT_ELECTION_TOKEN=""
+		return 1
 	fi
 	_AUDIT_ELECTION_TOKEN=""
 
 	# Expiry alone never authorises takeover: an election is abandoned only when
 	# its recorded reclaimer PID is dead, or (no record) it is older than the TTL.
 	local observed=""
-	{ IFS= read -r observed <"${election_dir}/owner"; } 2>/dev/null || observed=""
-	local abandoned=0
-	if [[ -n "$observed" ]]; then
+	local claim=""
+	local have_claim=0
+	for claim in "$election_dir"/claim.*; do
+		[[ -d "$claim" ]] || continue
+		have_claim=1
+		observed="${claim##*/claim.}"
 		local holder_pid="${observed%%.*}"
 		if [[ "$holder_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$holder_pid" 2>/dev/null; then
-			abandoned=1
+			_audit_retire_election "$election_dir" "$observed"
 		fi
-	else
+	done
+	if [[ "$have_claim" -eq 0 ]]; then
 		local election_mtime=""
 		election_mtime="$(_file_mtime_epoch "$election_dir")" || return 1
 		if [[ ! "$election_mtime" =~ ^[0-9]+$ || "$election_mtime" -eq 0 ]]; then
@@ -439,38 +456,25 @@ _audit_elect_reclaimer() {
 		local now=""
 		now="$(date '+%s')" || return 1
 		if [[ $((now - election_mtime)) -ge $AUDIT_RECLAIM_ELECTION_TTL_SECONDS ]]; then
-			abandoned=1
+			_audit_retire_election "$election_dir" ""
 		fi
-	fi
-	if [[ $abandoned -eq 1 ]]; then
-		_audit_retire_election "$election_dir" "$observed"
 	fi
 
 	return 1
 }
 
-# Retire an abandoned election by atomic rename, then verify the renamed
-# instance is the one observed. A replacement election (different token) that
-# was renamed by mistake is put back; the pathname is never rmdir'd blindly.
+# Remove only the observed token's empty claim, then the empty election root.
+# A delayed retirement cannot unlink a replacement token or vacate a live
+# election: its claim keeps the directory nonempty throughout reclamation.
 # Arguments: $1 — election directory, $2 — token observed ("" if none)
 # Returns: 0 always (best effort)
 _audit_retire_election() {
 	local election_dir="$1"
 	local observed="$2"
-	local tomb_root="${election_dir}.rm.${BASHPID:-$$}.${RANDOM}"
-
-	(umask 077 && mkdir "$tomb_root") 2>/dev/null || return 0
-	if mv "$election_dir" "${tomb_root}/e" 2>/dev/null; then
-		local moved=""
-		{ IFS= read -r moved <"${tomb_root}/e/owner"; } 2>/dev/null || moved=""
-		if [[ "$moved" == "$observed" ]]; then
-			rm -rf -- "$tomb_root" 2>/dev/null || true
-			return 0
-		fi
-		# Not the observed instance: restore it (fails harmlessly if the path was retaken).
-		mv "${tomb_root}/e" "$election_dir" 2>/dev/null || true
+	if [[ -n "$observed" ]]; then
+		rmdir "${election_dir}/claim.${observed}" 2>/dev/null || true
 	fi
-	rm -rf -- "$tomb_root" 2>/dev/null || true
+	rmdir "$election_dir" 2>/dev/null || true
 
 	return 0
 }
@@ -480,9 +484,12 @@ _audit_retire_election() {
 # Returns: 0 when the election token on disk is ours
 _audit_election_still_held() {
 	local election_dir="$1"
-	local current=""
-	{ IFS= read -r current <"${election_dir}/owner"; } 2>/dev/null || current=""
-	[[ -n "$_AUDIT_ELECTION_TOKEN" && "$current" == "$_AUDIT_ELECTION_TOKEN" ]]
+	local -a claims=("$election_dir"/claim.*)
+	if [[ -n "$_AUDIT_ELECTION_TOKEN" && ${#claims[@]} -eq 1 &&
+		"${claims[0]}" == "${election_dir}/claim.${_AUDIT_ELECTION_TOKEN}" && -d "${claims[0]}" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # Reclaim a dead-owner lock, or an old ownerless lock. Staleness is judged,
@@ -514,9 +521,8 @@ _audit_reclaim_stale_lock() {
 			reclaimed=0
 		fi
 	fi
-	if _audit_election_still_held "$election_dir"; then
-		rm -rf -- "$election_dir" 2>/dev/null || true
-	fi
+	# Even if a delayed publisher added a competing claim, remove only ours.
+	_audit_retire_election "$election_dir" "$_AUDIT_ELECTION_TOKEN"
 	_AUDIT_ELECTION_TOKEN=""
 
 	return "$reclaimed"
