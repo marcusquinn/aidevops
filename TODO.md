@@ -2551,7 +2551,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19418 perf(pulse): make the split dispatch lock the default (PULSE_DISPATCH_LOCK_SPLIT=0 opts out) #auto-dispatch #feat #framework #pulse ref:GH#40535 pr:#40542 completed:2026-11-27
 
-- [ ] t19419 refactor(pulse): run the LLM supervisor on its own schedule and remove the drain-escape layers #auto-dispatch #framework #pulse #refactor ref:GH#40536
+- [x] t19419 refactor(pulse): run the LLM supervisor on its own schedule and remove the drain-escape layers #auto-dispatch #framework #pulse #refactor ref:GH#40536 pr:#40547 completed:2026-11-27
 
 - [ ] t19420 refactor(pulse): remove shared-lock refill workarounds after the split dispatch lock soak #auto-dispatch #framework #pulse #refactor blocked-by:t19418,t19419 ref:GH#40537
 
@@ -2561,7 +2561,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [-] t19423 fix(tests): explain intermittent double reservation in checkpoint test_decision_policy_races on hosted runners #bug ref:GH#40562 cancelled:2026-11-27 cancel-reason:superseded-by-t19425
 
-- [ ] t19425 fix(locks): mkdir-as-mutex is not exclusive under uutils coreutils (Ubuntu 26.04) — two concurrent owners #auto-dispatch #bug #priority:high ref:GH#40582
+- [x] t19425 fix(locks): mkdir-as-mutex is not exclusive under uutils coreutils (Ubuntu 26.04) — two concurrent owners #auto-dispatch #bug #priority:high ref:GH#40582 pr:#40591 completed:2026-11-27
 
 - [x] t19426 fix(ci): suite-health logs drop a flaky suite's first attempt when the rerun fills the 80-line tail #auto-dispatch #bug ref:GH#40583 pr:#40587 completed:2026-11-27
 
