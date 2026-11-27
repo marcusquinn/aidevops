@@ -3,7 +3,22 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Resolve symlinks first: the PATH shim (~/.aidevops/bin/shellcheck) is a symlink,
 # so BASH_SOURCE[0] points at the shim dir, which has no mkdir-exclusive.sh.
-_sc_wrapper_self="$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+_sc_wrapper_self="$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || true)"
+if [[ -z "$_sc_wrapper_self" ]]; then
+	# macOS 12.0-12.2: no realpath / readlink -f; follow links with plain readlink
+	_sc_wrapper_self="${BASH_SOURCE[0]}"
+	while [[ -L "$_sc_wrapper_self" ]]; do
+		_sc_link="$(readlink "$_sc_wrapper_self")" || break
+		if [[ "$_sc_link" == /* ]]; then
+			_sc_wrapper_self="$_sc_link"
+		elif [[ "$_sc_wrapper_self" == */* ]]; then
+			_sc_wrapper_self="${_sc_wrapper_self%/*}/$_sc_link"
+		else
+			_sc_wrapper_self="$_sc_link"
+		fi
+	done
+	unset _sc_link
+fi
 _sc_wrapper_dir="${_sc_wrapper_self%/*}"
 [[ "$_sc_wrapper_dir" == "$_sc_wrapper_self" ]] && _sc_wrapper_dir="."
 # shellcheck source=mkdir-exclusive.sh
