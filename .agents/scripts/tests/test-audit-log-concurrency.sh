@@ -124,6 +124,36 @@ else
 fi
 assert_chain "hash chain remains intact after ownerless-lock reclaim" "$LOG_FILE"
 
+# Inject owner publication immediately before removal's rename. This isolates
+# election cleanup from the separate acquisition/rename mutual-exclusion race.
+if (
+	export AIDEVOPS_BASH_REEXECED=1
+	# shellcheck disable=SC1090
+	source "$HELPER"
+	mismatch_lock="${TEST_ROOT}/mismatch.lock.d"
+	mkdir -p "${mismatch_lock}/.reclaim"
+	mv() {
+		local source_path="$1"
+		if [[ "$source_path" == "$mismatch_lock" ]]; then
+			printf '999999 changed-owner\n' >"${mismatch_lock}/owner"
+		fi
+		command mv "$@" || return 1
+		return 0
+	}
+	if _audit_remove_lock_dir "$mismatch_lock" ""; then
+		exit 1
+	fi
+	[[ -d "$mismatch_lock" && ! -d "${mismatch_lock}/.reclaim" ]] || exit 1
+	IFS= read -r preserved_owner <"${mismatch_lock}/owner"
+	[[ "$preserved_owner" == "999999 changed-owner" ]] || exit 1
+	_audit_reclaim_stale_lock "$mismatch_lock" 0 || exit 1
+	[[ ! -d "$mismatch_lock" ]]
+); then
+	pass "owner mismatch releases reclaim election and preserves reclaimability"
+else
+	fail "owner mismatch stranded reclaim election or changed owner metadata"
+fi
+
 SIGNAL_LOCK_DIR="${TEST_ROOT}/signal.jsonl.lock.d"
 SIGNAL_READY="${TEST_ROOT}/signal.ready"
 (

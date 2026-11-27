@@ -338,6 +338,10 @@ _audit_remove_lock_dir() {
 			IFS= read -r tomb_record <"${tomb}/owner" || tomb_record=""
 		fi
 		if [[ "$tomb_record" != "$expected_record" ]]; then
+			# The elected reclaimer's marker moved with the directory. Release it
+			# before handing the changed owner's directory back, so a later dead
+			# owner can still be reclaimed. Do not touch the changed owner record.
+			rmdir "${tomb}/.reclaim" 2>/dev/null || true
 			# The lock changed hands; hand it back if the path is still free.
 			mv "$tomb" "$lock_dir" 2>/dev/null || _audit_error "Audit log lock changed owner during removal: $lock_dir"
 			return 1
