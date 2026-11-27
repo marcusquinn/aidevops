@@ -16,6 +16,8 @@ _dispatch_negative_cache_path() {
 }
 
 _DISPATCH_LIVE_OWNER_HOLD_REASON="worktree_live_owner_refused"
+# GH#40551: boundary-field marker on a draft block recorded for a claimed owner.
+_DISPATCH_DRAFT_OWNER_MARKER="claimed_owner"
 
 # GH#33026: a live-owner hold is valid only while the exact refusing process
 # generation is alive and still owns the recorded worktree. Owner exit, PID
@@ -265,9 +267,12 @@ _dispatch_negative_cache_record() {
 		# as its boundary; the reader bounds it by the claim TTL and owner-pool
 		# rules. A routed stale continuation (stale_draft_checkpoint) stays
 		# unassigned-only, and an unclaimed assignee never records.
+		# The record carries that write-time owner state in the otherwise unused
+		# boundary field, so the reader never infers it from a stale snapshot.
 		local owner_mode=""
 		if [[ "$reason" == worker_draft_checkpoint_blocked ]] && _dispatch_candidate_claimed_owner_snapshot "$candidate"; then
 			owner_mode=allow_assigned
+			checkpoint_boundary="$_DISPATCH_DRAFT_OWNER_MARKER"
 		fi
 		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") ||
 			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" fingerprint; return 0; }
@@ -350,11 +355,13 @@ _dispatch_candidate_claimed_owner_snapshot() {
 	return 0
 }
 
-# GH#40551: reader gate for a draft block on an assigned issue. The claimed owner
-# is pinned by the issue revision (an assignee or label change fails the material
-# refresh), but its liveness is not observable here: the caller also caps the
-# hold at the claim TTL, and an empty local pool never holds a claim this runner
-# could own (GH#37780). Only the plain draft block qualifies, never a routed one.
+# GH#40551: reader gate for a draft block written for a claimed owner (marked by
+# _DISPATCH_DRAFT_OWNER_MARKER; the write-time state decides, never the ranked
+# snapshot). The owner is pinned by the issue revision (an assignee or label
+# change fails the material refresh), but its liveness is not observable here:
+# the caller caps the hold at the claim TTL from the write stamp, the snapshot
+# must still show the claimed owner, and an empty local pool never holds a claim
+# this runner could own (GH#37780). Only the plain draft block qualifies.
 _dispatch_claimed_owner_draft_hold() {
 	local reason="$1" candidate="$2"
 	[[ "$reason" == worker_draft_checkpoint_blocked ]] || return 1
@@ -508,9 +515,11 @@ _dispatch_negative_cache_reason() {
 		[[ "$rearm" == "$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)" ]] || return 1
 		ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
 		((ttl <= 21600)) || ttl=21600
-		if ! jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null; then
+		if [[ "$checkpoint_boundary" == "$_DISPATCH_DRAFT_OWNER_MARKER" ]]; then
 			_dispatch_claimed_owner_draft_hold "$reason" "$candidate" || return 1
 			((ttl <= _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS)) || ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
+		else
+			jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
 		fi
 		# GH#34402: the PR read can cost an API call, so expire first.
 		now=$(date +%s)

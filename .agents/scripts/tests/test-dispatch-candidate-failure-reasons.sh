@@ -333,16 +333,24 @@ if _dispatch_negative_cache_reason "$unclaimed"; then exit 1; fi
 if _dispatch_negative_cache_reason "$(jq -c '.assignees = [{login:"third-runner"}] | .updatedAt = "2026-10-13T00:00:01Z"' <<<"$claimed")"; then exit 1; fi
 # The claim TTL (1800s), not the 21600s unassigned ceiling, bounds the stale-hit delay.
 for age in 1700 1801; do
-	printf '%s\t%s\t%s\t123\t%s\t%s:43200\n' "$((now - age))" \
+	printf '%s\t%s\t%s\t123\t%s\t%s:43200\tclaimed_owner\n' "$((now - age))" \
 		'2026-10-13T00:00:00Z' worker_draft_checkpoint_blocked "$PR_FINGERPRINT" "$((now + 100))" >"$cache"
 	if ((age < 1800)); then
 		[[ "$(_dispatch_negative_cache_reason "$claimed")" == worker_draft_checkpoint_blocked ]]
+		# The write-time owner state decides the bound, not the ranked snapshot: a
+		# stale unassigned snapshot must neither hit nor reach the 21600s ceiling.
+		if _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
 	else
 		if _dispatch_negative_cache_reason "$claimed"; then exit 1; fi
+		if _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
 	fi
 done
+# An unmarked (unassigned-era or older-bundle) record never serves a claimed owner.
+printf '%s\t%s\t%s\t123\t%s\t%s:43200\n' "$((now - 60))" \
+	'2026-10-13T00:00:00Z' worker_draft_checkpoint_blocked "$PR_FINGERPRINT" "$((now + 100))" >"$cache"
+if _dispatch_negative_cache_reason "$claimed"; then exit 1; fi
 # A recorded boundary crossing, PR change or routed stale recovery still wakes the owner hint.
-printf '%s\t%s\t%s\t123\t%s\t%s:43200\n' "$now" \
+printf '%s\t%s\t%s\t123\t%s\t%s:43200\tclaimed_owner\n' "$now" \
 	'2026-10-13T00:00:00Z' worker_draft_checkpoint_blocked "$PR_FINGERPRINT" "$now" >"$cache"
 if _dispatch_negative_cache_reason "$claimed"; then exit 1; fi
 rm -f "$cache"
