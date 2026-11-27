@@ -47,6 +47,9 @@ readonly RESULTS_DB="${WORKSPACE_DIR}/search-cache.db"
 readonly SPOTLIGHT_EMAIL_KIND="com.apple.mail.emlx"
 readonly SPOTLIGHT_EML_KIND="public.email-message"
 
+# Shared printf prefix for per-message JSON objects (path, subject, from, date)
+readonly EMAIL_JSON_HEAD='{"path":"%s","subject":"%s","from":"%s","date":"%s"'
+
 # ============================================================================
 # Logging (uses shared-constants.sh print_* functions)
 # ============================================================================
@@ -155,12 +158,131 @@ spotlight_search() {
 	paths=$(mdfind -0 "$mdfind_query" 2>/dev/null | tr '\0' '\n' | head -n "$limit")
 
 	if [[ -z "$paths" ]]; then
+		# Spotlight may not index the live Mail.app store (Full Disk Access /
+		# Mail privacy indexing). Fall back to a bounded .emlx scan (GH#40617).
+		if mail_store_has_emlx; then
+			emlx_scan_search "$query" "$limit" "spotlight_zero_results_live_emlx_present"
+			return 0
+		fi
 		echo "[]"
 		return 0
 	fi
 
 	# Build JSON output from mdls metadata
 	spotlight_paths_to_json "$paths" "$query"
+	return 0
+}
+
+# Root of Mail.app storage (overridable for testing)
+mail_store_root() {
+	printf '%s' "${MAILBOX_MAIL_DIR:-$HOME/Library/Mail}"
+	return 0
+}
+
+# List existing Mail.app version dirs (V*), one per line
+mail_store_dirs() {
+	local root d
+	root=$(mail_store_root)
+	for d in "$root"/V*; do
+		[[ -d "$d" ]] && printf '%s\n' "$d"
+	done
+	return 0
+}
+
+# Return 0 when any .emlx file exists under Mail.app storage
+mail_store_has_emlx() {
+	local d
+	while IFS= read -r d; do
+		[[ -z "$d" ]] && continue
+		if [[ -n "$(find "$d" -name '*.emlx' -print -quit 2>/dev/null)" ]]; then
+			return 0
+		fi
+	done < <(mail_store_dirs)
+	return 1
+}
+
+# JSON-escape a string (backslash, quote; tabs/CRs become spaces)
+json_escape() {
+	local value="$1"
+	printf '%s' "$value" | tr '\t\r' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+	return 0
+}
+
+# Print the first value of header $2 from .emlx file $1
+emlx_header() {
+	local file="$1"
+	local name="$2"
+	awk -v h="$name" '
+		NR==1 && $0 ~ /^[0-9]+\r?$/ { next }
+		/^\r?$/ { exit }
+		{
+			line=$0; sub(/\r$/, "", line)
+			if (tolower(substr(line, 1, length(h)+1)) == tolower(h) ":") {
+				v=substr(line, length(h)+2); sub(/^[ \t]+/, "", v); print v; exit
+			}
+		}' "$file" 2>/dev/null
+	return 0
+}
+
+# Bounded ripgrep scan of Mail.app .emlx files with header parsing,
+# Message-ID dedup, and INBOX/Sent preferred over Drafts/Outbox/SendLater.
+emlx_scan_search() {
+	local query="$1"
+	local limit="$2"
+	local reason="${3:-emlx_scan}"
+	local max_candidates="${MAILBOX_EMLX_MAX_CANDIDATES:-2000}"
+
+	if ! command -v rg >/dev/null 2>&1; then
+		echo "[]"
+		return 0
+	fi
+
+	local dirs=()
+	local d
+	while IFS= read -r d; do
+		[[ -n "$d" ]] && dirs+=("$d")
+	done < <(mail_store_dirs)
+	if [[ ${#dirs[@]} -eq 0 ]]; then
+		echo "[]"
+		return 0
+	fi
+
+	local files
+	files=$(rg -l -i -F --glob '*.emlx' -e "$query" "${dirs[@]}" 2>/dev/null || true)
+	files=$(printf '%s\n' "$files" | sed -n "1,${max_candidates}p")
+
+	# Order: regular mailboxes first, autosave/draft locations last
+	local draft_re='/(Drafts|Outbox|SendLater)[^/]*\.mbox/'
+	local preferred low ordered
+	preferred=$(printf '%s\n' "$files" | grep -v -E "$draft_re" | grep -v '^$' || true)
+	low=$(printf '%s\n' "$files" | grep -E "$draft_re" || true)
+	ordered=$(printf '%s\n%s\n' "$preferred" "$low" | grep -v '^$' || true)
+
+	local seen=$'\n' count=0 first=1 path
+	printf '['
+	while IFS= read -r path; do
+		[[ -z "$path" ]] && continue
+		[[ "$count" -ge "$limit" ]] && break
+
+		local msgid subject from_addr date_str
+		msgid=$(emlx_header "$path" "Message-ID")
+		if [[ -n "$msgid" && "$seen" == *$'\n'"$msgid"$'\n'* ]]; then
+			continue
+		fi
+		[[ -n "$msgid" ]] && seen+="${msgid}"$'\n'
+		subject=$(emlx_header "$path" "Subject")
+		from_addr=$(emlx_header "$path" "From")
+		date_str=$(emlx_header "$path" "Date")
+
+		[[ "$first" -eq 0 ]] && printf ','
+		first=0
+		count=$((count + 1))
+		# shellcheck disable=SC2059 # format string is a trusted constant
+		printf "${EMAIL_JSON_HEAD}"',"backend":"emlx-scan","backend_used":"emlx-scan","fallback_reason":"%s","message_id":"%s"}' \
+			"$(json_escape "$path")" "$(json_escape "$subject")" "$(json_escape "$from_addr")" \
+			"$(json_escape "$date_str")" "$(json_escape "$reason")" "$(json_escape "$msgid")"
+	done <<<"$ordered"
+	printf ']'
 	return 0
 }
 
@@ -195,7 +317,8 @@ spotlight_paths_to_json() {
 		fi
 		first=0
 
-		printf '{"path":"%s","subject":"%s","from":"%s","date":"%s","backend":"spotlight"}' \
+		# shellcheck disable=SC2059 # format string is a trusted constant
+		printf "${EMAIL_JSON_HEAD}"',"backend":"spotlight","backend_used":"spotlight","fallback_reason":null}' \
 			"$path_escaped" "$subject" "$from_addr" "$date_str"
 	done <<<"$paths"
 	printf ']'
@@ -285,8 +408,21 @@ spotlight_index_status() {
 	local email_count
 	email_count=$(mdfind "kMDItemContentType == '${SPOTLIGHT_EMAIL_KIND}'" 2>/dev/null | wc -l | tr -d ' ')
 
-	printf '{"backend":"spotlight","available":true,"indexing_enabled":%s,"indexed_emails":%s,"status":"%s"}' \
-		"$enabled" "$email_count" "$(printf '%s' "$status" | sed 's/"/\\"/g')"
+	# Live Mail.app store (~/Library/Mail/V*) indexed count, reported separately.
+	# Spotlight may index archived stores but not the live one (GH#40617).
+	local live_count live_present="false" warning=""
+	live_count=$(mdfind -onlyin "$(mail_store_root)" -count "kMDItemContentType == '${SPOTLIGHT_EMAIL_KIND}'" 2>/dev/null | tr -d ' ')
+	[[ "$live_count" =~ ^[0-9]+$ ]] || live_count=0
+	if mail_store_has_emlx; then
+		live_present="true"
+		if [[ "$live_count" -eq 0 ]]; then
+			warning="Spotlight has 0 indexed messages for the live Mail.app store but .emlx files exist on disk; search falls back to a direct .emlx scan. Check Full Disk Access and Spotlight Mail privacy settings."
+			echo "WARNING: $warning" >&2
+		fi
+	fi
+
+	printf '{"backend":"spotlight","available":true,"indexing_enabled":%s,"indexed_emails":%s,"live_store_indexed_emails":%s,"live_store_emlx_present":%s,"warning":"%s","status":"%s"}' \
+		"$enabled" "$email_count" "$live_count" "$live_present" "$(json_escape "$warning")" "$(json_escape "$status")"
 	return 0
 }
 
