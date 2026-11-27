@@ -202,6 +202,10 @@ test_id_zero_padded_variant() {
 # sequence on each call, mirroring what the real CAS would do.
 # ---------------------------------------------------------------------------
 
+# Skip the live GitHub PR/issue title-prefix check: the mocked IDs (2153-2160)
+# exist as real titles, which would report collisions the tests did not stage.
+export CLAIM_TASK_ID_SKIP_TITLE_CHECK=1
+
 # Global state for mock
 _MOCK_SEQ=()
 _MOCK_SEQ_IDX=0
