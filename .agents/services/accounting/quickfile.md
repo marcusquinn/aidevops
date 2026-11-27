@@ -197,7 +197,9 @@ statement line is already imported untagged.
   verify a reclassification.
 - `POST /journals` posts balanced multi-line journals. Prefer one journal per period
   that names its reason and covers a whole class of reclassification over many
-  silent line edits, and dry-run it from live ledger lines first. Journals don't feed
+  silent line edits, and dry-run it from live ledger lines first. Each item is moved
+  by exactly one method. Never journal an item and also edit its source document or
+  retag its bank line. Journals don't feed
   the VAT return (QuickFile builds it from invoices and purchases). Correct
   VAT-bearing items on the invoice or purchase itself, or with the proper VAT
   adjustment.
@@ -206,7 +208,9 @@ statement line is already imported untagged.
   - **Retag a line:** Banking → account → Tagged → Detag, then Tag Me. This applies only
     to lines tagged straight to a nominal. If the line pays an invoice or purchase,
     change the category on that document instead. Detagging leaves the document unpaid,
-    and re-tagging as a new purchase duplicates the cost.
+    and re-tagging as a new purchase duplicates the cost. A document included in a
+    filed VAT return is locked. Move its entries in the nominal ledger with "Move to
+    new code" instead.
   - **Dividend:** "Salary, dividend or other drawings" → Dividends → "Create
     dividend voucher". This also creates the board minute.
   - **New nominal:** Chart of Accounts → Create New Account → Enter specific code.
