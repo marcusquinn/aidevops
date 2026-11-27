@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# Resolve symlinks first: the PATH shim (~/.aidevops/bin/shellcheck) is a symlink,
+# so BASH_SOURCE[0] points at the shim dir, which has no mkdir-exclusive.sh.
+_sc_wrapper_self="$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+_sc_wrapper_dir="${_sc_wrapper_self%/*}"
+[[ "$_sc_wrapper_dir" == "$_sc_wrapper_self" ]] && _sc_wrapper_dir="."
 # shellcheck source=mkdir-exclusive.sh
-source "${BASH_SOURCE[0]%/*}/mkdir-exclusive.sh"
+source "${_sc_wrapper_dir}/mkdir-exclusive.sh"
+unset _sc_wrapper_self _sc_wrapper_dir
 
 # Safe ShellCheck wrapper for language servers (shellcheck-wrapper.sh)
 #
