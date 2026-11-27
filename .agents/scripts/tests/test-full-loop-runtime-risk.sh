@@ -282,6 +282,14 @@ other_conf_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.co
 assert_contains "other agent configs still derive Critical" "$other_conf_risk" "Critical"
 noun_session_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Bump version for this session's PRs")
 assert_contains "GH#40564 session noun in prose is not Critical" "<$noun_session_risk>" "<Medium>"
+for prose in "Set store version to 1.2" "Refresh token examples" "Clear cookie examples" "Update token manager examples"; do
+	prose_risk=$(_derive_runtime_risk "" "package.json" "$prose")
+	assert_contains "non-session operation prose stays Medium: $prose" "<$prose_risk>" "<Medium>"
+done
+for prose in "Refresh session" "Update session manager" "Clear session" "Update session store"; do
+	prose_risk=$(_derive_runtime_risk "" "package.json" "$prose")
+	assert_contains "session operation prose stays Critical: $prose" "<$prose_risk>" "<Critical>"
+done
 registry_runtime_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,src/auth.sh" "Registry and auth change")
 assert_contains "registry beside runtime code still derives Critical" "$registry_runtime_risk" "Critical"
 
