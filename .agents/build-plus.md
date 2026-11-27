@@ -59,6 +59,8 @@ subagents:
   - posthog
   - sentry
   - socket
+  # Accounting (activation-agent MCP; Task-delegable, never a headless --agent)
+  - quickfile
   # Runtime operations
   - node-server-admin
   - php-server-admin
