@@ -4,7 +4,6 @@ No new tables or fabricated admissions. Receipts use the existing event journal.
 Current-generation cleanup is unchanged. Remove this module after the backlog.
 """
 
-from contextlib import contextmanager
 from functools import partial
 import json
 import os
@@ -22,6 +21,8 @@ from .interrupted_removal import require_deletion_only, validation_boundary
 from .legacy_discovery import same_tree
 from .legacy_escalation import half_state_report
 from .legacy_inventory import inspect, inventory, unchanged
+from .legacy_lookup import pass_pull_requests, prefetched_pull_requests
+from .legacy_lookup import released_pull_requests, writer_released
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import require_manual_confirmation, require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
@@ -34,7 +35,6 @@ from .legacy_resume import restore_link, resume_reconstructible_removal
 from .legacy_probe import verify_reconstructible
 from .legacy_takeover import close_quiescent_admission
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
-from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
 
@@ -47,22 +47,6 @@ def require_confirmation(connection, operation, confirmed):
     )
 
 
-@contextmanager
-def writer_released(connection):
-    """Release the global writer for archive, network or journaled removal work.
-
-    The caller retains its operation lock and must revalidate registry writers
-    after reacquisition. Native source move never runs in this scope; native
-    removal runs here only through `remove_released`, after its start is
-    journaled. Body failures propagate unchanged through the outer transaction's
-    rollback. Only successful work reacquires the writer; failure to reacquire
-    still aborts the next phase.
-    """
-    connection.commit()
-    yield
-    connection.execute("BEGIN IMMEDIATE")
-
-
 def remove_released(connection, *arguments):
     """Run one native `git worktree remove` without the registry writer (GH#38158).
 
@@ -73,34 +57,6 @@ def remove_released(connection, *arguments):
     """
     with writer_released(connection):
         _git(*arguments)
-
-
-def pass_pull_requests(options):
-    """Pass-memoised open-PR lookup for prechecks and journaled plans (GH#37181)."""
-    return partial(options.pull_requests.get, lookup=open_pull_requests)
-
-
-def released_pull_requests(connection, options, slug):
-    """Open-PR lookup that never holds the registry writer across the network.
-
-    GitHub state is not serialized by the registry. A plan built with this
-    lookup is only journaled; removal requires a refreshed plan whose local,
-    registry and /proc checks all run under the reacquired writer (GH#36921).
-    """
-    with writer_released(connection):
-        return pass_pull_requests(options)(slug)
-
-
-def prefetched_pull_requests(connection, options, slug):
-    """Freshly fetch the journaled plan's slug without the writer; serve only that.
-
-    `plan["repo"]` is part of the compared plan, so a refreshed plan for any other
-    repository never equals the journaled plan and removal is refused. This lookup
-    is never served from the pass memo, so removal rests on current GitHub state.
-    """
-    with writer_released(connection):
-        prs = options.pull_requests.refresh(slug, open_pull_requests)
-    return lambda _requested: prs
 
 
 def archive_source(store, connection, operation, plan, adapter):

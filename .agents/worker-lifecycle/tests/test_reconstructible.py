@@ -15,6 +15,7 @@ from uuid import uuid4
 from tests import test_retirement as fixtures
 from worker_lifecycle import legacy_cleanup as cleanup
 from worker_lifecycle import legacy_inventory as inventory
+from worker_lifecycle import legacy_lookup
 from worker_lifecycle import legacy_probe as probe
 from worker_lifecycle import legacy_proc
 from worker_lifecycle import legacy_resume
@@ -53,7 +54,7 @@ class ReconstructibleContract(unittest.TestCase):
                               side_effect=lambda path: self.real_census(path, self.proc))
         census.start()
         self.addCleanup(census.stop)
-        prs = patch.object(cleanup, "open_pull_requests", return_value=[])
+        prs = patch.object(legacy_lookup, "open_pull_requests", return_value=[])
         self.prs = prs.start()
         self.addCleanup(prs.stop)
 
