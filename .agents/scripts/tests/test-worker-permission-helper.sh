@@ -97,6 +97,25 @@ if [[ "$(permission_render_capabilities "$executing_envelope")" == *'Owned recov
 	printf 'broad external bash was misclassified as a dependency read\n' >&2
 	exit 1
 fi
+device_capture="${test_root}/device-capture.json"
+jq '.requests = [.requests[0] | .tool = "bash" | .patterns = ["/dev/*"] | .concrete_device_targets = ["/dev/tty", "/dev/sda"]]' "$capture_file" >"$device_capture"
+permission_validate_capture "$device_capture" 123 owner/repo
+permission_build_envelope "$device_capture" 123 owner/repo issue-123 "$PWD" >"$executing_envelope"
+rendered_devices=$(permission_render_capabilities "$executing_envelope")
+if [[ "$rendered_devices" != *'Concrete device targets: "/dev/tty", "/dev/sda"'* ]]; then
+	printf 'permission comment omitted concrete device paths\n' >&2
+	exit 1
+fi
+jq '.requests[0].concrete_device_targets = ["/dev/tty password=value"]' "$device_capture" >"${device_capture}.unsafe"
+if permission_validate_capture "${device_capture}.unsafe" 123 owner/repo; then
+	printf 'permission device diagnostics accepted command arguments\n' >&2
+	exit 1
+fi
+jq '.capabilities[0].concrete_device_targets = []' "$executing_envelope" >"${executing_envelope}.unknown"
+if [[ "$(permission_render_capabilities "${executing_envelope}.unknown")" != *'Concrete device targets: (not recorded)'* ]]; then
+	printf 'unknown device target was not explicit in the permission comment\n' >&2
+	exit 1
+fi
 # Existing request IDs own unchanged recovery; do not create another comment.
 (
 	gh_issue_view() { printf '{"labels":[]}\n'; return 0; }

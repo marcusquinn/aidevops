@@ -92,16 +92,21 @@ permission_validate_capture() {
 	local issue_number="$2"
 	local repo_slug="$3"
 	jq -e --arg issue "$issue_number" --arg repo "$repo_slug" '
+		def is_array: type == "array";
+		def is_string: type == "string";
 		.schema == "aidevops-permission-capture/v1"
 		and .issue == $issue
 		and (.repo | ascii_downcase) == ($repo | ascii_downcase)
-		and (.requests | type == "array" and length > 0 and length <= 20)
+		and (.requests | is_array and length > 0 and length <= 20)
 		and all(.requests[];
-			(.permission | type == "string" and length > 0 and length <= 100)
-			and (.patterns | type == "array" and length <= 20)
-			and all(.patterns[]; type == "string" and length <= 500)
+			(.permission | is_string and length > 0 and length <= 100)
+			and (.patterns | is_array and length <= 20)
+			and all(.patterns[]; is_string and length <= 500)
 			and (.risk.level as $level | ["low", "medium", "high", "critical"] | index($level) != null)
 			and (.risk.grantable | type == "boolean")
+			and ((.concrete_device_targets // []) | is_array and length <= 20)
+			and all((.concrete_device_targets // [])[];
+				is_string and test("^/dev/(null|stdin|stdout|stderr|fd/[0-9]+|u?random|tty[0-9]*|[shv]d[a-z][0-9]*|nvme[0-9]+n[0-9]+(p[0-9]+)?)$"))
 		)
 		and all(.requests[];
 			all((.patterns[]?), .intent;
@@ -241,6 +246,7 @@ permission_build_envelope() {
 			},
 			capabilities: [.requests[] | {
 				permission, patterns, tool, intent, risk,
+				concrete_device_targets: (.concrete_device_targets // []),
 				opencode: {request_id: .opencode.request_id, session_id: .opencode.session_id}
 			}],
 			created_at: $created
@@ -286,6 +292,10 @@ permission_render_capabilities() {
 			and any(.patterns[]?; test("/[.](bun|qlty)/bin/[*][*]?$|/[.]local/bin/[*][*]?$"));
 		"- **" + .permission + "** via `" + .tool + "` — "
 		+ (if (.patterns | length) == 0 then "(no pattern supplied)" else (.patterns | map(tojson | safe) | join(", ")) end)
+		+ (if .permission == $perm and any(.patterns[]?; startswith("/dev/"))
+			then "\n  - Concrete device targets: " + (if ((.concrete_device_targets // []) | length) == 0 then "(not recorded)"
+			else (.concrete_device_targets | map(select(test("^/dev/(null|stdin|stdout|stderr|fd/[0-9]+|u?random|tty[0-9]*|[shv]d[a-z][0-9]*|nvme[0-9]+n[0-9]+(p[0-9]+)?)$"))) | map(tojson) | join(", ")) end)
+			else "" end)
 		+ "\n  - Reason: " + (if .intent == "" then "No additional model rationale was available." else (.intent | safe) end)
 		+ "\n  - Risk: **" + .risk.level + "** — " + (.risk.reason | safe)
 		+ (if avoidable_tool_bin_read then "\n  - Recovery: Routine tool discovery should use `command -v TOOL`, `TOOL --version`, or a repository wrapper instead of reading the install directory." else "" end)

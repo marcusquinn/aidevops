@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "path";
 import { homedir } from "os";
 import { recordPermissionBlocker } from "./permission-broker-blocker-log.mjs";
-import { isUnauditedRuntimeRead } from "./permission-broker-runtime-read.mjs";
+import { isUnauditedRuntimeRead, recordedDeviceTargets } from "./permission-broker-runtime-read.mjs";
 import { impossibleExternalRead as classifyImpossibleRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
 import { isReadOnlyRootRead, resolvedRiskTargets } from "./permission-broker-read-only-root.mjs";
 import { isDesignedPollDoomLoop, recordDesignedPollAllow } from "./permission-broker-designed-poll.mjs";
@@ -66,6 +66,7 @@ function stableRequestID(request) {
     patterns: [...request.patterns].sort(),
     tool: request.tool,
     intent: request.intent,
+    concrete_device_targets: request.concrete_device_targets,
   });
   return `perm-${createHash("sha256").update(canonical).digest("hex").slice(0, 16)}`;
 }
@@ -161,6 +162,8 @@ function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath,
     permission,
     patterns,
     tool,
+    concrete_device_targets: permission === "external_directory" && patterns.some((pattern) => pattern.startsWith("/dev/"))
+      ? recordedDeviceTargets(toolContext) : [],
     intent: sanitizePermissionText(toolContext.intent || raw?.metadata?.description || raw?.title || "", { ...options, maxLength: MAX_INTENT_LENGTH }),
     risk: classifyRisk(permission, patterns, tool, resolvedRiskTargets(raw, toolContext.target)),
     opencode: {

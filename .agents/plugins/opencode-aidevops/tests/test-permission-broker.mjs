@@ -29,12 +29,17 @@ test("worker runtime reads allow bounded plumbing but keep broad and proc reques
     ["stdout", "/dev/stdout", "/dev/*", "read", true],
     ["stderr", "/dev/stderr", "/dev/*", "read", true],
     ["fd", "/dev/fd/1", "/dev/fd/*", "read", true],
+    ["urandom", "/dev/urandom", "/dev/*", "read", true],
+    ["random", "/dev/random", "/dev/*", "read", true],
     ["temp", join(temp, "output.txt"), `${temp}/*`, "read", true],
     ["broad-dev", "", "/dev/*", "read", false],
     ["broad-home", join(temp, "output.txt"), `${root}/*`, "read", false],
     ["proc", "/proc/meminfo", "/proc/*", "read", false],
     ["proc-self", "/proc/self/status", "/proc/self/*", "read", false],
     ["write", "/dev/null", "/dev/*", "edit", false],
+    ["write-random", "/dev/random", "/dev/*", "write", false],
+    ["tty", "/dev/tty", "/dev/*", "read", false],
+    ["block", "/dev/null/../sda", "/dev/*", "read", false],
     ["symlink", join(temp, "escape/request.json"), `${temp}/escape/*`, "read", false],
     ["secret", join(temp, ".env"), `${temp}/*`, "read", false],
   ]) {
@@ -57,7 +62,7 @@ test("worker runtime reads allow bounded plumbing but keep broad and proc reques
   assert.ok(capture.requests.some((request) => request.patterns.includes("/dev/*")));
 });
 
-test("only a simple recorded bash device redirection bypasses its directory ask", async (t) => {
+test("only bounded recorded bash device operations bypass their directory ask", async (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-runtime-shell-")));
   const previous = preserveWorkerEnvironment();
   t.after(() => { restoreWorkerEnvironment(previous); rmSync(root, { recursive: true, force: true }); });
@@ -67,7 +72,28 @@ test("only a simple recorded bash device redirection bypasses its directory ask"
   for (const [command, permission, patterns, allowed] of [
     ["git status 2>/dev/null", "external_directory", ["/dev/*"], true],
     ["cat </dev/stdin", "external_directory", ["/dev/*"], true],
-    ["git status 1>/dev/fd/1", "external_directory", ["/dev/fd/*"], true],
+    ["git status 1>/dev/fd/1", "external_directory", ["/dev/fd/*"], false],
+    ["git status --short 2>/dev/null | head -1", "external_directory", ["/dev/*"], true],
+    ["true </dev/null", "external_directory", ["/dev/*"], true],
+    ["</dev/null true", "external_directory", ["/dev/*"], true],
+    ["git status >/dev/null 2>&1 && true", "external_directory", ["/dev/*"], true],
+    ["true && git 2>/dev/null status", "external_directory", ["/dev/*"], true],
+    ["head -c 16 /dev/urandom", "external_directory", ["/dev/*"], true],
+    ["head -c 16 </dev/random", "external_directory", ["/dev/*"], true],
+    ["cat </dev/urandom >/dev/null", "external_directory", ["/dev/*"], true],
+    ["true >>/dev/null", "external_directory", ["/dev/*"], true],
+    ["true >/dev/urandom", "external_directory", ["/dev/*"], false],
+    ["true >>/dev/random", "external_directory", ["/dev/*"], false],
+    ["tee /dev/urandom", "external_directory", ["/dev/*"], false],
+    ["cat </dev/tty", "external_directory", ["/dev/*"], false],
+    ["true >/dev/stdout", "external_directory", ["/dev/*"], false],
+    ["true >/dev/stderr", "external_directory", ["/dev/*"], false],
+    ["cat </dev/sda", "external_directory", ["/dev/*"], false],
+    ["true >/dev/null && cat /dev/sda", "external_directory", ["/dev/*"], false],
+    ["true >/dev/null && tee /dev/random", "external_directory", ["/dev/*"], false],
+    ["true >/dev/null &&", "external_directory", ["/dev/*"], false],
+    ["true >/dev/null$(cat secret)", "external_directory", ["/dev/*"], false],
+    ["cat << /dev/null", "external_directory", ["/dev/*"], false],
     ["cat /dev/sda 2>/dev/null", "external_directory", ["/dev/*"], false],
     ["git status 2>/dev/null; cat /dev/sda", "external_directory", ["/dev/*"], false],
     ["git status 2>/dev/null", "external_directory", ["/dev/*", `${root}/*`], false],
@@ -80,6 +106,12 @@ test("only a simple recorded bash device redirection bypasses its directory ask"
     broker.permissionAsk({ permission, patterns, callID: "shell" }, output);
     assert.equal(output.status, allowed ? "allow" : "deny", command);
   }
+  const capture = JSON.parse(readFileSync(process.env.AIDEVOPS_PERMISSION_REQUEST_FILE, "utf8"));
+  assert.ok(capture.requests.some((request) => request.concrete_device_targets.includes("/dev/tty")));
+  assert.ok(capture.requests.some((request) => request.concrete_device_targets.includes("/dev/sda")));
+  assert.ok(capture.requests.some((request) => request.concrete_device_targets.length === 0));
+  assert.equal(JSON.stringify(capture).includes("cat secret"), false);
+  assert.ok(capture.requests.every((request) => request.command === undefined));
 });
 
 test("runtime scratch exception rejects a symlinked root or managed ancestor", (t) => {
