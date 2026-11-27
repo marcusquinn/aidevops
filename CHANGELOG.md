@@ -10,6 +10,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.290] - 2026-11-27
+
+### Added
+
+- pass NPM_CONFIG_GLOBALCONFIG and DOCKER_HOST to worker sandbox (GH#40566) (#40567)
+
+### Changed
+
+- Maintenance: mark t19425 complete (pr:#40591 completed:2026-11-27) (#40601)
+- Maintenance: sync GitHub issue refs to TODO.md (#40594)
+- Maintenance: mark t19426 complete (pr:#40587 completed:2026-11-27) (#40592)
+- Maintenance: sync GitHub issue refs to TODO.md (#40577)
+- Maintenance: mark t19417 complete (pr:#40533 completed:2026-11-27) (#40563)
+
+### Fixed
+
+- preserve mkdir exclusivity under uutils (GH#40582) (#40591)
+- skip orphan TODO seeding when an open PR adds the row (#40598)
+- require explicit closure intent (#40593)
+- start rerun marker on its own line (#40587)
+- remove early-exit pipe readers from checkout-order suite (#40589)
+- relationship-deadline suite tolerates 1-3s per-operation timing (#40588)
+- treat NO_APPROVAL as expected approval state (#40576)
+- resume half-removed worktrees instead of retaining them forever (#40570)
+- audit comment on auto claim release and bind stamp PID to start time (GH#40572) (#40574)
+- diagnose unreadable CWDs across UIDs and threads (GH#40571) (#40573)
+- ignore bare 'session' noun in PR prose for risk classification (GH#40564) (#40565)
+- surface and fix Linux-only red health suites (GH#40529) (#40533)
+- explain planning publication merge conflicts from stale HEAD (GH#40552) (#40556)
+- write decision-race fixture issue.json atomically (#40561)
+- reclaim stale locks only against the judged instance (#40557)
+- reap exhausted orphan supervisors (#40559)
+
 ## [3.39.289] - 2026-11-27
 
 ### Added
