@@ -196,6 +196,13 @@ failure it reports. Only a tool with no CI equivalent (runtime tests,
 interpreters, secrets, local data) that is still unavailable on this runner uses:
 TERMINAL_BLOCKER_REASON=runner_capability_unmet
 Name the missing tool, interpreter and checked declarations in the dossier.
+A missing Linux userland, container runtime or WordPress site is not yet this
+class (GH#40636): first try the local substitutes in `reference/platform-support.md`
+"Local runtime substitutes" (OrbStack or Docker containers and Linux VMs,
+WordPress Playground) with disposable labelled resources. Never connect,
+disconnect or switch a host VPN. Use the class only when no substitute exists,
+the substitute failed (name the command and error), or the brief or a repo doc
+forbids it.
 A runner-local account or credential that this runner lacks or the service
 rejects (for example a staging sign-in returning HTTP 401) is the same class,
 not permission_required; another runner may hold it (GH#34901).

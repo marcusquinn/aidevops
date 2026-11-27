@@ -2579,6 +2579,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19433 perf(profile): make session-time collection incremental and bounded; it runs 70+ min under Background I/O #auto-dispatch #bug ref:GH#40628 -> [todo/tasks/t19433-brief.md] pr:#40631 completed:2026-11-27
 
+- [ ] t19434 fix(worker): try local Linux/container/WordPress substitutes before runner_capability_unmet #bug ref:GH#40636
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
