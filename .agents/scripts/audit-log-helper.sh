@@ -550,7 +550,10 @@ _audit_acquire_lock() {
 	while :; do
 		# Publication and reclamation must share the same namespace fence. A
 		# delayed publisher is not an orphan, even with an orphan age of zero.
-		if _audit_elect_reclaimer "$election_dir"; then
+		# Avoid churning the fence while a holder needs it to release. This
+		# preliminary check is only a contention fast path: mkdir and owner
+		# publication still run under the election if the path becomes free.
+		if [[ ! -d "$lock_dir" ]] && _audit_elect_reclaimer "$election_dir"; then
 			if (umask 077 && mkdir "$lock_dir") 2>/dev/null; then
 				local publish_rc=0
 				_audit_publish_lock_owner "$lock_dir" || publish_rc=1
