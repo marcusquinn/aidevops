@@ -555,6 +555,7 @@ _planning_publish_build_index() {
 				merge_rc=0
 				_planning_git -C "$repo_path" merge-file -p --diff3 "$ours_file" "$base_file" "$theirs_file" >"$merged_file" || merge_rc=$?
 				if [[ "$merge_rc" -ne 0 ]]; then
+					# git merge-file returns the conflict count (1-127); higher values are errors.
 					[[ "$merge_rc" -ge 1 && "$merge_rc" -le 127 ]] || return 1
 					_planning_publish_log_conflict_detail "$repo_path" "$parent_sha" "$path"
 					_planning_publish_log_retryable_conflict "$PLANNING_PUBLICATION_ID"
