@@ -2575,7 +2575,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19431 fix(shellcheck): wrapper sources mkdir-exclusive.sh relative to the PATH-shim symlink and fails #auto-dispatch #bug ref:GH#40609 -> [todo/tasks/t19431-brief.md] pr:#40611 completed:2026-11-27
 
-- [ ] t19432 fix: keywords sweep treats scaffold-only registries as populated #bug ref:GH#40620
+- [x] t19432 fix: keywords sweep treats scaffold-only registries as populated #bug ref:GH#40620 pr:#40621 completed:2026-11-27
 
 - [ ] t19433 perf(profile): make session-time collection incremental and bounded; it runs 70+ min under Background I/O #auto-dispatch #bug ref:GH#40628 -> [todo/tasks/t19433-brief.md]
 
