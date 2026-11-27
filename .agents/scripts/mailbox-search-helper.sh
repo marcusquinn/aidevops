@@ -217,10 +217,17 @@ emlx_header() {
 		/^\r?$/ { exit }
 		{
 			line=$0; sub(/\r$/, "", line)
-			if (tolower(substr(line, 1, length(h)+1)) == tolower(h) ":") {
-				v=substr(line, length(h)+2); sub(/^[ \t]+/, "", v); print v; exit
+			if (found) {
+				if (line ~ /^[ \t]/) {
+					sub(/^[ \t]+/, "", line); v=v " " line; next
+				}
+				exit
 			}
-		}' "$file" 2>/dev/null
+			if (tolower(substr(line, 1, length(h)+1)) == tolower(h) ":") {
+				v=substr(line, length(h)+2); sub(/^[ \t]+/, "", v); found=1
+			}
+		}
+		END { if (found) { sub(/^[ \t]+/, "", v); print v } }' "$file" 2>/dev/null
 	return 0
 }
 
@@ -247,20 +254,29 @@ emlx_scan_search() {
 		return 0
 	fi
 
-	local files
-	files=$(rg -l -i -F --glob '*.emlx' -e "$query" "${dirs[@]}" 2>/dev/null || true)
-	files=$(printf '%s\n' "$files" | sed -n "1,${max_candidates}p")
+	# Cap discovered candidates BEFORE reading message content. Stream discovery
+	# so sparse/no-match queries cannot trigger an unbounded full-store scan.
+	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=2000
+	local draft_re='/(Drafts|Outbox|SendLater)[^/]*\.mbox/'
+	# Empty sentinels keep array expansion safe under Bash 3.2 nounset.
+	local preferred=("") low=("")
+	local candidates=0 path
+	while IFS= read -r -d '' path; do
+		candidates=$((candidates + 1))
+		if rg -q -i -F -e "$query" -- "$path" 2>/dev/null; then
+			if [[ "$path" =~ $draft_re ]]; then
+				low+=("$path")
+			else
+				preferred+=("$path")
+			fi
+		fi
+		[[ "$candidates" -ge "$max_candidates" ]] && break
+	done < <(rg --files -0 --glob '*.emlx' -- "${dirs[@]}" 2>/dev/null)
 
 	# Order: regular mailboxes first, autosave/draft locations last
-	local draft_re='/(Drafts|Outbox|SendLater)[^/]*\.mbox/'
-	local preferred low ordered
-	preferred=$(printf '%s\n' "$files" | grep -v -E "$draft_re" | grep -v '^$' || true)
-	low=$(printf '%s\n' "$files" | grep -E "$draft_re" || true)
-	ordered=$(printf '%s\n%s\n' "$preferred" "$low" | grep -v '^$' || true)
-
-	local seen=$'\n' count=0 first=1 path
+	local seen=$'\n' count=0 first=1
 	printf '['
-	while IFS= read -r path; do
+	for path in "${preferred[@]}" "${low[@]}"; do
 		[[ -z "$path" ]] && continue
 		[[ "$count" -ge "$limit" ]] && break
 
@@ -281,7 +297,7 @@ emlx_scan_search() {
 		printf "${EMAIL_JSON_HEAD}"',"backend":"emlx-scan","backend_used":"emlx-scan","fallback_reason":"%s","message_id":"%s"}' \
 			"$(json_escape "$path")" "$(json_escape "$subject")" "$(json_escape "$from_addr")" \
 			"$(json_escape "$date_str")" "$(json_escape "$reason")" "$(json_escape "$msgid")"
-	done <<<"$ordered"
+	done
 	printf ']'
 	return 0
 }
