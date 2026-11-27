@@ -157,6 +157,9 @@ _ghqa_lock_acquire "$publication_lock_dir" || publication_rc=$?
 unset -f mkdir
 assert_eq "ownerless reclaim cannot interrupt PID publication" "0" "$publication_rc"
 assert_eq "publication boundary was exercised under the fence" "yes" "$([[ -f "$publication_marker" ]] && printf 'yes' || printf 'no')"
+publication_pid=""
+IFS= read -r publication_pid <"${publication_lock_dir}/pid" || publication_pid=""
+assert_eq "publisher wrote its PID" "${BASHPID:-$$}" "$publication_pid"
 _ghqa_lock_release "$publication_lock_dir"
 
 replacement_lock_dir="${TEST_ROOT}/replacement.lock.d"

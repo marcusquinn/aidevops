@@ -232,18 +232,21 @@ _ghqa_transition_try() {
 	local pid="${BASHPID:-}"
 	[[ -n "$pid" ]] || pid="$(exec sh -c 'printf "%s" "$PPID"')"
 	[[ "$pid" =~ ^[0-9]+$ ]] || return 1
-	_GHQA_TRANSITION_CLAIM="${pid}.${RANDOM}.${RANDOM}"
+	# Use a candidate token; the shared claim is published only on success so a
+	# nested call (e.g. signal cleanup) cannot overwrite a live claim.
+	local candidate="${pid}.${RANDOM}.${RANDOM}"
 	if (umask 077 && mkdir "$gate") 2>/dev/null; then
-		if (umask 077 && mkdir "${gate}/claim.${_GHQA_TRANSITION_CLAIM}") 2>/dev/null; then
+		if (umask 077 && mkdir "${gate}/claim.${candidate}") 2>/dev/null; then
 			local -a claims=("$gate"/claim.*)
-			if [[ ${#claims[@]} -eq 1 && "${claims[0]}" == "${gate}/claim.${_GHQA_TRANSITION_CLAIM}" ]]; then
+			if [[ ${#claims[@]} -eq 1 && "${claims[0]}" == "${gate}/claim.${candidate}" ]]; then
+				_GHQA_TRANSITION_CLAIM="$candidate"
 				return 0
 			fi
+			rmdir "${gate}/claim.${candidate}" 2>/dev/null || true
 		fi
-		_ghqa_transition_release "$gate"
+		rmdir "$gate" 2>/dev/null || true
 		return 1
 	fi
-	_GHQA_TRANSITION_CLAIM=""
 	local claim=""
 	local owner=""
 	for claim in "$gate"/claim.*; do
@@ -312,8 +315,13 @@ _ghqa_lock_acquire() {
 	local owner_pid="${BASHPID:-$$}"
 	local gate="${lock_dir}.transition"
 	[[ "$max_tries" =~ ^[0-9]+$ && "$max_tries" -gt 0 ]] || max_tries=3000
+	# Empty-gate recovery must remain reachable at small configured limits.
+	local recover_at=100
+	[[ "$max_tries" -gt "$recover_at" ]] || recover_at=$((max_tries - 1))
 	while :; do
-		if _ghqa_transition_try "$gate" "$tries"; then
+		local gate_tries="$tries"
+		[[ "$tries" -lt "$recover_at" ]] || gate_tries=100
+		if _ghqa_transition_try "$gate" "$gate_tries"; then
 			if mkdir "$lock_dir" 2>/dev/null; then
 				local publish_rc=0
 				if ! { printf '%s\n' "$owner_pid" >"${lock_dir}/pid"; } 2>/dev/null; then
@@ -616,7 +624,12 @@ _ghqa_capture_cleanup() {
 	local debug_file="$1"
 	local lock_dir="$2"
 	[[ -z "$debug_file" ]] || rm -f "$debug_file" 2>/dev/null || true
-	[[ -z "$lock_dir" ]] || _ghqa_lock_release "$lock_dir"
+	if [[ -n "$lock_dir" ]]; then
+		# Retire any in-flight transition claim held by this shell first, so
+		# release does not wait on its own live gate after a signal.
+		_ghqa_transition_release "${lock_dir}.transition"
+		_ghqa_lock_release "$lock_dir"
+	fi
 	return 0
 }
 
