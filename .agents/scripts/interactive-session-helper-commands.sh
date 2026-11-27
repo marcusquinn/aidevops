@@ -862,7 +862,7 @@ _isc_release_legacy_in_review_or_unassigned() {
 #
 # Exit: 0 always.
 _isc_cmd_release() {
-	local issue="" slug="" unassign=0
+	local issue="" slug="" unassign=0 reason=""
 
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -870,6 +870,11 @@ _isc_cmd_release() {
 		--unassign)
 			unassign=1
 			shift
+			;;
+		--reason)
+			reason="${2:-}"
+			shift
+			[[ $# -gt 0 ]] && shift
 			;;
 		-h | --help)
 			_isc_cmd_help
@@ -942,11 +947,19 @@ _isc_cmd_release() {
 	# Capture stderr so failures surface with the actual gh error message
 	# rather than being silently swallowed. Previously >/dev/null 2>&1 hid
 	# the root cause of stuck-claim incidents (GH#21057).
+	local _stamp_pid=""
+	if [[ -n "$reason" ]]; then
+		_stamp_pid=$(jq -r '.pid // empty' "$(_isc_stamp_path "$issue" "$slug")" 2>/dev/null || echo "")
+	fi
 	local _set_status_err
 	_set_status_err=$(set_issue_status "$issue" "$slug" "$_target_status" \
 		${extra_flags[@]+"${extra_flags[@]}"} 2>&1 >/dev/null)
 	local _set_status_rc=$?
 	if [[ $_set_status_rc -eq 0 ]]; then
+		# Automatic releases must leave an audit comment (GH#40572).
+		if [[ -n "$reason" ]]; then
+			_isc_post_release_comment "$issue" "$slug" "$reason" "$_stamp_pid"
+		fi
 		_isc_delete_stamp "$issue" "$slug"
 		_isc_info "release: #$issue → status:$_target_status"
 		return 0
@@ -1000,10 +1013,11 @@ _isc_cmd_status() {
 		# not presented as active claims (GH#33873).
 		local liveness=""
 		if [[ "$pid" =~ ^[0-9]+$ && "$hostname" == "$local_host" ]]; then
-			local stored_hash
+			local stored_hash stored_start
 			stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp" 2>/dev/null || echo "")
+			stored_start=$(jq -r '.owner_start_token // empty' "$stamp" 2>/dev/null || echo "")
 			liveness=" (owner dead)"
-			if _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
+			if _isc_stamp_owner_alive "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash" "$stored_start" "$claimed"; then
 				liveness=" (owner alive)"
 			fi
 		fi
