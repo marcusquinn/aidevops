@@ -426,6 +426,41 @@ _is_bounded_operation_supervisor() {
 	return 1
 }
 
+# Reap only exhausted, childless supervisors whose deployed lifecycle is stale.
+# Use the supervisor's maximum budget (86400s) AND maximum kill grace (300s),
+# never the generic Node runtime limit. Failed process inspection is not proof
+# of childlessness. Existing/current bundles remain protected absent version proof.
+_is_stale_bounded_operation_supervisor() {
+	local pid="$1"
+	local age_seconds="$2"
+	local children="" child_status=0 command_line="" script=""
+	local bundle_version="" deployed_version="" index=0
+	local -a bundle_parts deployed_parts
+
+	[[ "$age_seconds" =~ ^[0-9]+$ && "$age_seconds" -gt 86700 ]] || return 1
+	_is_bounded_operation_supervisor "$pid" || return 1
+	[[ "$(_get_process_parent_pid "$pid")" == "1" ]] || return 1
+	children=$(pgrep -P "$pid" 2>/dev/null) || child_status=$?
+	[[ "$child_status" -eq 1 && -z "$children" ]] || return 1
+	command_line=$(_get_process_command "$pid")
+	script="${command_line#* }"
+	[[ ! -e "$script" ]] && return 0
+	[[ -r "${script%/plugins/opencode-aidevops/*}/VERSION" && -r "${HOME}/.aidevops/agents/VERSION" ]] || return 1
+	IFS= read -r bundle_version <"${script%/plugins/opencode-aidevops/*}/VERSION" || return 1
+	IFS= read -r deployed_version <"${HOME}/.aidevops/agents/VERSION" || return 1
+	[[ "$bundle_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$deployed_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	IFS=. read -r -a bundle_parts <<<"$bundle_version"
+	IFS=. read -r -a deployed_parts <<<"$deployed_version"
+	for index in 0 1 2; do
+		if ((10#${bundle_parts[index]} < 10#${deployed_parts[index]})); then
+			return 0
+		elif ((10#${bundle_parts[index]} > 10#${deployed_parts[index]})); then
+			return 1
+		fi
+	done
+	return 1
+}
+
 #######################################
 # Return whether Node is running the Buzz plugin's deployed ACP cwd proxy
 # exactly as `aidevops buzz acp` launches it (GH#40087). The Buzz plugin bounds
@@ -487,6 +522,7 @@ _is_buzz_acp_runtime() {
 _runtime_management_owner() {
 	local pid="$1"
 	if _is_bounded_operation_supervisor "$pid"; then
+		_is_stale_bounded_operation_supervisor "$pid" "$(_get_process_age "$pid")" && return 0
 		printf '%s' "bounded-operation-supervisor"
 		return 0
 	fi
@@ -531,6 +567,10 @@ _classify_runtime_limit() {
 
 	if [[ ! "$age_seconds" =~ ^[0-9]+$ || ! "$runtime_limit" =~ ^[0-9]+$ ]]; then
 		printf '%s' "$PROCESS_RUNTIME_OK"
+		return 0
+	fi
+	if _is_stale_bounded_operation_supervisor "$pid" "$age_seconds"; then
+		printf '%s' "$PROCESS_RUNTIME_OVER"
 		return 0
 	fi
 	if [[ "$age_seconds" -le "$runtime_limit" ]]; then
@@ -847,26 +887,25 @@ cmd_kill_runaways() {
 		fi
 
 		if [[ -n "$violation" ]]; then
-			local rss_mb=$((rss / 1024))
-			local process_class killed_at cgroup_path
-			process_class='other'
-			case "$cmd_base" in
-			shellcheck) process_class='lint' ;;
-			node)
-				if [[ $cmd_full == *playwright* && $cmd_full == *--list* ]]; then
-					process_class='playwright-list'
-				else
-					process_class='node'
+			local stale_supervisor=0
+			if _is_bounded_operation_supervisor "$pid"; then
+				# Recheck ownership/children immediately before signalling. A supervisor
+				# that is no longer stale may only be terminated for excessive RSS.
+				if _is_stale_bounded_operation_supervisor "$pid" "$(_get_process_age "$pid")"; then
+					stale_supervisor=1
+					violation="stale orphan bounded-operation supervisor (budget and kill grace exhausted, bundle missing or older)"
+				elif [[ "$rss" -le "$rss_limit" ]]; then
+					continue
 				fi
-				;;
-			opencode | opencode-ai | claude | claude-ai) process_class='ai-runtime' ;;
-			esac
-			killed_at=$(_process_guard_timestamp)
-			cgroup_path=$(_get_process_cgroup_path "$pid")
-			echo "Killing PID $pid ($cmd_base) — $violation"
-			printf '[process-guard] %s action=kill pid=%s ppid=%s class=%s cmd=%s rss_mb=%s age_seconds=%s runtime_limit_seconds=%s cgroup=%s reason=%s\n' \
-				"$killed_at" "$pid" "$ppid" "$process_class" "$cmd_base" "$rss_mb" "$age_seconds" "$runtime_limit" "$cgroup_path" "$violation" >>"$LOGFILE"
-			_terminate_runaway_pid "$pid"
+			fi
+			local rss_mb=$((rss / 1024))
+			_log_runaway_kill "$pid" "$ppid" "$cmd_base" "$cmd_full" "$rss_mb" "$age_seconds" "$runtime_limit" "$violation"
+			if [[ "$stale_supervisor" -eq 1 ]]; then
+				# Pre-GH#40209 deadlocks cannot run the SIGTERM handler.
+				kill -9 "$pid" 2>/dev/null || continue
+			else
+				_terminate_runaway_pid "$pid"
+			fi
 			killed=$((killed + 1))
 			total_freed_mb=$((total_freed_mb + rss_mb))
 		fi
@@ -878,6 +917,30 @@ cmd_kill_runaways() {
 	else
 		echo "No runaway processes found"
 	fi
+	return 0
+}
+
+# Keep process attribution and audit formatting separate from reap policy.
+_log_runaway_kill() {
+	local pid="$1" ppid="$2" cmd_base="$3" cmd_full="$4"
+	local rss_mb="$5" age_seconds="$6" runtime_limit="$7" violation="$8"
+	local process_class='other' killed_at="" cgroup_path=""
+	case "$cmd_base" in
+	shellcheck) process_class='lint' ;;
+	node)
+		if [[ $cmd_full == *playwright* && $cmd_full == *--list* ]]; then
+			process_class='playwright-list'
+		else
+			process_class='node'
+		fi
+		;;
+	opencode | opencode-ai | claude | claude-ai) process_class='ai-runtime' ;;
+	esac
+	killed_at=$(_process_guard_timestamp)
+	cgroup_path=$(_get_process_cgroup_path "$pid")
+	echo "Killing PID $pid ($cmd_base) — $violation"
+	printf '[process-guard] %s action=kill pid=%s ppid=%s class=%s cmd=%s rss_mb=%s age_seconds=%s runtime_limit_seconds=%s cgroup=%s reason=%s\n' \
+		"$killed_at" "$pid" "$ppid" "$process_class" "$cmd_base" "$rss_mb" "$age_seconds" "$runtime_limit" "$cgroup_path" "$violation" >>"$LOGFILE"
 	return 0
 }
 

@@ -33,7 +33,19 @@ MOCK_COMMANDS=""
 MOCK_LAUNCHD_PID=""
 # Space-separated "pid:ppid" pairs for the lineage walk.
 MOCK_PARENTS=""
+MOCK_CHILDREN=""
+MOCK_CHILD_STATUS=1
 DESKTOP_CLI="/Users/test/Library/Application Support/ai.opencode.desktop/cli/2.0.24/opencode-cli"
+
+pgrep() {
+	local option="${1:-}"
+	if [[ "$option" == "-P" ]]; then
+		printf '%s' "$MOCK_CHILDREN"
+		return "$MOCK_CHILD_STATUS"
+	fi
+	command pgrep "$@"
+	return $?
+}
 
 _process_guard_platform() {
 	printf '%s' "$MOCK_PLATFORM"
@@ -486,6 +498,63 @@ test_buzz_acp_runtime_delegated_rss_enforced() {
 	return 0
 }
 
+test_stale_bounded_operation_supervisor_reaping() {
+	reset_macos_mocks
+	local script="${TEST_ROOT}/old-bundle/agents/plugins/opencode-aidevops/bounded-operation-supervisor.mjs"
+	local output="" platform=""
+	MOCK_COMMAND="node $script"
+	MOCK_PROCESS_LINE="4952 1 ? 1024 2-00:00:00 $MOCK_COMMAND"
+	MOCK_PROCESS_AGE=172800
+	CHILD_RUNTIME_LIMIT=7200
+	CHILD_RSS_LIMIT_KB=8388608
+	MOCK_CHILDREN=""
+	MOCK_CHILD_STATUS=1
+	for platform in Linux Darwin; do
+		MOCK_PLATFORM="$platform"
+		: >"$MOCK_KILL_LOG"
+		assert_eq "$platform stale missing supervisor exceeds runtime" "OVER" "$(_classify_runtime_limit 4952 172800 7200)"
+		assert_eq "$platform stale supervisor has no lifecycle owner" "" "$(_runtime_management_owner 4952)"
+		output=$(cmd_scan)
+		assert_eq "$platform scan identifies stale supervisor violation" "yes" "$(if [[ "$output" == *OVER* ]]; then printf yes; fi)"
+		assert_eq "$platform scan never signals" "" "$(<"$MOCK_KILL_LOG")"
+		output=$(cmd_kill_runaways)
+		assert_eq "$platform stale orphan gets only direct SIGKILL" "-9 4952" "$(<"$MOCK_KILL_LOG")"
+		assert_eq "$platform reap is explained" "yes" "$(if [[ "$output" == *"stale orphan bounded-operation supervisor"* ]]; then printf yes; fi)"
+		MOCK_PARENTS="4952:4950"
+		: >"$MOCK_KILL_LOG"
+		assert_eq "$platform live parent protects even exhausted supervisor" "No runaway processes found" "$(cmd_kill_runaways)"
+		assert_eq "$platform live parent receives no signal" "" "$(<"$MOCK_KILL_LOG")"
+		MOCK_PARENTS=""
+	done
+	MOCK_PLATFORM="Linux"
+	MOCK_PROCESS_AGE=86700
+	assert_eq "budget plus maximum grace boundary is protected" "No runaway processes found" "$(cmd_kill_runaways)"
+	MOCK_PROCESS_AGE=86400
+	assert_eq "maximum budget boundary is protected" "MANAGED" "$(_classify_runtime_limit 4952 86400 7200)"
+	MOCK_PROCESS_AGE=86701
+	MOCK_CHILDREN=4953
+	MOCK_CHILD_STATUS=0
+	assert_eq "supervisor with children remains protected" "No runaway processes found" "$(cmd_kill_runaways)"
+	MOCK_CHILDREN=""
+	MOCK_CHILD_STATUS=2
+	assert_eq "failed child inspection remains protected" "No runaway processes found" "$(cmd_kill_runaways)"
+	MOCK_CHILD_STATUS=1
+	mkdir -p "${script%/*}" "${TEST_ROOT}/old-bundle/agents" "${HOME}/.aidevops/agents"
+	: >"$script"
+	printf '3.39.289\n' >"${HOME}/.aidevops/agents/VERSION"
+	printf '3.39.277\n' >"${TEST_ROOT}/old-bundle/agents/VERSION"
+	assert_eq "existing older bundle is reapable" "OVER" "$(_classify_runtime_limit 4952 86701 7200)"
+	printf '3.39.289\n' >"${TEST_ROOT}/old-bundle/agents/VERSION"
+	assert_eq "current bundle remains protected" "No runaway processes found" "$(cmd_kill_runaways)"
+	printf '3.40.0\n' >"${TEST_ROOT}/old-bundle/agents/VERSION"
+	assert_eq "newer bundle remains protected" "MANAGED" "$(_classify_runtime_limit 4952 86701 7200)"
+	printf 'unknown\n' >"${TEST_ROOT}/old-bundle/agents/VERSION"
+	assert_eq "invalid version is not stale evidence" "MANAGED" "$(_classify_runtime_limit 4952 86701 7200)"
+	assert_eq "protected supervisors received no signals" "" "$(<"$MOCK_KILL_LOG")"
+	MOCK_COMMAND=""
+	return 0
+}
+
 test_command_basename_handles_spaced_paths() {
 	local spaced_dir="${TEST_ROOT}/Library/Application Support/ai.opencode.desktop/cli/2.0.24"
 	mkdir -p "$spaced_dir"
@@ -524,6 +593,7 @@ main() {
 	test_kill_runaways_desktop_runtime_skipped_rss_enforced
 	test_bounded_operation_supervisor_runtime_and_rss
 	test_buzz_acp_runtime_delegated_rss_enforced
+	test_stale_bounded_operation_supervisor_reaping
 	test_command_basename_handles_spaced_paths
 
 	printf '\n%s/%s tests passed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

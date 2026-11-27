@@ -1938,6 +1938,53 @@ _warn_dispatch_path_auto_dispatch() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# _warn_pulse_off_auto_dispatch (GH#40460)
+#
+# Pulse never scans a repo whose local repos.json entry has pulse != true (or
+# no entry), so an auto-dispatch issue filed there waits silently. Warn on
+# stderr while the creating session can still implement it. Never blocks:
+# repos.json is per host and another runner may pulse the repo.
+#
+# Called pre-claim and again after TODO-derived labels merge; prints once.
+# Arguments: none (reads TASK_LABELS, NO_ISSUE, REPO_PATH, REMOTE_NAME)
+# Environment:
+#   AIDEVOPS_SKIP_PULSE_OFF_CHECK=1 — disable entirely
+#   REPOS_FILE — registry path (default ~/.config/aidevops/repos.json)
+# ---------------------------------------------------------------------------
+_warn_pulse_off_auto_dispatch() {
+	[[ "${AIDEVOPS_SKIP_PULSE_OFF_CHECK:-}" == "1" ]] && return 0
+	[[ "${_CLAIM_PULSE_OFF_WARNED:-}" == "1" ]] && return 0
+	case ",$TASK_LABELS," in
+	*,auto-dispatch,* | *,auto_dispatch,*) ;;
+	*) return 0 ;;
+	esac
+	[[ "$NO_ISSUE" == "false" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
+	[[ -f "$repos_file" ]] || return 0
+	local slug="" state=""
+	slug=$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME")
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 0
+	# state: on | off | unregistered
+	state=$(jq -r --arg s "$slug" '
+		[.initialized_repos[]? | select(((.slug // "") | ascii_downcase) == ($s | ascii_downcase))][0]
+		| if . == null then "unregistered" elif .pulse == true then "on" else "off" end' \
+		"$repos_file" 2>/dev/null) || return 0
+	[[ -z "$state" || "$state" == "on" ]] && return 0
+	local reason="Pulse is off for ${slug}"
+	local enable_hint="Or enable dispatch for the repo:"
+	if [[ "$state" == "unregistered" ]]; then
+		reason="${slug} is not registered in repos.json"
+		enable_hint="Or register the repo (aidevops repos add), then enable dispatch:"
+	fi
+	log_warn "${reason} on this host: unless another runner pulses it, no worker will pick up this auto-dispatch issue."
+	log_warn "  Implement it now: interactive-start-helper.sh --issue <N> --repo ${slug} --task \"...\" --auto-dispatch"
+	log_warn "  ${enable_hint} aidevops repos pulse on ${slug}"
+	_CLAIM_PULSE_OFF_WARNED=1
+	return 0
+}
+
 # Handle the allocation-only namespaced mode before any repository access.
 # Sets _CLAIM_NAMESPACED_HANDLED and _CLAIM_NAMESPACED_RC for main().
 _main_handle_namespaced_mode() {
@@ -2008,6 +2055,10 @@ _main_preclaim_discovery() {
 	# references dispatch-path scripts. Non-blocking — callers can override
 	# with #dispatch-path-ok or AIDEVOPS_SKIP_DISPATCH_PATH_CHECK=1.
 	_warn_dispatch_path_auto_dispatch
+
+	# Pulse-off repos never dispatch auto-dispatch issues; say so while the
+	# creating session can still implement the task itself (GH#40460).
+	_warn_pulse_off_auto_dispatch
 
 	# Framework routing guard: warn if title looks like a framework issue
 	# but we're not in the aidevops repo (GH#5149)
@@ -2101,6 +2152,8 @@ _main_enrich_todo_labels() {
 			# Deduplicate merged label set
 			TASK_LABELS=$(printf '%s' "$TASK_LABELS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
 			log_info "t2436: Derived labels from TODO.md tags for ${_task_id_for_scan}: ${_todo_derived_labels}"
+			# GH#40460: a TODO #auto-dispatch tag can add the label only now.
+			_warn_pulse_off_auto_dispatch
 		fi
 	fi
 	return 0

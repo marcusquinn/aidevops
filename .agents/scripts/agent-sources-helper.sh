@@ -820,6 +820,21 @@ sync_root_primary_agents() {
 	return 0
 }
 
+# True when a command target is a symlink this source already owns: it points at
+# the same file, or into agents/custom/<source>/ of any runtime bundle (stale
+# after an update). Such links are repointed instead of suffixed.
+command_target_owned_by_source() {
+	local target="$1"
+	local md_file="$2"
+	local source_name="$3"
+	[[ -L "${target}" ]] || return 1
+	local current
+	current="$(readlink "${target}")"
+	[[ "${current}" == "${md_file}" ]] && return 0
+	[[ "${current}" == */agents/custom/"${source_name}"/* ]] && return 0
+	return 1
+}
+
 # Deploy slash commands from an agent directory to OpenCode command dir
 # Slash commands are .md files with 'agent:' in frontmatter (not the agent doc itself, not subagents)
 sync_slash_commands() {
@@ -847,7 +862,7 @@ sync_slash_commands() {
 		local target="${opencode_cmd_dir}/${cmd_name}.md"
 
 		# Collision detection: only suffix if a different file already exists
-		if [[ -f "${target}" ]] && ! [[ -L "${target}" && "$(readlink "${target}")" == "${md_file}" ]]; then
+		if [[ -f "${target}" ]] && ! command_target_owned_by_source "${target}" "${md_file}" "${source_name}"; then
 			local suffixed_name="${cmd_name}-${source_name}"
 			target="${opencode_cmd_dir}/${suffixed_name}.md"
 			warn "  Command collision: /${cmd_name} exists, deploying as /${suffixed_name}"
@@ -878,7 +893,7 @@ sync_shared_slash_commands() {
 		filename="$(basename "${md_file}")"
 		cmd_name="${filename%.md}"
 		target="${opencode_cmd_dir}/${cmd_name}.md"
-		if [[ -f "${target}" ]] && ! [[ -L "${target}" && "$(readlink "${target}")" == "${md_file}" ]]; then
+		if [[ -f "${target}" ]] && ! command_target_owned_by_source "${target}" "${md_file}" "${source_name}"; then
 			suffixed_name="${cmd_name}-${source_name}"
 			target="${opencode_cmd_dir}/${suffixed_name}.md"
 			warn "  Command collision: /${cmd_name} exists, deploying as /${suffixed_name}"

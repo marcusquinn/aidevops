@@ -2544,8 +2544,18 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t19411 fix: generated _reports artifacts misclassified as Critical runtime risk #bug ref:GH#40511 pr:#40512 completed:2026-11-26
 
 - [x] t19413 fix: keywords issue sweep refiles not-planned closures on undefined-product repos #bug ref:GH#40513 pr:#40514 completed:2026-11-26
-- [ ] t19414 fix: run privacy guard before task-ID allocation so blocked issue bodies cannot strand IDs #bug ref:GH#40516
+- [x] t19414 fix: run privacy guard before task-ID allocation so blocked issue bodies cannot strand IDs #bug ref:GH#40516 pr:#40519 completed:2026-11-27
 - [x] t19415 fix: todo-collision tests 5-7 hit live GitHub title check #auto-dispatch #bug ref:GH#40517 pr:#40521 completed:2026-11-26
+
+- [ ] t19417 fix(tests): surface and fix Linux-only red suites cleanup-receipt and pr-checkpoint in Shell Suite Main Health #bug ref:GH#40529
+
+- [x] t19418 perf(pulse): make the split dispatch lock the default (PULSE_DISPATCH_LOCK_SPLIT=0 opts out) #auto-dispatch #feat #framework #pulse ref:GH#40535 pr:#40542 completed:2026-11-27
+
+- [ ] t19419 refactor(pulse): run the LLM supervisor on its own schedule and remove the drain-escape layers #auto-dispatch #framework #pulse #refactor ref:GH#40536
+
+- [ ] t19420 refactor(pulse): remove shared-lock refill workarounds after the split dispatch lock soak #auto-dispatch #framework #pulse #refactor blocked-by:t19418,t19419 ref:GH#40537
+
+- [ ] t19421 perf(pulse): make the cross-cycle negative cache hit so repeatedly refused candidates skip the dedup ceremony #auto-dispatch #feat #framework #pulse ref:GH#40538
 
 - [ ] t19422 fix(audit-log): stale-lock reclaim acts on a newer holder's lock, wedging or overlapping concurrent writers #auto-dispatch #bug ref:GH#40549
 
@@ -6186,4 +6196,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t19346 fix(pulse): break early in stats quarantine scan and prune the backlog #bug ref:GH#40197 pr:#40265 completed:2026-11-25
 
-- [ ] t19404 feat(claim-task-id): warn when an auto-dispatch issue is filed in a pulse-off repo #auto-dispatch #enhancement ref:GH#40460
+- [x] t19404 feat(claim-task-id): warn when an auto-dispatch issue is filed in a pulse-off repo #auto-dispatch #enhancement ref:GH#40460 pr:#40531 completed:2026-11-27
