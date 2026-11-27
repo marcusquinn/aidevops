@@ -671,7 +671,12 @@ _dispatch_process_candidate() {
 	_pulse_refresh_repo "$repo_path"
 
 	# GH#40551: preserve pre-ceremony cache material; all launch gates still run.
-	candidate_json=$(_dispatch_negative_cache_capture_candidate "$candidate_json")
+	# A failed or empty capture keeps the original candidate.
+	local captured_candidate=""
+	if captured_candidate=$(_dispatch_negative_cache_capture_candidate "$candidate_json") &&
+		[[ -n "$captured_candidate" ]]; then
+		candidate_json="$captured_candidate"
+	fi
 
 	# GH#18804 + t2989: isolated dispatch with per-candidate timeout (see _dispatch_with_timeout).
 	echo "[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #${issue_number} (${repo_slug})" >>"$LOGFILE"
