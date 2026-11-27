@@ -29,9 +29,10 @@ mcp:
 - **OpenCode activation**: invoke `@quickfile` or delegate via Task
   `subagent_type: quickfile` (Build+ allows it); the agent connects the disabled
   MCP on demand. It is subagent-only: with the generated OpenCode agent
-  definition deployed (`setup.sh`), `headless-runtime-helper.sh run --agent
-  quickfile` fails fast; without it OpenCode itself falls back to its default
-  agent, so never rely on headless `--agent quickfile`. The MCP is scoped to this agent, so a default or
+  definition deployed (`setup.sh`, Markdown or `opencode.json`),
+  `headless-runtime-helper.sh run --agent quickfile` fails fast; without any
+  definition OpenCode itself falls back to its default agent, so never rely on
+  headless `--agent quickfile`. The MCP is scoped to this agent, so a default or
   primary agent cannot `aidevops_mcp connect quickfile`
 - **Auth**: personal REST bearer tokens stored as
   `QUICKFILE_<ACCOUNT>_API_KEY` with `aidevops secret`

@@ -730,14 +730,26 @@ _agent_markdown_mode() {
 	return 0
 }
 
-# _agent_json_mode: print `.agent[NAME].mode` from opencode.json (no stub needed).
+# _agent_json_mode: print the agent mode from opencode.json (no stub needed).
+# Reads the V2 `agents` key first, then the legacy `agent` key.
 # Args: $1 - config dir, $2 - agent name.
 _agent_json_mode() {
 	local config_dir="$1"
 	local agent_value="$2"
 	[[ -f "${config_dir}/opencode.json" ]] || return 0
 	command -v jq >/dev/null 2>&1 || return 0
-	jq -r --arg n "$agent_value" '.agent[$n].mode // empty' "${config_dir}/opencode.json" 2>/dev/null || true
+	jq -r --arg n "$agent_value" '.agents[$n].mode // .agent[$n].mode // empty' "${config_dir}/opencode.json" 2>/dev/null || true
+	return 0
+}
+
+# _agent_inline_mode: print the agent mode from OPENCODE_CONFIG_CONTENT, which
+# OpenCode 1.19.6 applies after Markdown definitions and which the launcher
+# preserves. Args: $1 - agent name.
+_agent_inline_mode() {
+	local agent_value="$1"
+	[[ -n "${OPENCODE_CONFIG_CONTENT:-}" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	printf '%s' "$OPENCODE_CONFIG_CONTENT" | jq -r --arg n "$agent_value" '.agents[$n].mode // .agent[$n].mode // empty' 2>/dev/null || true
 	return 0
 }
 
@@ -749,7 +761,8 @@ _agent_declares_subagent() {
 	local agent_value="$1"
 	local config_dir="${OPENCODE_CONFIG_DIR:-${HOME:-}/.config/opencode}"
 	local effective_mode=""
-	effective_mode=$(_agent_markdown_mode "$config_dir" "$agent_value")
+	effective_mode=$(_agent_inline_mode "$agent_value")
+	[[ -n "$effective_mode" ]] || effective_mode=$(_agent_markdown_mode "$config_dir" "$agent_value")
 	[[ -n "$effective_mode" ]] || effective_mode=$(_agent_json_mode "$config_dir" "$agent_value")
 	if [[ "$effective_mode" == "subagent" ]]; then
 		return 0
