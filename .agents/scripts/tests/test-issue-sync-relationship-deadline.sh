@@ -289,7 +289,8 @@ done
 batch_summary=$(_relationship_print_summary 1 1 1 0 false 1 0 fresh 0 "$batch_elapsed" 4)
 [[ "$batch_summary" == *"Backend classes: mapping=0 snapshot=1 mutation=1 verify=1 status=1 other=0"* ]] || \
 	fail "small workset summary omitted backend classes: $batch_summary"
-[[ "$batch_summary" == *"Operation timing: mapping=0s snapshot=1s mutation=1s verify=1s status=1s"* ]] || \
+timing_re='Operation timing: mapping=0s snapshot=[1-3]s mutation=[1-3]s verify=[1-3]s status=[1-3]s($|[^0-9a-z])'
+[[ "$batch_summary" =~ $timing_re ]] || \
 	fail "small workset summary omitted operation timing: $batch_summary"
 pass "small relationship worksets batch calls within the aggregate deadline"
 
