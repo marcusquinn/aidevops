@@ -30,7 +30,7 @@ from session_time_state import Scan, file_identity, load_state, save_state
 
 SETTLE_MS = 2 * 3600 * 1000
 SESSION_CHUNK_ROWS = 50000
-INTERNAL_KEYS = ("previous_role", "previous_completed")
+INTERNAL_KEYS = ("previous_role", "previous_completed", "previous_created")
 # MESSAGE_FIELDS is a module constant; every value is bound as a parameter.
 INC_SESSION_QUERY = f"""
     SELECT s.id, s.title, s.directory, m.time_created, {MESSAGE_FIELDS}, m.rowid
@@ -38,6 +38,34 @@ INC_SESSION_QUERY = f"""
     WHERE s.parent_id IS NULL AND m.rowid > ? AND m.rowid <= ? AND m.time_created >= ?
     ORDER BY s.id, m.time_created
 """  # nosec B608
+SESSION_REPLAY_QUERY = INC_SESSION_QUERY.replace(
+    "WHERE s.parent_id IS NULL", "WHERE s.parent_id IS NULL AND s.id = ?"
+)
+
+
+def fold_record(sessions, record):
+    skipped = consume_session_record(sessions, record[:7], "")
+    if not skipped:
+        sessions[record[0]]["previous_created"] = safe_int(record[3])
+    return skipped
+
+
+def fold_ordered_records(connection, sessions, records, since, high):
+    """Replay only sessions whose new rows precede already folded messages."""
+    replay, skipped = set(), 0
+    for record in records:
+        created = safe_int(record[3])
+        previous = sessions.get(record[0], {}).get("previous_created")
+        if created is not None and previous is not None and created < previous:
+            replay.add(record[0])
+        skipped += fold_record(sessions, record)
+    for session_id in replay:
+        sessions.pop(session_id, None)
+        # Bound replay to the same rowid snapshot and reporting window. Values
+        # stay bound parameters; the SQL above is derived only from constants.
+        for record in connection.execute(SESSION_REPLAY_QUERY, (session_id, 0, high, since)):
+            fold_record(sessions, record)
+    return skipped
 
 
 def prune_session_entry(entry, floor):
@@ -71,20 +99,19 @@ def advance_session_chunk(connection, entry, top, scan):
     high = min(top, low + SESSION_CHUNK_ROWS)
     rows = [tuple(item) for item in connection.execute(INC_SESSION_QUERY, (low, high, scan.since))]
     boundary = settled_boundary(rows, high, scan.now)
-    for record in rows:
-        if record[-1] <= boundary:
-            entry["skipped"] += consume_session_record(entry["sessions"], record[:7], "")
+    settled = [record for record in rows if record[-1] <= boundary]
+    entry["skipped"] += fold_ordered_records(connection, entry["sessions"], settled, scan.since, boundary)
     entry["rowid"] = max(low, boundary)
     scan.checkpoint()
     return [record for record in rows if record[-1] > boundary], high == top
 
 
-def with_pending(entry, pending):
+def with_pending(connection, entry, pending, since):
     """Public rows: settled state plus unsettled rows folded into copies."""
     touched = {record[0] for record in pending}
     working = {sid: copy.deepcopy(row) for sid, row in entry["sessions"].items() if sid in touched}
-    for record in pending:
-        consume_session_record(working, record[:7], "")
+    high = max((record[-1] for record in pending), default=entry["rowid"])
+    fold_ordered_records(connection, working, pending, since, high)
     merged = dict(entry["sessions"])
     merged.update(working)
     return public_rows(merged)
@@ -104,7 +131,7 @@ def scan_session_source(db_path, entry, scan):
                     return public_rows(entry["sessions"]), True, False, False
                 pending, reached_top = advance_session_chunk(connection, entry, top, scan)
                 if pending:
-                    return with_pending(entry, pending), True, reached_top, False
+                    return with_pending(connection, entry, pending, scan.since), True, reached_top, False
     except (OSError, sqlite3.Error):
         return [], False, False, False
     return public_rows(entry["sessions"]), True, True, True

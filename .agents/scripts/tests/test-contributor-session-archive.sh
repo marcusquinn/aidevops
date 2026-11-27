@@ -686,6 +686,85 @@ test_session_engine_sibling_modules_deploy_together() {
 	return 0
 }
 
+test_incremental_time_order_matches_full_scan() {
+	local test_name="incremental sessions replay cross-chunk and later-run time inversions"
+	setup
+	local db_path="${TEST_DIR}/ordered.db"
+	create_session_db "$db_path"
+	local result=0
+	PYTHONPATH="${SCRIPT_DIR}/.." python3 - "$db_path" "${TEST_DIR}/state.json" <<'PY' || result=1
+import json
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+from session_time_db import query_session_db
+from session_time_incremental import scan_session_source
+from session_time_state import Scan, empty_state, load_state, save_state
+
+db_path, state_path = map(Path, sys.argv[1:])
+base = 1_000_000
+with sqlite3.connect(db_path) as connection:
+    connection.execute("INSERT INTO session VALUES ('s', 'Ordered session', NULL, '/project')")
+    connection.executemany(
+        "INSERT INTO message(rowid, session_id, data, time_created) VALUES (?, 's', ?, ?)",
+        [(1, json.dumps({"role": "assistant", "time": {"completed": base + 90000}}), base + 60000),
+         (50001, '{"role":"user"}', base),
+         (50002, '{"role":"user"}', base + 100000),
+         (50003, 'malformed', base + 110000)],
+    )
+
+def check(rows, skipped):
+    expected, ok, expected_skipped = query_session_db(db_path, "", 0)
+    assert ok and skipped == expected_skipped == 1
+    assert json.dumps(rows, sort_keys=True) == json.dumps(expected, sort_keys=True)
+
+def fresh_entry():
+    return {"rowid": 0, "sessions": {}, "skipped": 0, "complete": False}
+
+def fresh_scan(checkpoint=lambda: None):
+    return Scan(0, base + 10_000_000, time.monotonic() + 60, checkpoint)
+
+entry = fresh_entry()
+rows, ok, done, persisted = scan_session_source(db_path, entry, fresh_scan())
+assert ok and done and persisted
+check(rows, entry["skipped"])
+assert rows[0]["human"] == [(base + 90000, base + 100000)]
+
+# Resume from a real serialized checkpoint between the two rowid chunks.
+state = empty_state()
+state["sessions"][str(db_path)] = fresh_entry()
+scan = fresh_scan()
+def stop_after_chunk():
+    save_state(state_path, state)
+    scan.deadline = 0
+scan.checkpoint = stop_after_chunk
+_, ok, done, _ = scan_session_source(db_path, state["sessions"][str(db_path)], scan)
+assert ok and not done
+entry = load_state(state_path)["sessions"][str(db_path)]
+assert entry["rowid"] == 50000
+rows, ok, done, persisted = scan_session_source(db_path, entry, fresh_scan())
+assert ok and done and persisted
+check(rows, entry["skipped"])
+
+# A later insertion can also precede the last timestamp in saved state.
+with sqlite3.connect(db_path) as connection:
+    connection.execute("INSERT INTO message VALUES ('s', '{\"role\":\"user\"}', ?)", (base + 95000,))
+rows, ok, done, persisted = scan_session_source(db_path, entry, fresh_scan())
+assert ok and done and persisted
+check(rows, entry["skipped"])
+assert rows[0]["human"] == [(base + 90000, base + 95000)]
+
+# Pre-fix aggregates must be rebuilt, not trusted without ordering metadata.
+state_path.write_text(json.dumps({"version": 1, "sessions": {"old": entry}, "obs": {}}))
+assert load_state(state_path) == empty_state()
+PY
+	print_result "$test_name" "$result"
+	teardown
+	return 0
+}
+
 main() {
 	if [[ ! -f "$SOURCE_SESSION_LIB" ]]; then
 		echo "Session library not found: ${SOURCE_SESSION_LIB}" >&2
@@ -708,6 +787,7 @@ main() {
 	test_value_options_validate_before_shift
 	test_explicit_db_is_existing_read_only_file_and_cutoff_is_safe
 	test_session_engine_sibling_modules_deploy_together
+	test_incremental_time_order_matches_full_scan
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}"

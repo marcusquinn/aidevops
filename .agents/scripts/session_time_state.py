@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-STATE_VERSION = 1
+# Rebuild aggregates folded before cross-chunk message ordering was tracked.
+STATE_VERSION = 2
 
 
 @dataclass
