@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.292] - 2026-11-27
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#40640)
+- Maintenance: mark t19433 complete (pr:#40631 completed:2026-11-27) (#40632)
+- Maintenance: sync GitHub issue refs to TODO.md (#40633)
+- Maintenance: sync GitHub issue refs to TODO.md (#40630)
+- Maintenance: mark t19431 complete (pr:#40611 completed:2026-11-27) (#40614)
+
+### Fixed
+
+- wait-checks reads required contexts without admin rights (#40639)
+- try local Linux/container/WordPress substitutes before runner_capability_unmet (#40637)
+- share per-issue footprint rule between in-flight cache and defer wake (GH#40634) (#40635)
+- emlx fallback and live-store index warning for Spotlight backend (#40619)
+- split incremental session-time modules to clear Qlty smells (#40631)
+- detect live repack processes before gc.pid-based cleanup (GH#40618) (#40624)
+- reconcile stale PR body when open head PR exists (GH#40622) (#40625)
+- preserve literal apostrophes in fallback redaction (#40623)
+- keywords sweep treats scaffold-only registries as populated (#40621)
+- decode quoted credential values consistently (GH#40613) (#40615)
+- resolve wrapper symlink before sourcing mkdir-exclusive.sh (#40611)
+
 ## [3.39.291] - 2026-11-27
 
 ### Fixed
