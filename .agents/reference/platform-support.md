@@ -250,9 +250,9 @@ worker ends with `runner_capability_unmet` for a missing platform or runtime
 
 | Need | Detect | Route |
 |------|--------|-------|
-| Linux userland or tool (`bwrap`, GNU tools, `apt` packages) | `docker info`, `orb version` | `docker run --rm -v "$PWD":/w -w /w <image> <cmd>`; for a persistent Linux host, `orb create ubuntu <name>` then `orb run -m <name> <cmd>` |
-| Container runtime | `docker info` (OrbStack engine), `container --version` (Apple, macOS 26+) | the same commands; label anything that outlives the command per `tools/containers/disposable-resources.md` |
-| WordPress site | `npx --version`, `php --version`, `docker info` | per-worktree WordPress Playground (`npx @wp-playground/cli server`) or a labelled Docker `wordpress` stack; see `tools/wordpress/wp-dev.md` |
+| Linux userland or tool (`bwrap`, GNU tools, `apt` packages) | `docker info`, `orb version`, `container --version` | `docker run --rm -v "$PWD":/w -w /w <image> <cmd>` or `container run --rm -v "$PWD":/w -w /w <image> <cmd>`; for a full Linux host, `orb create ubuntu aidevops-<issue>`, `orb run -m aidevops-<issue> <cmd>`, then `orb delete -f aidevops-<issue>` on success and failure |
+| Container runtime | `docker info` (OrbStack engine), `container --version` (Apple, macOS 26+) | `docker run` or `container run` as above; label anything that outlives the command per `tools/containers/disposable-resources.md` |
+| WordPress site | `npx --version`, `php --version`, `docker info` | per-worktree WordPress Playground, run from the plugin or theme root (`npx @wp-playground/cli server --auto-mount`), or a labelled Docker `wordpress` stack; see `tools/wordpress/wp-dev.md` |
 | Existing LocalWP site | `localhost-helper.sh list-localwp` | read-only, or `local-site-sync-helper.sh` only; LocalWP sites are shared by all sessions |
 | Private network peer | mesh client already connected (NetBird, Tailscale, ZeroTier) | use the existing route only |
 
