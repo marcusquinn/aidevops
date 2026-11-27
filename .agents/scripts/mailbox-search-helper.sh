@@ -416,7 +416,7 @@ spotlight_index_status() {
 
 	status=$(mdutil -s / 2>/dev/null | head -2 | tr '\n' ' ')
 	local enabled="false"
-	if printf '%s' "$status" | grep -qi "enabled"; then
+	if printf '%s' "$status" | grep -i "enabled" >/dev/null; then
 		enabled="true"
 	fi
 
@@ -587,7 +587,7 @@ mu_search() {
 	local maildir="${3:-$DEFAULT_MAILDIR}"
 
 	# Verify mu database exists
-	if ! mu info 2>/dev/null | grep -q "database"; then
+	if ! mu info 2>/dev/null | grep "database" >/dev/null; then
 		print_error "mu database not initialized. Run: mailbox-search-helper.sh setup --backend mu --maildir $maildir"
 		return 1
 	fi
