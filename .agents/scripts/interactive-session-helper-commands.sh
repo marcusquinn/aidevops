@@ -861,8 +861,17 @@ _isc_release_legacy_in_review_or_unassigned() {
 #   - Offline or unreadable gh: warn and preserve the stamp and remote state.
 #
 # Exit: 0 always.
+_isc_release_stamp_pid() {
+	local issue="$1"
+	local slug="$2"
+	local reason="${3:-}"
+	[[ -n "$reason" ]] || return 0
+	jq -r '.pid // empty' "$(_isc_stamp_path "$issue" "$slug")" 2>/dev/null || true
+	return 0
+}
+
 _isc_cmd_release() {
-	local issue="" slug="" unassign=0
+	local issue="" slug="" unassign=0 reason=""
 
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -870,6 +879,11 @@ _isc_cmd_release() {
 		--unassign)
 			unassign=1
 			shift
+			;;
+		--reason)
+			reason="${2:-}"
+			shift
+			[[ $# -gt 0 ]] && shift
 			;;
 		-h | --help)
 			_isc_cmd_help
@@ -905,12 +919,8 @@ _isc_cmd_release() {
 	fi
 
 	# Idempotency: release status:claimed and legacy status:in-review records.
-	# `_isc_has_claimed` and `_isc_has_label` have three return states
-	# (0 = present, 1 = absent, 2 = lookup failed),
-	# so we need the actual rc — but a bare call under `set -e` propagates
-	# non-zero returns before `rc=$?` can capture them. Use `|| rc=$?` which
-	# is a tested condition that `set -e` does not propagate. Default to 0
-	# so the "present" branch (rc=0) falls through to the transition below.
+	# `_isc_has_claimed` returns 0 = present, 1 = absent, 2 = lookup failed;
+	# capture rc with `|| has_rc=$?` so `set -e` does not propagate it.
 	local has_rc=0
 	_isc_has_claimed "$issue" "$slug" || has_rc=$?
 	if [[ $has_rc -eq 1 ]]; then
@@ -942,11 +952,15 @@ _isc_cmd_release() {
 	# Capture stderr so failures surface with the actual gh error message
 	# rather than being silently swallowed. Previously >/dev/null 2>&1 hid
 	# the root cause of stuck-claim incidents (GH#21057).
+	local _stamp_pid
+	_stamp_pid=$(_isc_release_stamp_pid "$issue" "$slug" "$reason")
 	local _set_status_err
 	_set_status_err=$(set_issue_status "$issue" "$slug" "$_target_status" \
 		${extra_flags[@]+"${extra_flags[@]}"} 2>&1 >/dev/null)
 	local _set_status_rc=$?
 	if [[ $_set_status_rc -eq 0 ]]; then
+		# Automatic releases must leave an audit comment (GH#40572).
+		[[ -z "$reason" ]] || _isc_post_release_comment "$issue" "$slug" "$reason" "$_stamp_pid"
 		_isc_delete_stamp "$issue" "$slug"
 		_isc_info "release: #$issue → status:$_target_status"
 		return 0
@@ -1000,10 +1014,11 @@ _isc_cmd_status() {
 		# not presented as active claims (GH#33873).
 		local liveness=""
 		if [[ "$pid" =~ ^[0-9]+$ && "$hostname" == "$local_host" ]]; then
-			local stored_hash
+			local stored_hash stored_start
 			stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp" 2>/dev/null || echo "")
+			stored_start=$(jq -r '.owner_start_token // empty' "$stamp" 2>/dev/null || echo "")
 			liveness=" (owner dead)"
-			if _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
+			if _isc_stamp_owner_alive "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash" "$stored_start" "$claimed"; then
 				liveness=" (owner alive)"
 			fi
 		fi

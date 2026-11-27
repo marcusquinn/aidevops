@@ -67,6 +67,11 @@ _isc_write_stamp() {
 	owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || echo "")
 	[[ "$owner_pid" =~ ^[0-9]+$ ]] || owner_pid="$$"
 	argv_hash=$(_compute_argv_hash "$owner_pid" 2>/dev/null || echo "")
+	# Bind the PID to its process start time so PID reuse cannot keep a dead
+	# claim alive (GH#40572). Empty when unavailable; liveness then falls back
+	# to comparing process start time with claimed_at.
+	local start_token=""
+	start_token=$(_process_start_token "$owner_pid" 2>/dev/null || echo "")
 
 	# Escape user-supplied fields via jq's string literals to avoid JSON injection
 	jq -n \
@@ -78,6 +83,7 @@ _isc_write_stamp() {
 		--arg hostname "$hostname" \
 		--arg user "$user" \
 		--arg argv_hash "$argv_hash" \
+		--arg start_token "$start_token" \
 		'{
 			issue: ($issue | tonumber),
 			slug: $slug,
@@ -86,11 +92,72 @@ _isc_write_stamp() {
 			pid: ($pid | tonumber),
 			hostname: $hostname,
 			user: $user,
-			owner_argv_hash: $argv_hash
+			owner_argv_hash: $argv_hash,
+			owner_start_token: $start_token
 		}' >"$stamp_file" 2>/dev/null || {
 		_isc_warn "failed to write stamp: $stamp_file"
 		return 0
 	}
+	return 0
+}
+
+# Elapsed seconds since a process started, from portable `ps -o etime=`
+# ([[dd-]hh:]mm:ss). Prints nothing and returns 1 when unavailable.
+_isc_process_elapsed_seconds() {
+	local pid="$1"
+	local etime=""
+	etime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d ' ') || etime=""
+	[[ -n "$etime" ]] || return 1
+	local days=0 rest="$etime"
+	if [[ "$rest" == *-* ]]; then
+		days="${rest%%-*}"
+		rest="${rest#*-}"
+	fi
+	local -a parts=()
+	local IFS=':'
+	read -r -a parts <<<"$rest"
+	local n=${#parts[@]}
+	local h=0 m=0 s=0
+	case "$n" in
+	3) h="${parts[0]}"; m="${parts[1]}"; s="${parts[2]}" ;;
+	2) m="${parts[0]}"; s="${parts[1]}" ;;
+	*) return 1 ;;
+	esac
+	local v
+	for v in "$days" "$h" "$m" "$s"; do
+		[[ "$v" =~ ^[0-9]+$ ]] || return 1
+	done
+	printf '%s\n' $((10#$days * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))
+	return 0
+}
+
+# Liveness of a stamp's owner process, resistant to PID reuse (GH#40572).
+# Args: $1 = pid, $2 = process pattern, $3 = stored argv hash,
+#       $4 = stored start token (may be empty), $5 = stamp claimed_at (ISO).
+# Returns 0 when the original owner is alive, 1 otherwise. Without a stored
+# start token, a process that started after claimed_at (plus a small skew)
+# cannot be the claim owner and is classified dead.
+_isc_stamp_owner_alive() {
+	local pid="$1"
+	local pattern="${2:-}"
+	local stored_hash="${3:-}"
+	local stored_start="${4:-}"
+	local claimed_at="${5:-}"
+
+	_is_process_alive_and_matches "$pid" "$pattern" "$stored_hash" "$stored_start" || return 1
+	[[ -n "$stored_start" ]] && return 0
+
+	local claimed_epoch="" elapsed="" now_epoch=""
+	[[ -n "$claimed_at" ]] || return 0
+	claimed_epoch=$(jq -nr --arg v "$claimed_at" 'try ($v | fromdateiso8601) catch empty' 2>/dev/null || true)
+	elapsed=$(_isc_process_elapsed_seconds "$pid" 2>/dev/null || true)
+	now_epoch=$(date +%s 2>/dev/null || true)
+	[[ "$claimed_epoch" =~ ^[0-9]+$ && "$elapsed" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ ]] || return 0
+	local skew="${AIDEVOPS_CLAIM_START_SKEW_SECONDS:-10}"
+	[[ "$skew" =~ ^[0-9]+$ ]] || skew=10
+	if [[ $((now_epoch - elapsed)) -gt $((claimed_epoch + skew)) ]]; then
+		return 1
+	fi
 	return 0
 }
 
@@ -362,7 +429,9 @@ _isc_branch_has_active_claim() {
 	fi
 
 	if command -v _is_process_alive_and_matches >/dev/null 2>&1; then
-		if _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-opencode|claude|Claude}" "$stored_hash"; then
+		local stored_start
+		stored_start=$(jq -r '.owner_start_token // empty' "$stamp_file" 2>/dev/null || echo "")
+		if _isc_stamp_owner_alive "$pid" "${WORKER_PROCESS_PATTERN:-opencode|claude|Claude}" "$stored_hash" "$stored_start" "$claimed_at"; then
 			return 0
 		fi
 		return 1
@@ -375,6 +444,33 @@ _isc_branch_has_active_claim() {
 		return 0
 	fi
 	return 1
+}
+
+# Post an audit comment for an automatic (non-user-requested) claim release
+# (GH#40572). Best-effort: errors are swallowed so release never stalls.
+#
+# Arguments:
+#   $1 = issue, $2 = slug, $3 = reason (dead-owner|stale|session-end|...),
+#   $4 = stamp pid (may be empty)
+_isc_post_release_comment() {
+	local issue="$1"
+	local slug="$2"
+	local reason="$3"
+	local stamp_pid="${4:-}"
+	local hostname
+	hostname=$(_isc_hostname_or_fallback)
+	local body
+	body=$(
+		cat <<EOF
+<!-- ops:start -->
+CLAIM_RELEASED reason=${reason} host=${hostname} stamp_pid=${stamp_pid:-none}
+<!-- ops:end -->
+EOF
+	)
+	gh_issue_comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
+		_isc_warn "release audit comment failed on #$issue (reason=${reason} host=${hostname} stamp_pid=${stamp_pid:-none}) — continuing"
+	}
+	return 0
 }
 
 # Post a claim comment on the issue for audit trail visibility.

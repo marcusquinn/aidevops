@@ -238,6 +238,7 @@ _isc_scan_closed_pr_orphans() {
 # Exit: 0 always.
 _isc_release_claim_by_stamp_path() {
 	local stamp_path="$1"
+	local release_reason="${2:-dead-owner}"
 
 	[[ -f "$stamp_path" ]] || return 0
 
@@ -262,7 +263,7 @@ _isc_release_claim_by_stamp_path() {
 	# persists and keeps dispatch blocked per the t1996 invariant even after
 	# the label transitions (GH#21057).
 	# _isc_cmd_release is idempotent and fail-open on offline gh.
-	_isc_cmd_release --unassign "$r_issue" "$r_slug"
+	_isc_cmd_release --unassign --reason "$release_reason" "$r_issue" "$r_slug"
 	return 0
 }
 
@@ -297,7 +298,10 @@ _isc_cmd_release_if_dead() {
 
 	pid=$(jq -r '.pid // empty' "$stamp_path" 2>/dev/null || echo "")
 	stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp_path" 2>/dev/null || echo "")
-	if [[ -n "$pid" ]] && _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
+	local stored_start claimed_at
+	stored_start=$(jq -r '.owner_start_token // empty' "$stamp_path" 2>/dev/null || echo "")
+	claimed_at=$(jq -r '.claimed_at // empty' "$stamp_path" 2>/dev/null || echo "")
+	if [[ -n "$pid" ]] && _isc_stamp_owner_alive "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash" "$stored_start" "$claimed_at"; then
 		return 1
 	fi
 
@@ -498,7 +502,10 @@ _isc_examine_dead_stamp() {
 	# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse.
 	# Read stored argv hash from stamp for higher precision.
 	stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp" 2>/dev/null || echo "")
-	if _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
+	local stored_start claimed_at
+	stored_start=$(jq -r '.owner_start_token // empty' "$stamp" 2>/dev/null || echo "")
+	claimed_at=$(jq -r '.claimed_at // empty' "$stamp" 2>/dev/null || echo "")
+	if _isc_stamp_owner_alive "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash" "$stored_start" "$claimed_at"; then
 		_ISC_STAMP_OUTCOME="alive"
 		return 0
 	fi

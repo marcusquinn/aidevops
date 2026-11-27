@@ -175,7 +175,7 @@ release_stuck_claim() {
 
 	# Use _isc_cmd_release with --unassign (the fix from GH#21057).
 	# This clears status:in-review → status:available AND removes self-assignment.
-	if _isc_cmd_release --unassign "$issue_number" "$repo"; then
+	if _isc_cmd_release --unassign --reason stale "$issue_number" "$repo"; then
 		printf '  RELEASED: #%s → status:available + unassigned (%s)\n' \
 			"$issue_number" "$title"
 		return 0
