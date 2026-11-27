@@ -2544,7 +2544,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t19411 fix: generated _reports artifacts misclassified as Critical runtime risk #bug ref:GH#40511 pr:#40512 completed:2026-11-26
 
 - [x] t19413 fix: keywords issue sweep refiles not-planned closures on undefined-product repos #bug ref:GH#40513 pr:#40514 completed:2026-11-26
-- [ ] t19414 fix: run privacy guard before task-ID allocation so blocked issue bodies cannot strand IDs #bug ref:GH#40516
+- [x] t19414 fix: run privacy guard before task-ID allocation so blocked issue bodies cannot strand IDs #bug ref:GH#40516 pr:#40519 completed:2026-11-27
 - [x] t19415 fix: todo-collision tests 5-7 hit live GitHub title check #auto-dispatch #bug ref:GH#40517 pr:#40521 completed:2026-11-26
 
 ## In Progress
