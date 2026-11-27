@@ -392,6 +392,41 @@ _kw_repo_is_owned() {
 	return 1
 }
 
+# Return 0 when TOON text on stdin declares at least one targets row, else 1.
+# The loader rejects headers whose declared count differs from the rows.
+_kw_toon_has_targets() {
+	local line=""
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^targets\[([0-9]+) ]]; then
+			[[ "${BASH_REMATCH[1]}" -gt 0 ]] && return 0
+			return 1
+		fi
+	done
+	return 1
+}
+
+# A registry is populated only when it holds target rows. A scaffolded
+# context/keywords.md with template placeholders and empty tables is not.
+# Checks the working tree, the remote default branch (a canonical checkout can
+# lag a merged registry) and the local store or hub (ignored-data repos).
+_kw_registry_populated() {
+	local repo_path="$1"
+	local table_rel="context/keywords/targets.toon"
+	if [[ -f "$repo_path/$table_rel" ]] && _kw_toon_has_targets <"$repo_path/$table_rel"; then
+		return 0
+	fi
+	if git -C "$repo_path" show "refs/remotes/origin/HEAD:$table_rel" 2>/dev/null | _kw_toon_has_targets; then
+		return 0
+	fi
+	local property_store=""
+	property_store=$(_kw_py property --root "$repo_path" 2>/dev/null | jq -r '.store // empty') || property_store=""
+	if [[ -n "$property_store" && -f "$property_store/keywords/targets.toon" ]] &&
+		_kw_toon_has_targets <"$property_store/keywords/targets.toon"; then
+		return 0
+	fi
+	return 1
+}
+
 _kw_survey_rows() {
 	_kw_export_env
 	local login
@@ -403,18 +438,7 @@ _kw_survey_rows() {
 		[[ "$local_only" == "$KW_TRUE" || "$maintenance" == "$KW_FALSE" ]] && continue
 		_kw_repo_is_owned "$slug" "$maintainer" "$role" "$login" || continue
 		local has_keywords="$KW_FALSE" has_legacy="$KW_FALSE"
-		[[ -f "$repo_path/$STRATEGY_REL" ]] && has_keywords="$KW_TRUE"
-		# A canonical checkout can lag its remote; a registry already merged
-		# upstream must not be refiled.
-		if [[ "$has_keywords" != "$KW_TRUE" ]] &&
-			git -C "$repo_path" cat-file -e "refs/remotes/origin/HEAD:$STRATEGY_REL" 2>/dev/null; then
-			has_keywords="$KW_TRUE"
-		fi
-		if [[ "$has_keywords" != "$KW_TRUE" ]]; then
-			local property_store=""
-			property_store=$(_kw_py property --root "$repo_path" 2>/dev/null | jq -r '.store // empty') || property_store=""
-			[[ -n "$property_store" && -d "$property_store" ]] && has_keywords="$KW_TRUE"
-		fi
+		_kw_registry_populated "$repo_path" && has_keywords="$KW_TRUE"
 		[[ -f "$repo_path/$LEGACY_REL" ]] && has_legacy="$KW_TRUE"
 		printf '%s\t%s\t%s\t%s\n' "$slug" "$repo_path" "$has_keywords" "$has_legacy"
 	done < <(jq -r '.initialized_repos // [] | .[] | [.path // "", .slug // "", .maintainer // "", .role // "",
