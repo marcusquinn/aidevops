@@ -15,7 +15,7 @@ const DEVICE_DIAGNOSTIC = /^\/dev\/(?:null|stdin|stdout|stderr|fd\/[0-9]+|u?rand
 // the persisted capture. Unknown names/expansions are omitted rather than guessed.
 export function recordedDeviceTargets(call) {
   const candidates = call?.tool === "bash"
-    ? String(call.command || "").match(/\/dev\/[A-Za-z0-9_./-]+/g) || []
+    ? [...String(call.command || "").matchAll(/(?:^|[ \t<>"'])(\/dev\/[A-Za-z0-9_./-]+)(?=$|[ \t<>"'|&;])/g)].map((match) => match[1])
     : [call?.target];
   return [...new Set(candidates.filter((target) => DEVICE_DIAGNOSTIC.test(target)))].slice(0, 20);
 }
@@ -25,8 +25,8 @@ export function recordedDeviceTargets(call) {
 // arbitrary paths or unsupported redirect operators. Bash authorization remains
 // independent; this only resolves the device directory ask.
 export function runtimeRedirectionTargets(command) {
-  if (typeof command !== "string" || command.length > 10000 || /[\r\n\u0000]/.test(command)) return [];
-  const token = /\s+|[0-9]*>&[0-9]+|[0-9]*(?:>>|>|<)|\|\||&&|\||(?:\/dev\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+)(?=$|[\s<>|&])/gy;
+  if (typeof command !== "string" || command.length > 10000 || /[^\x20-\x7e\t]/.test(command)) return [];
+  const token = /[ \t]+|[0-9]*>&[0-9]+|[0-9]*(?:>>|>|<)|\|\||&&|\||(?:\/dev\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+)(?=$|[ \t<>|&])/gy;
   const tokens = [];
   let offset = 0;
   while (offset < command.length) {
@@ -34,7 +34,7 @@ export function runtimeRedirectionTargets(command) {
     const match = token.exec(command);
     if (!match) return [];
     offset = token.lastIndex;
-    if (!/^\s+$/.test(match[0])) tokens.push(match[0]);
+    if (!/^[ \t]+$/.test(match[0])) tokens.push(match[0]);
   }
   const targets = [];
   let executable = "";

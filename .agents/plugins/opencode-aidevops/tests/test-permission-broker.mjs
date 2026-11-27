@@ -8,6 +8,7 @@ import { dirname, join } from "path";
 import { tmpdir } from "os";
 
 import { createPermissionBroker, sanitizePermissionText } from "../permission-broker.mjs";
+import { recordedDeviceTargets } from "../permission-broker-runtime-read.mjs";
 
 test("worker runtime reads allow bounded plumbing but keep broad and proc requests gated", async (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-runtime-read-")));
@@ -94,6 +95,11 @@ test("only bounded recorded bash device operations bypass their directory ask", 
     ["true >/dev/null &&", "external_directory", ["/dev/*"], false],
     ["true >/dev/null$(cat secret)", "external_directory", ["/dev/*"], false],
     ["cat << /dev/null", "external_directory", ["/dev/*"], false],
+    ["cat >/dev/null\ntee /dev/random", "external_directory", ["/dev/*"], false],
+    ["true >/dev/null\u000bextra", "external_directory", ["/dev/*"], false],
+    ["true >/dev/null\u00a0extra", "external_directory", ["/dev/*"], false],
+    ["head/dev/urandom", "external_directory", ["/dev/*"], false],
+    ["true\t</dev/null", "external_directory", ["/dev/*"], true],
     ["cat /dev/sda 2>/dev/null", "external_directory", ["/dev/*"], false],
     ["git status 2>/dev/null; cat /dev/sda", "external_directory", ["/dev/*"], false],
     ["git status 2>/dev/null", "external_directory", ["/dev/*", `${root}/*`], false],
@@ -112,6 +118,10 @@ test("only bounded recorded bash device operations bypass their directory ask", 
   assert.ok(capture.requests.some((request) => request.concrete_device_targets.length === 0));
   assert.equal(JSON.stringify(capture).includes("cat secret"), false);
   assert.ok(capture.requests.every((request) => request.command === undefined));
+  for (const command of ["cat /dev/sda${PARTITION}", "cat /dev/tty/../sda", "cat /other/dev/tty", "echo /dev/tty-value"]) {
+    assert.deepEqual(recordedDeviceTargets({ tool: "bash", command }), [], command);
+  }
+  assert.deepEqual(recordedDeviceTargets({ tool: "bash", command: "cat /dev/tty 2>/dev/null" }), ["/dev/tty", "/dev/null"]);
 });
 
 test("runtime scratch exception rejects a symlinked root or managed ancestor", (t) => {
