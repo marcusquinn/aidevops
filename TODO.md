@@ -2563,11 +2563,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19425 fix(locks): mkdir-as-mutex is not exclusive under uutils coreutils (Ubuntu 26.04) — two concurrent owners #auto-dispatch #bug #priority:high ref:GH#40582
 
-- [ ] t19426 fix(ci): suite-health logs drop a flaky suite's first attempt when the rerun fills the 80-line tail #auto-dispatch #bug ref:GH#40583
+- [x] t19426 fix(ci): suite-health logs drop a flaky suite's first attempt when the rerun fills the 80-line tail #auto-dispatch #bug ref:GH#40583 pr:#40587 completed:2026-11-27
 
-- [ ] t19427 fix(tests): relationship-deadline suite asserts exact per-operation wall-clock seconds #auto-dispatch #bug ref:GH#40584
+- [x] t19427 fix(tests): relationship-deadline suite asserts exact per-operation wall-clock seconds #auto-dispatch #bug ref:GH#40584 pr:#40588 completed:2026-11-27
 
-- [ ] t19428 fix(tests): checkout-order suite exits 141 from early-exit awk pipes (SIGPIPE) #auto-dispatch #bug ref:GH#40585
+- [x] t19428 fix(tests): checkout-order suite exits 141 from early-exit awk pipes (SIGPIPE) #auto-dispatch #bug ref:GH#40585 pr:#40589 completed:2026-11-27
 
 ## In Progress
 
