@@ -184,6 +184,29 @@ statement line is already imported untagged.
   unverified, compare against the bank line and invoice balance, and report both
   values rather than choosing one.
 
+### Suspense, ledgers, and operations only the web UI offers
+
+- **9998 Suspense Account** holds every untagged bank line; **2997 Balance Sheet
+  Suspense** holds lines someone tagged "unknown", plus "Pending bank transfer" legs
+  that should net to zero. Both must be cleared before a filing.
+- `GET /ledgers?nominal_code=&date_from=&date_to=&limit=&offset=` returns
+  `{NetValue, total, transactions:[…]}`, not a bare list. Page with `offset`. A
+  negative amount is a debit. `NetValue` for a date range is the quickest way to
+  verify a reclassification.
+- `POST /journals` posts balanced multi-line journals. Prefer one journal per period
+  that names its reason and covers a whole class of reclassification over many
+  silent line edits, and dry-run it from live ledger lines first.
+- Retagging a bank line, dividend vouchers, nominal creation and bank tagging rules
+  have no REST operation. In the UI:
+  - **Retag a line:** Banking → account → Tagged → Detag, then Tag Me.
+  - **Dividend:** "Salary, dividend or other drawings" → Dividends → "Create
+    dividend voucher". This also creates the board minute.
+  - **New nominal:** Chart of Accounts → Create New Account → Enter specific code.
+  - **Tagging rules:** `/bank/taggingrules`.
+
+  After changing a classification, check the tagging rules too, or the next import
+  repeats the old one.
+
 ## Available tools
 
 quickfile-mcp v4.0.0 exposes 112 operations: 37 stable curated tools and 75

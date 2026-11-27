@@ -194,6 +194,29 @@ For investor or lender confidence, reconcile the underlying books, disclose basi
 and estimates, label management adjustments, preserve comparatives, and make each
 reported line traceable. Never optimize a classification solely to improve a KPI.
 
+### Pre-filing audit-readiness review
+
+Before year-end accounts or a return go to the accountant, read every suspense,
+miscellaneous and owner-related account line by line. Ask how each balance would
+look to a tax inspector or auditor:
+
+| Signal | Usual resolution (owner and adviser decide) |
+|---|---|
+| Any suspense or clearing balance | Reclassify each line; transfer legs must pair |
+| One-off period-end journal with no explanation | The preparer explains it; correct a filed period through the accountant only |
+| Regular payments to one person under wages with no payroll-tax postings | Invoiced contractors → sub-contractor costs with their invoices kept; employees → payroll registration |
+| Payments to a director or shareholder in suspense or expenses | A dividend with voucher and minutes (and any solvency statement the company law requires), or the director's loan account. It is only a loan repayment if the director has lent the company money |
+| Director's loan account owed to the company | Clear it with a distribution or repayment, and document it |
+| Related-party loans | A loan agreement or minute, and an asset or liability nominal that matches the balance's sign |
+| Clothing, groceries or motor costs with no business record | Note the business purpose, or move to the director's loan account |
+| Income netted inside an expense account | A matching income account |
+| Assets never depreciated; recurring renewals capitalised | Depreciation at period end; expense the renewals |
+| Old debtors and unallocated receipts | Allocate, credit or write off, so profit isn't overstated |
+
+Same-day out-and-back transfers ("transfer returned") are reversed mistakes. Tag
+both legs to one account so they net to zero. Reclassify open periods only, and
+check that the bank auto-tagging rules won't recreate the old classification.
+
 ## Debtors, Creditors, and Contacts
 
 ### Receivables and payables
