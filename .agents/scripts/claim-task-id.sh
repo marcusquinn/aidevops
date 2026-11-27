@@ -1946,6 +1946,7 @@ _warn_dispatch_path_auto_dispatch() {
 # stderr while the creating session can still implement it. Never blocks:
 # repos.json is per host and another runner may pulse the repo.
 #
+# Called pre-claim and again after TODO-derived labels merge; prints once.
 # Arguments: none (reads TASK_LABELS, NO_ISSUE, REPO_PATH, REMOTE_NAME)
 # Environment:
 #   AIDEVOPS_SKIP_PULSE_OFF_CHECK=1 — disable entirely
@@ -1953,6 +1954,7 @@ _warn_dispatch_path_auto_dispatch() {
 # ---------------------------------------------------------------------------
 _warn_pulse_off_auto_dispatch() {
 	[[ "${AIDEVOPS_SKIP_PULSE_OFF_CHECK:-}" == "1" ]] && return 0
+	[[ "${_CLAIM_PULSE_OFF_WARNED:-}" == "1" ]] && return 0
 	case ",$TASK_LABELS," in
 	*,auto-dispatch,* | *,auto_dispatch,*) ;;
 	*) return 0 ;;
@@ -1979,6 +1981,7 @@ _warn_pulse_off_auto_dispatch() {
 	log_warn "${reason} on this host: unless another runner pulses it, no worker will pick up this auto-dispatch issue."
 	log_warn "  Implement it now: interactive-start-helper.sh --issue <N> --repo ${slug} --task \"...\" --auto-dispatch"
 	log_warn "  ${enable_hint} aidevops repos pulse on ${slug}"
+	_CLAIM_PULSE_OFF_WARNED=1
 	return 0
 }
 
@@ -2149,6 +2152,8 @@ _main_enrich_todo_labels() {
 			# Deduplicate merged label set
 			TASK_LABELS=$(printf '%s' "$TASK_LABELS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
 			log_info "t2436: Derived labels from TODO.md tags for ${_task_id_for_scan}: ${_todo_derived_labels}"
+			# GH#40460: a TODO #auto-dispatch tag can add the label only now.
+			_warn_pulse_off_auto_dispatch
 		fi
 	fi
 	return 0
