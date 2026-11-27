@@ -252,6 +252,7 @@ test_worker_exit_refill_uses_active_bundle_before_lock() {
 	# bootstrap dependencies are needed: successful re-exec must precede leases.
 	cp "$REPO_ROOT/.agents/scripts/pulse-wrapper.sh" "$old_root/scripts/pulse-wrapper.sh"
 	cp "$REPO_ROOT/.agents/scripts/pulse-runtime-pin.sh" "$old_root/scripts/pulse-runtime-pin.sh"
+	cp "$REPO_ROOT/.agents/scripts/mkdir-exclusive.sh" "$old_root/scripts/mkdir-exclusive.sh"
 	cp "$REPO_ROOT/.agents/scripts/runtime-bundle-manifest.sh" "$old_root/scripts/runtime-bundle-manifest.sh"
 	cp "$REPO_ROOT/.agents/scripts/runtime-bundle-lease.sh" "$active_root/scripts/runtime-bundle-lease.sh"
 	cat >"$active_root/scripts/pulse-wrapper.sh" <<'SH'
