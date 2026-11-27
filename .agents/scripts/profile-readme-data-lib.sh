@@ -96,8 +96,14 @@ PROFILE_RATE_OPUS="15.0|75.0|1.50"
 PROFILE_RATE_SONNET="3.0|15.0|0.30"
 PROFILE_RATE_GPT="2.50|10.0|0.625"
 PROFILE_RATE_FREE="0.0|0.0|0.0"
-PROFILE_RECENT_MODEL_FILTER="AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
+PROFILE_RECENT_MODEL_PERIOD="30d"
+# Status returned when the observability DB exists but its model usage could
+# not be read completely. Callers must not substitute another population.
+PROFILE_SOURCE_INCOMPLETE=3
 PROFILE_JSON_ARRAY_TYPE="array"
+
+# shellcheck source=profile-readme-usage-rollup-lib.sh
+source "${_PROFILE_DATA_LIB_DIR}/profile-readme-usage-rollup-lib.sh"
 PROFILE_EMPTY_TOKEN_TOTALS='{"total_all":0,"cache_hit_pct":0}'
 
 # =============================================================================
@@ -498,69 +504,33 @@ SELECT * FROM temp.archive_rows"
 }
 
 # --- Gather model usage from observability DB (accurate activity data) ---
-# date_filter: optional SQL WHERE clause fragment (e.g. "AND timestamp >= ...")
-# Returns JSON array or empty string if unavailable.
+# Usage: _get_model_usage_from_obs_db [period]
+#   period: empty for all time, otherwise the last 30 days (UTC-hour aligned)
+# Served from the incremental usage rollup (t19429), so hourly runs no longer
+# re-scan the whole DB. Prints a JSON array, or empty with status 0 when there
+# is no observability DB. When the DB exists but the rollup has never reached
+# its head (first build or failure), prints empty and returns
+# PROFILE_SOURCE_INCOMPLETE: a different population must not replace it.
 _get_model_usage_from_obs_db() {
-	local date_filter="${1:-}"
+	local period="${1:-}"
 
 	if ! command -v sqlite3 &>/dev/null || [[ ! -f "$OBS_DB_FILE" ]]; then
 		echo ""
 		return 0
 	fi
 
-	local sqlite_json
-	sqlite_json=$(_profile_sqlite_read "$OBS_DB_FILE" "
-		SELECT COALESCE(
-			json_group_array(
-				json_object(
-					'model', model_id,
-					'requests', requests,
-					'input_tokens', input_tokens,
-					'output_tokens', output_tokens,
-					'cache_read_tokens', cache_read_tokens,
-					'cache_write_tokens', cache_write_tokens,
-					'session_count', session_count,
-					'total_session_count', total_session_count,
-					'session_hours', session_hours,
-					'cost_total', ROUND(cost_total, 2)
-				)
-			),
-			'[]'
-		)
-		FROM (
-			WITH filtered_requests AS (
-				SELECT *
-				FROM llm_requests
-				WHERE model_id IS NOT NULL
-				  AND model_id != ''
-				  ${date_filter}
-			)
-			SELECT
-				model_id,
-				COUNT(*) AS requests,
-				COUNT(DISTINCT NULLIF(session_id, '')) AS session_count,
-				(SELECT COUNT(DISTINCT NULLIF(session_id, '')) FROM filtered_requests) AS total_session_count,
-				CASE WHEN COUNT(duration_ms) = COUNT(*)
-					  AND SUM(CASE WHEN TYPEOF(duration_ms) IN ('integer', 'real') AND duration_ms >= 0 THEN 0 ELSE 1 END) = 0
-					THEN ROUND(SUM(duration_ms) / 3600000.0, 3)
-					ELSE NULL
-				END AS session_hours,
-				COALESCE(SUM(tokens_input), 0) AS input_tokens,
-				COALESCE(SUM(tokens_output), 0) AS output_tokens,
-				COALESCE(SUM(tokens_cache_read), 0) AS cache_read_tokens,
-				COALESCE(SUM(tokens_cache_write), 0) AS cache_write_tokens,
-				COALESCE(SUM(cost), 0.0) AS cost_total
-			FROM filtered_requests
-			GROUP BY model_id
-			ORDER BY requests DESC
-		);
-	" || true)
-
-	if [[ -n "$sqlite_json" ]]; then
-		echo "$sqlite_json" | jq -c '.' 2>/dev/null || echo "[]"
-	else
+	local rollup_status sqlite_json=""
+	rollup_status=$(_profile_usage_rollup_refresh)
+	if [[ "$rollup_status" != "$PROFILE_USAGE_ROLLUP_COMPLETE" && "$rollup_status" != "$PROFILE_USAGE_ROLLUP_LAGGING" ]]; then
 		echo ""
+		return "$PROFILE_SOURCE_INCOMPLETE"
 	fi
+	if ! sqlite_json=$(_profile_usage_rollup_query "${period:-all}") || [[ -z "$sqlite_json" ]]; then
+		printf '[profile-readme] WARN: usage rollup query failed; keeping the published model usage\n' >&2
+		echo ""
+		return "$PROFILE_SOURCE_INCOMPLETE"
+	fi
+	echo "$sqlite_json" | jq -c '.' 2>/dev/null || echo "[]"
 	return 0
 }
 
@@ -611,14 +581,19 @@ _get_model_usage() {
 	# "all time" to be lower than the last-30-days observability totals after
 	# runtime schema changes, while preserving OpenCode as fallback for installs
 	# where observability started later.
+	# An observability DB that exists but could not be read completely returns
+	# PROFILE_SOURCE_INCOMPLETE; propagate it instead of substituting OpenCode
+	# or JSONL populations (t19429).
+	local obs_rc=0
 	if [[ "$period" == "all" ]]; then
 		local obs_all_result obs_recent_result oc_result obs_requests oc_requests
-		local recent_filter="$PROFILE_RECENT_MODEL_FILTER"
-		obs_all_result=$(_get_model_usage_from_obs_db "")
+		obs_all_result=$(_get_model_usage_from_obs_db "") || obs_rc=$?
+		[[ "$obs_rc" -ne "$PROFILE_SOURCE_INCOMPLETE" ]] || return "$PROFILE_SOURCE_INCOMPLETE"
 		if [[ "$reference_provided" == "true" ]]; then
 			obs_recent_result="$supplied_recent"
 		else
-			obs_recent_result=$(_get_model_usage_from_obs_db "$recent_filter")
+			obs_recent_result=$(_get_model_usage_from_obs_db "$PROFILE_RECENT_MODEL_PERIOD") || obs_rc=$?
+			[[ "$obs_rc" -ne "$PROFILE_SOURCE_INCOMPLETE" ]] || return "$PROFILE_SOURCE_INCOMPLETE"
 		fi
 		oc_result=$(_get_model_usage_from_opencode)
 		obs_requests=$(_model_usage_request_count "$obs_all_result")
@@ -641,10 +616,9 @@ _get_model_usage() {
 	fi
 
 	# For 30d: use observability DB (has accurate cost data).
-	local date_filter="$PROFILE_RECENT_MODEL_FILTER"
-
 	local obs_result
-	obs_result=$(_get_model_usage_from_obs_db "$date_filter")
+	obs_result=$(_get_model_usage_from_obs_db "$PROFILE_RECENT_MODEL_PERIOD") || obs_rc=$?
+	[[ "$obs_rc" -ne "$PROFILE_SOURCE_INCOMPLETE" ]] || return "$PROFILE_SOURCE_INCOMPLETE"
 	if [[ -n "$obs_result" && "$(_model_usage_request_count "$obs_result")" -gt 0 ]]; then
 		echo "$obs_result"
 		return 0
@@ -655,20 +629,30 @@ _get_model_usage() {
 }
 
 # --- Select both profile model populations without duplicate source scans ---
-# Output: {recent:[...], all:[...]}
+# Output: {status:"ok"|"incomplete", recent:[...], all:[...]}
+# "incomplete" means observability exists but could not be read completely;
+# the renderer keeps the previously published tables (t19429).
 _get_profile_model_usage_bundle() {
-	local recent_filter="$PROFILE_RECENT_MODEL_FILTER"
-	local obs_recent recent_result all_result
-	obs_recent=$(_get_model_usage_from_obs_db "$recent_filter")
+	local obs_recent recent_result all_result obs_rc=0
+	local incomplete_bundle='{"status":"incomplete","recent":[],"all":[]}'
+	obs_recent=$(_get_model_usage_from_obs_db "$PROFILE_RECENT_MODEL_PERIOD") || obs_rc=$?
+	if [[ "$obs_rc" -eq "$PROFILE_SOURCE_INCOMPLETE" ]]; then
+		printf '%s\n' "$incomplete_bundle"
+		return 0
+	fi
 	if [[ -n "$obs_recent" && "$(_model_usage_request_count "$obs_recent")" -gt 0 ]]; then
 		recent_result="$obs_recent"
 	else
 		recent_result=$(_get_model_usage_from_jsonl "30d")
 	fi
 	[[ -n "$recent_result" ]] || recent_result="[]"
-	all_result=$(_get_model_usage "all" "$obs_recent" "true")
+	all_result=$(_get_model_usage "all" "$obs_recent" "true") || obs_rc=$?
+	if [[ "$obs_rc" -eq "$PROFILE_SOURCE_INCOMPLETE" ]]; then
+		printf '%s\n' "$incomplete_bundle"
+		return 0
+	fi
 	[[ -n "$all_result" ]] || all_result="[]"
-	jq -cn --argjson recent "$recent_result" --argjson all "$all_result" '{recent:$recent,all:$all}'
+	jq -cn --argjson recent "$recent_result" --argjson all "$all_result" '{status:"ok",recent:$recent,all:$all}'
 	return 0
 }
 

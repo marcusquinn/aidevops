@@ -2571,6 +2571,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19430 feat(pulse): let a worker runtime-verify High-risk, credential-free runtime-pending PRs #auto-dispatch #feat #framework #pulse ref:GH#40607
 
+- [ ] t19429 fix(profile): serve AI Model Usage from an incremental rollup; never publish fallback populations on observability timeouts #bug #interactive ref:GH#40606 assignee:marcusquinn logged:2026-11-27 started:2026-11-27 -> [todo/tasks/t19429-brief.md]
+
+- [ ] t19431 fix(shellcheck): wrapper sources mkdir-exclusive.sh relative to the PATH-shim symlink and fails #auto-dispatch #bug ref:GH#40609 -> [todo/tasks/t19431-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
