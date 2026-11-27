@@ -223,61 +223,70 @@ _ghqa_prepare_private_dir() {
 	return 0
 }
 
-_ghqa_reclaim_guard_acquire() (
-	local lock_dir="$1"
+# Fence every change to the lock pathname, including mkdir-to-PID publication
+# and release. Token-named claims pin a sibling election; stale cleanup removes
+# only the exact observed claim, never a replacement process's marker.
+_ghqa_transition_try() {
+	local gate="$1"
 	local tries="$2"
-	local reclaim_guard="$3"
-	local contender_pid="$4"
-	local candidate_dir="${lock_dir}.guard.${contender_pid}.${RANDOM}.${RANDOM}.${tries}"
-	local candidate_pid_file="${candidate_dir}/pid"
-	local guard_owner=""
-	[[ ! -e "$candidate_dir" && ! -L "$candidate_dir" ]] || return 1
-	trap 'rm -f "$candidate_pid_file" 2>/dev/null || true; rmdir "$candidate_dir" 2>/dev/null || true' EXIT
-	trap 'exit 1' HUP INT TERM
-	if mkdir "$candidate_dir" 2>/dev/null; then
-		if printf '%s\n' "$contender_pid" >"$candidate_pid_file" 2>/dev/null &&
-			ln "$candidate_pid_file" "$reclaim_guard" 2>/dev/null; then
-			rm -f "$candidate_pid_file" 2>/dev/null || return 1
-			rmdir "$candidate_dir" 2>/dev/null || return 1
-			trap - EXIT HUP INT TERM
-			return 0
+	local pid="${BASHPID:-}"
+	[[ -n "$pid" ]] || pid="$(exec sh -c 'printf "%s" "$PPID"')"
+	[[ "$pid" =~ ^[0-9]+$ ]] || return 1
+	# Use a candidate token; the shared claim is published only on success so a
+	# nested call (e.g. signal cleanup) cannot overwrite a live claim.
+	local candidate="${pid}.${RANDOM}.${RANDOM}"
+	if (umask 077 && mkdir "$gate") 2>/dev/null; then
+		if (umask 077 && mkdir "${gate}/claim.${candidate}") 2>/dev/null; then
+			local -a claims=("$gate"/claim.*)
+			if [[ ${#claims[@]} -eq 1 && "${claims[0]}" == "${gate}/claim.${candidate}" ]]; then
+				_GHQA_TRANSITION_CLAIM="$candidate"
+				return 0
+			fi
+			rmdir "${gate}/claim.${candidate}" 2>/dev/null || true
 		fi
+		rmdir "$gate" 2>/dev/null || true
+		return 1
 	fi
-	[[ -d "$lock_dir" && ! -L "$lock_dir" && -f "$reclaim_guard" && ! -L "$reclaim_guard" ]] || return 1
-	guard_owner=$(cat "$reclaim_guard" 2>/dev/null) || guard_owner=""
-	if [[ "$guard_owner" =~ ^[0-9]+$ ]]; then
-		kill -0 "$guard_owner" 2>/dev/null && return 1
-	else
-		[[ "$tries" -ge 100 ]] || return 1
+	local claim=""
+	local owner=""
+	for claim in "$gate"/claim.*; do
+		[[ -d "$claim" ]] || continue
+		owner="${claim##*/claim.}"
+		owner="${owner%%.*}"
+		if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+			rmdir "$claim" 2>/dev/null || true
+		fi
+	done
+	# An empty election may have been interrupted before claim publication.
+	# rmdir cannot vacate a live claim, even if a delayed publisher races us.
+	if [[ "$tries" -ge 100 ]]; then
+		rmdir "$gate" 2>/dev/null || true
 	fi
-	rm -f "$reclaim_guard" 2>/dev/null || return 1
 	return 1
-)
+}
+
+_ghqa_transition_release() {
+	local gate="$1"
+	if [[ -n "${_GHQA_TRANSITION_CLAIM:-}" ]]; then
+		rmdir "${gate}/claim.${_GHQA_TRANSITION_CLAIM}" 2>/dev/null || true
+	fi
+	rmdir "$gate" 2>/dev/null || true
+	_GHQA_TRANSITION_CLAIM=""
+	return 0
+}
 
 _ghqa_lock_reclaim() (
 	local lock_dir="$1"
 	local tries="$2"
 	local pid_file="${lock_dir}/pid"
-	local contender_pid=""
-	local reclaim_guard="${lock_dir}/.reclaim.guard"
-	local reclaim_dir="${lock_dir}.reclaim.${contender_pid}.${RANDOM}.${tries}"
-	local moved_reclaim_guard=""
+	local gate="${lock_dir}.transition"
+	local reclaim_dir="${lock_dir}.reclaim.${BASHPID:-$$}.${RANDOM}.${tries}"
 	local owner=""
-	if [[ -n "${BASHPID:-}" ]]; then
-		contender_pid="$BASHPID"
-	else
-		contender_pid=$(sh -c 'printf "%s" "$PPID"' 2>/dev/null) || contender_pid=""
-	fi
-	[[ "$contender_pid" =~ ^[0-9]+$ ]] || return 1
-	reclaim_dir="${lock_dir}.reclaim.${contender_pid}.${RANDOM}.${tries}"
-	moved_reclaim_guard="${reclaim_dir}/.reclaim.guard"
 	[[ -d "$lock_dir" && ! -L "$lock_dir" ]] || return 1
-	# Pin this exact lock directory while inspecting it. A releasing owner cannot
-	# remove and replace the path until the guard is gone. The guard is installed
-	# as a complete hard link so interrupted setup cannot expose a partial guard.
-	_ghqa_reclaim_guard_acquire "$lock_dir" "$tries" "$reclaim_guard" "$contender_pid" || return 1
-	trap 'rm -f "$reclaim_guard" 2>/dev/null || true' EXIT
+	_ghqa_transition_try "$gate" "$tries" || return 1
+	trap '_ghqa_transition_release "$gate"' EXIT
 	trap 'exit 1' HUP INT TERM
+	[[ -d "$lock_dir" && ! -L "$lock_dir" ]] || return 1
 	if [[ -f "$pid_file" && ! -L "$pid_file" ]]; then
 		# Let cat open pid_file inside a stderr-suppressed command substitution so
 		# a concurrent release is retryable contention, not a shell diagnostic.
@@ -290,16 +299,12 @@ _ghqa_lock_reclaim() (
 	else
 		[[ "$tries" -ge 100 ]] || return 1
 	fi
-	# Rename-before-delete atomically claims the guarded directory. Contenders
-	# can acquire the original path immediately without being deleted by this
-	# stale-lock cleanup.
+	# No publisher or releasing owner can straddle this rename.
 	[[ ! -e "$reclaim_dir" && ! -L "$reclaim_dir" ]] || return 1
-	reclaim_guard="$moved_reclaim_guard"
 	mv "$lock_dir" "$reclaim_dir" 2>/dev/null || return 1
 	pid_file="${reclaim_dir}/pid"
-	rm -f "$pid_file" "$reclaim_guard" 2>/dev/null || return 1
+	rm -f "$pid_file" 2>/dev/null || return 1
 	rmdir "$reclaim_dir" 2>/dev/null || return 1
-	trap - EXIT HUP INT TERM
 	return 0
 )
 
@@ -308,8 +313,26 @@ _ghqa_lock_acquire() {
 	local max_tries="${AIDEVOPS_GH_QUOTA_LOCK_TRIES:-3000}"
 	local tries=0
 	local owner_pid="${BASHPID:-$$}"
+	local gate="${lock_dir}.transition"
 	[[ "$max_tries" =~ ^[0-9]+$ && "$max_tries" -gt 0 ]] || max_tries=3000
-	while ! mkdir "$lock_dir" 2>/dev/null; do
+	# Empty-gate recovery must remain reachable at small configured limits.
+	local recover_at=100
+	[[ "$max_tries" -gt "$recover_at" ]] || recover_at=$((max_tries - 1))
+	while :; do
+		local gate_tries="$tries"
+		[[ "$tries" -lt "$recover_at" ]] || gate_tries=100
+		if _ghqa_transition_try "$gate" "$gate_tries"; then
+			if mkdir "$lock_dir" 2>/dev/null; then
+				local publish_rc=0
+				if ! { printf '%s\n' "$owner_pid" >"${lock_dir}/pid"; } 2>/dev/null; then
+					rmdir "$lock_dir" 2>/dev/null || true
+					publish_rc=1
+				fi
+				_ghqa_transition_release "$gate"
+				return "$publish_rc"
+			fi
+			_ghqa_transition_release "$gate"
+		fi
 		if _ghqa_lock_reclaim "$lock_dir" "$tries"; then
 			tries=0
 			continue
@@ -318,17 +341,29 @@ _ghqa_lock_acquire() {
 		[[ "$tries" -lt "$max_tries" ]] || return 1
 		sleep 0.01 2>/dev/null || return 1
 	done
-	if ! printf '%s\n' "$owner_pid" >"${lock_dir}/pid" 2>/dev/null; then
-		rmdir "$lock_dir" 2>/dev/null || true
-		return 1
-	fi
-	return 0
+	return 1
 }
 
 _ghqa_lock_release() {
 	local lock_dir="$1"
-	rm -f "${lock_dir}/pid" 2>/dev/null || true
-	rmdir "$lock_dir" 2>/dev/null || true
+	local gate="${lock_dir}.transition"
+	local tries=0
+	while ! _ghqa_transition_try "$gate" "$tries"; do
+		tries=$((tries + 1))
+		[[ "$tries" -lt 3000 ]] || return 1
+		sleep 0.01 2>/dev/null || return 1
+	done
+	local owner=""
+	owner=$(cat "${lock_dir}/pid" 2>/dev/null) || owner=""
+	local release_rc=0
+	if [[ -n "$owner" && "$owner" != "${BASHPID:-$$}" ]]; then
+		release_rc=1
+	else
+		rm -f "${lock_dir}/pid" 2>/dev/null || release_rc=1
+		rmdir "$lock_dir" 2>/dev/null || release_rc=1
+	fi
+	_ghqa_transition_release "$gate"
+	[[ "$release_rc" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -589,7 +624,12 @@ _ghqa_capture_cleanup() {
 	local debug_file="$1"
 	local lock_dir="$2"
 	[[ -z "$debug_file" ]] || rm -f "$debug_file" 2>/dev/null || true
-	[[ -z "$lock_dir" ]] || _ghqa_lock_release "$lock_dir"
+	if [[ -n "$lock_dir" ]]; then
+		# Retire any in-flight transition claim held by this shell first, so
+		# release does not wait on its own live gate after a signal.
+		_ghqa_transition_release "${lock_dir}.transition"
+		_ghqa_lock_release "$lock_dir"
+	fi
 	return 0
 }
 
