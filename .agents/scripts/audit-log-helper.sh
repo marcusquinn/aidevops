@@ -310,18 +310,43 @@ _audit_error() {
 	return 0
 }
 
-# Remove only the files owned by the audit lock protocol, then the directory.
-# Arguments: $1 — lock directory
+# Remove the lock directory with one atomic rename, so no other process can elect
+# a reclaimer inside, or recreate a lock under, a directory that is mid-removal.
+# Arguments: $1 — lock directory, $2 (optional) — owner record the directory must
+# still hold (empty string means ownerless). If the renamed directory holds a
+# different owner, the rename is undone and 1 is returned.
 _audit_remove_lock_dir() {
 	local lock_dir="$1"
-
-	rm -f "${lock_dir}/owner" || return 1
-	rmdir "${lock_dir}/.reclaim" 2>/dev/null || true
-	if ! rmdir "$lock_dir" 2>/dev/null; then
-		_audit_error "Could not remove audit log lock directory: $lock_dir"
-		return 1
+	local tomb="${lock_dir}.rm.$$.${RANDOM}"
+	local verify_owner=0
+	local expected_record="${2:-}"
+	if [[ $# -ge 2 ]]; then
+		verify_owner=1
 	fi
 
+	if ! mv "$lock_dir" "$tomb" 2>/dev/null; then
+		if [[ -d "$lock_dir" ]]; then
+			_audit_error "Could not remove audit log lock directory: $lock_dir"
+			return 1
+		fi
+		return 0
+	fi
+
+	if [[ "$verify_owner" -eq 1 ]]; then
+		local tomb_record=""
+		if [[ -f "${tomb}/owner" ]]; then
+			IFS= read -r tomb_record <"${tomb}/owner" || tomb_record=""
+		fi
+		if [[ "$tomb_record" != "$expected_record" ]]; then
+			# The lock changed hands; hand it back if the path is still free.
+			mv "$tomb" "$lock_dir" 2>/dev/null || _audit_error "Audit log lock changed owner during removal: $lock_dir"
+			return 1
+		fi
+	fi
+
+	rm -f "${tomb}/owner" || true
+	rmdir "${tomb}/.reclaim" 2>/dev/null || true
+	rmdir "$tomb" 2>/dev/null || _audit_warn "Could not remove retired audit lock directory: $tomb"
 	return 0
 }
 
@@ -389,7 +414,7 @@ _audit_reclaim_stale_lock() {
 	fi
 
 	_audit_warn "Reclaiming stale audit log lock (${stale_reason})"
-	if ! _audit_remove_lock_dir "$lock_dir"; then
+	if ! _audit_remove_lock_dir "$lock_dir" "$owner_record"; then
 		return 1
 	fi
 
@@ -487,7 +512,7 @@ _audit_release_current_lock() {
 		return 1
 	fi
 
-	if ! _audit_remove_lock_dir "$lock_dir"; then
+	if ! _audit_remove_lock_dir "$lock_dir" "$expected_owner"; then
 		_AUDIT_HELD_LOCK_DIR=""
 		_AUDIT_HELD_LOCK_OWNER=""
 		return 1
