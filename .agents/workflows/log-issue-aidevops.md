@@ -47,7 +47,7 @@ these keywords.
 
 ## Pre-composition Checks (MANDATORY)
 
-Before composing any framework-bug report, run these 6 checks. They are shared with t2409 (`workflows/brief.md` "Pre-composition checks") — referenced here by pointer, not duplicated. Before auto-dispatch, use that workflow's single "Dispatch Readiness Contract (brief schema v2)" checklist and run `verify-brief-helper.sh check-readiness <brief>`.
+Before composing any framework-bug report, run these 7 checks. They are shared with t2409 (`workflows/brief.md` "Pre-composition checks") — referenced here by pointer, not duplicated. Before auto-dispatch, use that workflow's single "Dispatch Readiness Contract (brief schema v2)" checklist and run `verify-brief-helper.sh check-readiness <brief>`.
 
 1. **Memory recall**: `memory-helper.sh recall --query "<symptom-keywords>" --limit 5` — surface accumulated lessons before re-diagnosing a known issue. A lesson that says "same error, fixed in t2108" saves 30+ minutes.
 
@@ -68,6 +68,8 @@ Before composing any framework-bug report, run these 6 checks. They are shared w
 5. **Self-assignment awareness**: If filing via `gh_create_issue` with the `auto-dispatch` label, plan to `gh issue edit N --remove-assignee <user>` immediately after — the wrapper currently self-assigns (t2406/#19991). Alternatively, omit `auto-dispatch` until ready to hand off.
 
 6. **Security/setup advisory suppression proof**: Before filing a false-positive issue for any setup or security advisory, require proof that the fully configured positive path cannot work. For `SYNC_PAT`, inspect both default-branch protection and `actions/permissions/workflow`: protected publication does not need the PAT when Actions can create the deterministic PR, but it does need the bounded PR API fallback when that repository setting is disabled. Never recommend weakening or bypassing protection.
+
+7. **Workflow-strategy check (GH#40581)**: if the reported behaviour matches a documented or deliberate decision, it is not a bug. Apply `reference/workflow-strategy.md`: file it as `enhancement`, cite the decision and the existing control (`hold-for-review`, `no-takeover`, config opt-ins), never as `bug`.
 
 ## Workflow
 
@@ -180,7 +182,7 @@ If any check fails, explain why and do not file the issue. Direct the user to th
 
 ### Step 3.7: Architectural Alignment (enhancements only)
 
-Skip for bugs with clear reproduction steps — bugs are observed failures and belong in the tracker.
+Skip for bugs with clear reproduction steps, unless the reproduced behaviour is deliberate design (pre-composition check 7); then it is an enhancement.
 
 For enhancements, feature requests, and architectural changes, evaluate against:
 

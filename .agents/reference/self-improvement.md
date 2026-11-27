@@ -108,6 +108,8 @@ verification rather than patching around the process or leaving the finding in c
 
 **Framework-level** (`~/.aidevops/`, scripts, prompts, orchestration) → `marcusquinn/aidevops`. **Project-specific** (CI, code, deps) → current repo. Test: "Does this apply to all repos?" Never file framework tasks in project repos.
 
+**Workflow-strategy changes** (when work moves, what stops it, what a label means, who owns it) are never filed as `bug` or `auto-dispatch` without maintainer direction; see `reference/workflow-strategy.md`.
+
 ### Filing framework issues (GH#5149)
 
 Use `framework-issue-helper.sh`, not `claim-task-id.sh`:

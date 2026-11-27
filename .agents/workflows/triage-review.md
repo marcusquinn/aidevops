@@ -63,7 +63,7 @@ Analyze issue/PR using ONLY the pre-fetched context above. Do not explore the co
 ### For Issues
 
 0. **File:line evidence verification** (MANDATORY when `EVIDENCE_CITED_FILE_CONTENTS` is non-empty): For each `file:line` claim in `ISSUE_BODY`, locate the matching entry in `EVIDENCE_CITED_FILE_CONTENTS` and verify that the cited line matches the claimed finding. If the cited line does NOT match the claim (e.g. the line contains different code than the issue asserts, or the file reference is fabricated), mark the finding as **fabricated evidence** and recommend `invalid` closure. Do not accept a `file:line` claim that the evidence section falsifies.
-1. **Problem Validation**: Reproducible? Real bug or expected behavior?
+1. **Problem Validation**: Reproducible? Real bug or expected behavior? Behaviour that matches a documented decision is not a bug: recommend Decline and name the existing control (for example `hold-for-review`, `no-takeover`). Never recommend Approve for a change to when work is dispatched, taken over, merged or closed, what holds it, or what a label means, unless a maintainer has directed it in the thread (GH#40581).
 2. **Duplicate Check**: Compare against `RECENT_CLOSED` titles AND `EVIDENCE_RECENT_MERGED_PRS` — if a matching merged PR exists, the issue may already be fixed.
 3. **Root Cause**: 1-3 sentences based only on the pre-fetched context.
 4. **Scope Assessment**: In scope for project?
