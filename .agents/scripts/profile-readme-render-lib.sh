@@ -297,6 +297,26 @@ EOF
 	return 0
 }
 
+# --- Re-emit the published "Work with AI" section when session time is incomplete ---
+# Usage: _render_preserved_work_with_ai_section <previous_readme_path>
+# Prints the previous "## Work with AI" section inside the STATS markers
+# verbatim, or nothing (return 1) when none was published (t19433).
+_render_preserved_work_with_ai_section() {
+	local previous_readme="${1:-}"
+	local section=""
+	if [[ -n "$previous_readme" && -f "$previous_readme" ]]; then
+		section=$(awk '
+			/<!-- STATS-START -->/ { in_stats = 1; next }
+			/<!-- STATS-END -->/ { in_stats = 0; keep = 0; next }
+			/^## / { keep = in_stats && ($0 ~ /^## Work with AI/) }
+			keep { print }
+		' "$previous_readme")
+	fi
+	[[ -n "$section" ]] || return 1
+	printf '%s\n' "$section"
+	return 0
+}
+
 # =============================================================================
 # Generate — Section Generators and cmd_generate Entry Point
 # =============================================================================
@@ -645,10 +665,15 @@ cmd_generate() {
 	local has_session_time has_model_usage has_screen_time
 	has_session_time=$(echo "$month_json" | jq -r '((.total_human_hours + .total_machine_hours) // 0) > 0')
 	has_model_usage=$(echo "$model_json_all" | jq -r '((if type == "array" then length else 0 end) // 0) > 0')
-	[[ "$model_usage_status" != "incomplete" ]] || has_model_usage="$PROFILE_BOOLEAN_TRUE"
+	[[ "$model_usage_status" != "$PROFILE_STATUS_INCOMPLETE" ]] || has_model_usage="$PROFILE_BOOLEAN_TRUE"
 	has_screen_time=$(echo "$screen_json" | jq -r '(.month_hours // 0) > 0')
 
-	if [[ "$has_session_time" == "$PROFILE_BOOLEAN_TRUE" ]] ||
+	# Incomplete session collection must reach preservation, not the placeholder.
+	local session_incomplete preserved_work=""
+	session_incomplete=$(printf '%s' "$session_periods" | jq -r --arg s "$PROFILE_STATUS_INCOMPLETE" 'any(.[]?; .status? == $s)' 2>/dev/null || printf 'false')
+
+	if [[ "$session_incomplete" == "$PROFILE_BOOLEAN_TRUE" ]] ||
+		[[ "$has_session_time" == "$PROFILE_BOOLEAN_TRUE" ]] ||
 		[[ "$has_model_usage" == "$PROFILE_BOOLEAN_TRUE" ]] ||
 		[[ "$has_screen_time" == "$PROFILE_BOOLEAN_TRUE" ]]; then
 		has_data="$PROFILE_BOOLEAN_TRUE"
@@ -663,8 +688,13 @@ EOF
 		return 0
 	fi
 
-	_generate_work_with_ai_table "$screen_json" "$day_json" "$week_json" "$month_json" "$year_json" "$input_json"
-	if [[ "$model_usage_status" == "incomplete" ]]; then
+	if [[ "$session_incomplete" == "$PROFILE_BOOLEAN_TRUE" ]] &&
+		preserved_work=$(_render_preserved_work_with_ai_section "${PROFILE_PREVIOUS_README:-}"); then
+		printf '%s\n' "$preserved_work"
+	else
+		_generate_work_with_ai_table "$screen_json" "$day_json" "$week_json" "$month_json" "$year_json" "$input_json"
+	fi
+	if [[ "$model_usage_status" == "$PROFILE_STATUS_INCOMPLETE" ]]; then
 		_render_preserved_model_usage_sections "${PROFILE_PREVIOUS_README:-}"
 	else
 		_render_model_usage_table "AI Model Usage (last 30 days)" "$model_json_30d" "$token_totals_30d"

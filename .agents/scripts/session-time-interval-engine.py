@@ -15,6 +15,7 @@ from session_time_aggregate import aggregate
 from session_time_common import DAY_MS, WINDOWS, completed_day_window
 from session_time_db import db_paths
 from session_time_db_roots import query_observability_roots, query_session_db_roots
+from session_time_incremental import collect_incremental
 
 
 def parser():
@@ -46,6 +47,21 @@ def collect_sessions(home, explicit, roots, since):
     return sessions, source_ok, skipped_rows
 
 
+def collect_population(args, roots, since):
+    """Collect sessions and observability rows; incremental for the profile run."""
+    home = Path.home()
+    state_file = os.environ.get("AIDEVOPS_SESSION_TIME_STATE_FILE", "")
+    if state_file and args.period == "profile" and roots == [""]:
+        return collect_incremental(home, args.db_path, state_file, since, args.now_ms)
+    sessions, session_ok, skipped = collect_sessions(home, args.db_path, roots, since)
+    obs_rows, obs_ok, obs_skipped = query_observability_roots(home, roots, since, args.now_ms)
+    return {
+        "sessions": sessions, "session_ok": session_ok, "skipped": skipped,
+        "obs_rows": obs_rows, "obs_ok": obs_ok, "obs_skipped": obs_skipped,
+        "complete": True,
+    }
+
+
 def requested_periods(period):
     if period == "profile":
         return ["day", "week", "28d", "year"]
@@ -69,6 +85,9 @@ def aggregate_periods(periods, context, completed_days=False):
         result[period]["period_start_ms"] = since
         result[period]["period_end_ms"] = end
         result[period]["period_semantics"] = semantics
+        if not context.get("complete", True):
+            # Partial first build: callers keep previously published data.
+            result[period]["status"] = "incomplete"
     return result
 
 
@@ -107,19 +126,17 @@ def main():
         raise SystemExit("--all-dirs cannot be combined with --repo")
     roots = [""] if args.all_dirs else [os.path.abspath(item) for item in (args.repo or ["."])]
     roots = list(dict.fromkeys(roots))
-    home = Path.home()
-    maximum_since = args.now_ms - WINDOWS["year"] - 2 * DAY_MS
-    sessions, session_ok, skipped = collect_sessions(home, args.db_path, roots, maximum_since)
-    obs_rows, obs_ok, obs_skipped = query_observability_roots(home, roots, maximum_since, args.now_ms)
+    population = collect_population(args, roots, args.now_ms - WINDOWS["year"] - 2 * DAY_MS)
     periods = requested_periods(args.period)
     payloads = {}
     for root in roots:
         context = {
-            "sessions": sessions[root],
-            "obs_rows": obs_rows[root],
+            "sessions": population["sessions"][root],
+            "obs_rows": population["obs_rows"][root],
             "now": args.now_ms,
-            "source_ok": session_ok[root] or obs_ok,
-            "skipped": skipped[root] + obs_skipped[root],
+            "source_ok": population["session_ok"][root] or population["obs_ok"],
+            "skipped": population["skipped"][root] + population["obs_skipped"][root],
+            "complete": population["complete"],
         }
         result = aggregate_periods(periods, context, args.period == "profile")
         payloads[root] = result if len(periods) > 1 else result[periods[0]]

@@ -100,6 +100,7 @@ PROFILE_RECENT_MODEL_PERIOD="30d"
 # Status returned when the observability DB exists but its model usage could
 # not be read completely. Callers must not substitute another population.
 PROFILE_SOURCE_INCOMPLETE=3
+PROFILE_STATUS_INCOMPLETE="incomplete"
 PROFILE_JSON_ARRAY_TYPE="array"
 
 # shellcheck source=profile-readme-usage-rollup-lib.sh
@@ -291,10 +292,36 @@ _get_session_time() {
 }
 
 # --- Gather all profile AI-session windows in one database aggregation pass ---
+# t19433: the engine keeps an incremental watermark state file (rowid per source
+# DB, per-session interval state, archive segments keyed by size+mtime) so a
+# steady-state run reads only new rows. It stops after a time budget and reports
+# status "incomplete"; the first build resumes on the next run. A step that
+# exceeds the timeout also reports "incomplete" so the renderer keeps the
+# previously published section instead of showing zeros or "unavailable".
 _get_profile_session_times() {
 	local session_json
-	session_json=$("${SCRIPT_DIR}/contributor-activity-helper.sh" session-time \
-		--all-dirs --period profile --format json 2>/dev/null) || session_json='{"day":{"status":"unavailable"},"week":{"status":"unavailable"},"28d":{"status":"unavailable"},"year":{"status":"unavailable"}}'
+	local timeout_s="${PROFILE_README_SESSION_TIME_TIMEOUT_S:-600}"
+	[[ "$timeout_s" =~ ^[1-9][0-9]*$ ]] || timeout_s=600
+	local state_file="${AIDEVOPS_SESSION_TIME_STATE_FILE:-${HOME}/.aidevops/.agent-workspace/observability/session-time-state.json}"
+	local rc=0
+	mkdir -p "${state_file%/*}" 2>/dev/null || true
+	local -a cmd=("${SCRIPT_DIR}/contributor-activity-helper.sh" session-time
+		--all-dirs --period profile --format json)
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		session_json=$(AIDEVOPS_SESSION_TIME_STATE_FILE="$state_file" \
+			AIDEVOPS_SESSION_TIME_BUDGET_S="${AIDEVOPS_SESSION_TIME_BUDGET_S:-$((timeout_s / 2))}" \
+			timeout_sec "$timeout_s" "${cmd[@]}" 2>/dev/null) || rc=$?
+	else
+		session_json=$(AIDEVOPS_SESSION_TIME_STATE_FILE="$state_file" \
+			AIDEVOPS_SESSION_TIME_BUDGET_S="${AIDEVOPS_SESSION_TIME_BUDGET_S:-$((timeout_s / 2))}" \
+			"${cmd[@]}" 2>/dev/null) || rc=$?
+	fi
+	if [[ "$rc" -eq 124 ]]; then
+		printf '[profile-readme] WARN: session-time step exceeded %ss; keeping published sections\n' "$timeout_s" >&2
+		session_json=$(jq -nc --arg s "$PROFILE_STATUS_INCOMPLETE" '{day:{status:$s},week:{status:$s},"28d":{status:$s},year:{status:$s}}')
+	elif [[ "$rc" -ne 0 ]]; then
+		session_json='{"day":{"status":"unavailable"},"week":{"status":"unavailable"},"28d":{"status":"unavailable"},"year":{"status":"unavailable"}}'
+	fi
 	printf '%s\n' "$session_json"
 	return 0
 }
