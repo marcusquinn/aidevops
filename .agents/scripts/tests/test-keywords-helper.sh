@@ -218,12 +218,17 @@ test_public_repo_ignores_data() {
 	printf '{"init_scope":"public"}\n' >"$public_repo/.aidevops.json"
 	printf '{"initialized_repos":[{"path":"%s","slug":"example/public","role":"maintainer"}]}\n' "$public_repo" >"$AIDEVOPS_REPOS_FILE"
 	# A local-only store and a configured hub use the same property resolution.
-	mkdir -p "$AIDEVOPS_KEYWORDS_STORE_DIR/local/example__public"
 	local survey_file="$TEST_ROOT/survey.json" issues_file="$TEST_ROOT/issues.txt"
+	local store_dir="$AIDEVOPS_KEYWORDS_STORE_DIR/local/example__public"
+	mkdir -p "$store_dir/keywords"
+	"$HELPER" survey --json >"$survey_file"
+	check "empty store property is not populated" contains "$survey_file" '"has_keywords": false'
+	printf 'targets[1|]{id|phrase}:\n  t1|widget\n' >"$store_dir/keywords/targets.toon"
 	"$HELPER" survey --json >"$survey_file"
 	check "local-store property counts as populated" contains "$survey_file" '"has_keywords": true'
 	export AIDEVOPS_KEYWORDS_HUB_PATH="$TEST_ROOT/hub"
-	mkdir -p "$AIDEVOPS_KEYWORDS_HUB_PATH/example__public"
+	mkdir -p "$AIDEVOPS_KEYWORDS_HUB_PATH/example__public/keywords"
+	cp "$store_dir/keywords/targets.toon" "$AIDEVOPS_KEYWORDS_HUB_PATH/example__public/keywords/"
 	"$HELPER" survey --json >"$survey_file"
 	check "hub-only property counts as populated" contains "$survey_file" '"has_keywords": true'
 	gh() { return 0; }
@@ -235,6 +240,10 @@ test_public_repo_ignores_data() {
 	export AIDEVOPS_KEYWORDS_HUB_PATH=""
 	"$HELPER" issues >"$issues_file"
 	check "public issue dry run identifies ignored mode" contains "$issues_file" 'mode=ignored'
+	# A scaffolded strategy file with empty tables is still unpopulated work.
+	"$HELPER" scaffold "$public_repo" --data ignored >/dev/null 2>&1
+	"$HELPER" issues >"$issues_file"
+	check "scaffold-only registry is still filed" contains "$issues_file" 'would-create example/public'
 	# A not-planned closure is a recorded decision and must not be refiled.
 	gh() {
 		case " $* " in *" --state closed "*) printf '7\n' ;; esac
