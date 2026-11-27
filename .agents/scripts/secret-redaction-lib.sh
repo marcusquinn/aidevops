@@ -235,14 +235,20 @@ emit_secret_env_record() {
 	return 0
 }
 
-# Value of a fallback `export NAME=VALUE` right-hand side. Double-quoted values
-# undo the writer's \\ and \" escaping in one left-to-right pass, so injection
-# and redaction see the stored value, as `get` does (GH#34806).
+# Value of a fallback `export NAME=VALUE` right-hand side, shared by get,
+# injection and redaction. Remove only matching outer quotes. Single-quoted
+# contents are literal; double-quoted values undo the writer's \\ and \"
+# escaping in one left-to-right pass. Never evaluate shell expressions.
 decode_credential_value() {
 	local raw="$1"
+	# Ignore whitespace/CR outside the closing quote, not spaces in the value.
+	raw="${raw%"${raw##*[![:space:]]}"}"
+	if [[ "$raw" == \'*\' && ${#raw} -ge 2 ]]; then
+		printf '%s' "${raw:1:${#raw}-2}"
+		return 0
+	fi
 	if [[ "$raw" != \"*\" || ${#raw} -lt 2 ]]; then
-		raw="${raw#\"}"
-		printf '%s' "${raw%\"}"
+		printf '%s' "$raw"
 		return 0
 	fi
 	raw="${raw:1:${#raw}-2}"

@@ -927,23 +927,49 @@ PY
 }
 
 test_credentials_read_unescapes_special_chars() {
-	local test_name="credentials.sh read path unescapes backslash and double-quote"
-
-	# Simulate what the write path stores for value: foo\bar"baz
-	# write: escaped_value="${value//\\/\\\\}"; escaped_value="${escaped_value//\"/\\\"}"
-	# result: export KEY="foo\\bar\"baz"
-	local stored_line='export ROUND_TRIP_KEY="foo\\bar\"baz"'
-
-	# Apply the same sed pipeline as get_secret_value()
-	local readback
-	readback=$(printf '%s\n' "$stored_line" | sed 's/^export [^=]*=//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
-
-	if [[ "$readback" == 'foo\bar"baz' ]]; then
-		print_result "$test_name" 0
-	else
-		print_result "$test_name" 1 "expected 'foo\\bar\"baz', got '$readback'"
-	fi
-
+	setup
+	trap 'teardown' RETURN
+	local creds="$TEST_DIR/home/.config/aidevops/credentials.sh"
+	mkdir -p "$TEST_DIR/home/.config/aidevops"
+	# Shell expressions must remain literal data, never execute during reads.
+	# shellcheck disable=SC2016
+	local -a stored=(
+		'"placeholder-value"'
+		"'placeholder-value'"
+		'placeholder-value'
+		'"foo\\bar\"baz"'
+		"'foo\\bar\"baz'"
+		'"foo\\\"bar"'
+		'" literal space "'
+		"' literal space '"
+		'"\"literal-quotes\""'
+		"'\"literal-quotes\"'"
+		'"$(printf never-execute)"'
+		'"placeholder-value"  '
+		$'\'placeholder-value\'\t\r'
+	)
+	# shellcheck disable=SC2016
+	local -a expected=(
+		'placeholder-value' 'placeholder-value' 'placeholder-value'
+		'foo\bar"baz' 'foo\bar"baz' 'foo\"bar'
+		' literal space ' ' literal space '
+		'"literal-quotes"' '"literal-quotes"'
+		'$(printf never-execute)' 'placeholder-value' 'placeholder-value'
+	)
+	local i=0 readback="" output="" rc=0
+	for ((i = 0; i < ${#stored[@]}; i++)); do
+		printf 'export ROUND_TRIP_KEY=%s\n' "${stored[i]}" >"$creds"
+		chmod 600 "$creds"
+		rc=0
+		readback=$(HOME="$TEST_DIR/home" bash "$HELPER" get ROUND_TRIP_KEY 2>/dev/null) || rc=$?
+		[[ "$rc" -eq 0 && "$readback" == "${expected[i]}" ]] && rc=0 || rc=1
+		print_result "credential quoting case $i: get" "$rc" "value mismatch"
+		rc=0
+		output=$(HOME="$TEST_DIR/home" EXPECTED_VALUE="${expected[i]}" bash "$HELPER" ROUND_TRIP_KEY -- \
+			bash -c '[[ "$ROUND_TRIP_KEY" == "$EXPECTED_VALUE" ]] || exit 1; printf "%s" "$ROUND_TRIP_KEY"' 2>&1) || rc=$?
+		[[ "$rc" -eq 0 && "$output" == '[REDACTED]' ]] && rc=0 || rc=1
+		print_result "credential quoting case $i: injection and redaction" "$rc" "value or redaction mismatch"
+	done
 	return 0
 }
 
