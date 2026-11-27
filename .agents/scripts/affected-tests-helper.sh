@@ -305,6 +305,13 @@ def execute(item):
             rerun = os.path.exists(scratch_path(suite))
             sink = open(scratch_path(suite), "ab")
             if rerun:
+                # t19426: keep the marker on its own line even if the prior output lacked a final newline.
+                with open(scratch_path(suite), "rb") as previous:
+                    previous.seek(0, os.SEEK_END)
+                    if previous.tell():
+                        previous.seek(-1, os.SEEK_END)
+                        if previous.read(1) != b"\n":
+                            sink.write(b"\n")
                 sink.write(b"--- rerun attempt ---\n")
                 sink.flush()
         try:
