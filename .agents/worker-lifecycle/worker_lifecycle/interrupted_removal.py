@@ -53,7 +53,8 @@ def half_removed(path: Path) -> str | None:
     """Return the half-removal code for a present tree with no usable administration.
 
     Only structural shapes are detected: the `.git` link is absent, or the linked
-    worktree's `.git` file names an administration directory that is gone. A main
+    worktree's `.git` file names an administration target that is gone or not a
+    directory. A main
     checkout's administration directory, a verbatim file and every absent path
     return `None`, so all other classes keep their existing guards and resumes.
     """
@@ -62,7 +63,9 @@ def half_removed(path: Path) -> str | None:
     code, admin = _link_state(path / ".git")
     if admin is None:
         return code
-    return None if os.path.lexists(admin) else GIT_ADMINISTRATION_ABSENT
+    if not os.path.lexists(admin):
+        return GIT_ADMINISTRATION_ABSENT
+    return None if admin.is_dir() else GIT_ADMINISTRATION_UNREADABLE
 
 
 def _read_link(link: Path) -> str | None:

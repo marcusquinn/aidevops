@@ -286,6 +286,21 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertEqual(result["status"], "needs-resume", result)
         self.assertEqual(result["reason"], "git-administration-unreadable", result)
 
+    def test_non_directory_git_administration_is_escalated_once(self):
+        admin = self.base / "administration-file"
+        admin.write_text("keep administration residue\n")
+        (self.target / ".git").write_text(f"gitdir: {admin}\n")
+        first, eligible, attempted = self.retire()
+        self.assertEqual(first["status"], "needs-resume", first)
+        self.assertEqual(first["reason"], "git-administration-unreadable", first)
+        self.assertEqual(first["classification"], "terminal", first)
+        self.assertEqual((eligible, attempted), (0, 0))
+        second, _, _ = self.retire()
+        self.assertEqual(second["status"], "already-escalated", second)
+        self.assertEqual(second["reason"], "git-administration-unreadable", second)
+        self.assertTrue(self.target.exists())
+        self.assertEqual(admin.read_text(), "keep administration residue\n")
+
     def test_relative_git_administration_uses_link_directory(self):
         from worker_lifecycle.interrupted_removal import half_removed
 
