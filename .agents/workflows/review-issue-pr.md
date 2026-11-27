@@ -469,17 +469,13 @@ Use this only when the issue reports a real defect. When the issue's goal is to 
 ## CLI Commands
 
 ```bash
-gh issue view 123 --json title,body,labels,author,createdAt,comments
-gh issue list --search "keyword" --state all
-gh pr view 456 --json title,body,files,additions,deletions,author
-gh pr diff 456 --stat
+gh issue view 123 --json title,body,labels,author,createdAt,comments; gh issue list --search "keyword" --state all
+gh pr view 456 --json title,body,files,additions,deletions,author; gh pr diff 456 --stat
 gh pr checks 456
 gh pr review 456 --comment --body-file /absolute/path/to/review.md
-gh pr review 456 --request-changes --body-file /absolute/path/to/review.md
-gh pr review 456 --approve --body-file /absolute/path/to/review.md
+gh pr review 456 --request-changes --body-file /absolute/path/to/review.md; gh pr review 456 --approve --body-file /absolute/path/to/review.md
 gh issue comment 123 --body-file /absolute/path/to/closing-comment.md && gh issue close 123
-rg "relevant_function" --type js --type ts --type py --type sh
-git log --oneline -20 -- path/to/affected/file
+rg "relevant_function" --type js --type ts --type py --type sh; git log --oneline -20 -- path/to/affected/file
 ```
 
 ## Labels for Triage
