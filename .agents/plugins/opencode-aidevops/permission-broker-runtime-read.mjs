@@ -26,7 +26,7 @@ export function recordedDeviceTargets(call) {
 // independent; this only resolves the device directory ask.
 export function runtimeRedirectionTargets(command) {
   if (typeof command !== "string" || command.length > 10000 || /[^\x20-\x7e\t]/.test(command)) return [];
-  const token = /[ \t]+|[0-9]*>&[0-9]+|[0-9]*(?:>>|>|<)|\|\||&&|\||(?:\/dev\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+)(?=$|[ \t<>|&])/gy;
+  const token = /[ \t]+|[0-9]*>&[0-9]+(?=$|[ \t<>|&])|[0-9]*(?:>>|>|<)|\|\||&&|\||(?:\/dev\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+)(?=$|[ \t<>|&])/gy;
   const tokens = [];
   let offset = 0;
   while (offset < command.length) {
