@@ -154,6 +154,25 @@ _dispatch_negative_cache_material() {
 	return 0
 }
 
+# Preserve the exact pre-ceremony baseline: operational comments written by the
+# ceremony may advance updatedAt before the refusal is recorded. Fetching the
+# body only afterwards then leaves an unusable metadata-only refresh anchor.
+# Never adopt a newer revision or replace the ranked ownership snapshot.
+_dispatch_negative_cache_capture_candidate() {
+	local candidate="$1" source="" ranked="" observed=""
+	if _dispatch_negative_cache_load_source "$candidate" allow_rest exact; then
+		source="$_DISPATCH_NEGATIVE_CACHE_SOURCE"
+		ranked=$(_dispatch_negative_cache_material "$(jq 'del(.body)' <<<"$candidate")") || ranked=""
+		observed=$(_dispatch_negative_cache_material "$(jq 'del(.body)' <<<"$source")") || observed=""
+		if [[ -n "$ranked" && "$ranked" == "$observed" ]]; then
+			jq -c --argjson source "$source" '.body = $source.body' <<<"$candidate"
+			return $?
+		fi
+	fi
+	printf '%s\n' "$candidate"
+	return 0
+}
+
 # Reuse the gh shim's audit classifier; only the legacy first-token events need
 # the dispatch-specific fallback. Keep the shim's globals isolated from pulse.
 _dispatch_negative_cache_ops_only() (

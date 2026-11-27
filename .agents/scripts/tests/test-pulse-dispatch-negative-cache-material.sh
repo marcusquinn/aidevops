@@ -157,5 +157,98 @@ ISSUE_JSON=""
 _dispatch_negative_cache_record "$(candidate_at "$OLD")" terminal_blocker_circuit
 check "record falls back to metadata material when the read fails" prefixed "$(material_field)" metadata:
 
+# 7. A ceremony's own revision bump must not destroy its exact baseline. Replay
+# six rounds per ownership reason, matching the issue's repeated-refusal sample.
+(
+	_dispatch_pr_evidence_fingerprint() { printf 'exact-pr-head\n'; return 0; }
+	_dispatch_pr_evidence_hint_valid() { local fingerprint="$3"; [[ "$fingerprint" == exact-pr-head ]]; return $?; }
+	_DISPATCH_ACTIVE_WORKERS=1
+	for reason in dedup_active_claim_durable_launch dedup_pr_evidence; do
+		for round in 1 2 3 4 5 6; do
+			rm -f "$CACHE_FILE"
+			_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+			before=$(jq -c '.assignees=["owner"] | .labels=["status:in-progress"]' <<<"$(candidate_at "$OLD")")
+			ISSUE_JSON=$(jq -c '.assignees=[{login:"owner"}] | .labels=[{name:"status:in-progress"}]' <<<"$(issue_at "$OLD")")
+			captured=$(_dispatch_negative_cache_capture_candidate "$before")
+			check "$reason round $round captures exact body" equals "$(jq -r '.body' <<<"$captured")" spec
+			# The issue changes after capture, before record creation.
+			ISSUE_JSON=$(jq -c --arg new "$NEW" '.updated_at=$new' <<<"$ISSUE_JSON")
+			after=$(jq -c --arg new "$NEW" '.updatedAt=$new' <<<"$before")
+			COMMENTS_JSON="$OPS_COMMENTS"
+			_dispatch_negative_cache_record "$before" "$reason" 123
+			check "$reason round $round reproduces metadata fallback" prefixed "$(material_field)" metadata:
+			check "$reason round $round reproduces revision miss" misses "$after"
+			_dispatch_negative_cache_record "$captured" "$reason" 123
+			check "$reason round $round retains body material" prefixed "$(material_field)" body:
+			stamp=$(cut -f1 "$CACHE_FILE")
+			COMMENTS_JSON="$OPS_COMMENTS"
+			after=$(jq -c --arg new "$NEW" '.updatedAt=$new' <<<"$before")
+			check "$reason round $round reuses ops-only bump" equals "$(_dispatch_negative_cache_reason "$after")" "$reason"
+			check "$reason round $round preserves TTL anchor" equals "$(cut -f1 "$CACHE_FILE")" "$stamp"
+			check "$reason round $round preserves revision anchor" equals "$(cut -f9 "$CACHE_FILE")" "$OLD"
+			_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+			changed=$(jq -c '.updatedAt="2026-11-14T10:06:00Z"' <<<"$after")
+			ISSUE_JSON=$(jq -c '.body="revised spec" | .updated_at="2026-11-14T10:06:00Z"' <<<"$ISSUE_JSON")
+			check "$reason round $round rejects material edit" misses "$changed"
+			COMMENTS_JSON='[{"body":"terminal-blocker-circuit:retry"}]'
+			ISSUE_JSON=$(jq -c '.body="spec"' <<<"$ISSUE_JSON")
+			check "$reason round $round rejects actionable comment" misses "$changed"
+		done
+	done
+	# Assigned draft skips are a distinct, intentional live/stale-owner boundary,
+	# not evidence that it is safe to omit that ownership check.
+	_dispatch_negative_pr_fingerprint() { printf 'draft-head\n'; return 0; }
+	for round in 1 2 3 4 5 6; do
+		rm -f "$CACHE_FILE"
+		_dispatch_negative_cache_record "$before" worker_draft_checkpoint_blocked 123
+		check "assigned draft round $round remains uncached" test ! -f "$CACHE_FILE"
+	done
+	# Capture failure never blesses a new revision or mismatched ownership.
+	_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+	check "newer revision is not captured" equals "$(_dispatch_negative_cache_capture_candidate "$before")" "$before"
+	_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+	ISSUE_JSON=$(issue_at "$OLD")
+	check "mismatched metadata is not captured" equals "$(_dispatch_negative_cache_capture_candidate "$before")" "$before"
+	_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+	ISSUE_JSON=""
+	check "failed capture preserves original candidate" equals "$(_dispatch_negative_cache_capture_candidate "$before")" "$before"
+	printf '%d total checks including ownership replay, %d failed\n' "$PASS" "$FAIL"
+	[[ "$FAIL" -eq 0 ]]
+) || FAIL=$((FAIL + 1))
+
+# Exercise the real candidate -> refusal recorder path, with only external
+# ceremony/side effects replaced. This fails if capture moves after dispatch.
+(
+	rm -f "$CACHE_FILE"
+	_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+	_DISPATCH_ACTIVE_WORKERS=1
+	before=$(jq -c --arg path "$TEST_ROOT" '.repo_path=$path | .assignees=["owner"] | .labels=["status:in-progress"]' <<<"$(candidate_at "$OLD")")
+	ISSUE_JSON=$(jq -c '.assignees=[{login:"owner"}] | .labels=[{name:"status:in-progress"}]' <<<"$(issue_at "$OLD")")
+	COMMENTS_JSON="$OPS_COMMENTS"
+	_dispatch_prefilter_owned_candidate() { return 1; }
+	_dispatch_skip_for_sealed_generation() { return 1; }
+	_dispatch_skip_for_capability_cooldown() { return 1; }
+	_dispatch_skip_for_footprint_defer() { return 1; }
+	_dispatch_should_skip_candidate() { return 1; }
+	resolve_dispatch_model_for_labels() { return 0; }
+	pulse_dispatch_debug_log() { return 0; }
+	_dispatch_concurrency_caps_allow() { return 0; }
+	_pulse_refresh_repo() { return 0; }
+	_dispatch_attempt_recency_stamp() { return 0; }
+	_dispatch_release_attempt_reservations() { return 0; }
+	_dispatch_record_nonzero_dispatch_result() { _DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"; return 0; }
+	_dispatch_candidate_recent_lines() { printf 'DISPATCH_BLOCK_REASON reason=dedup_active_claim_durable_launch\n'; return 0; }
+	_dispatch_benign_blocked_candidate_reason() { printf 'dedup_active_claim_durable_launch\n'; return 0; }
+	_dispatch_with_timeout() {
+		ISSUE_JSON=$(jq -c --arg new "$NEW" '.updated_at=$new' <<<"$ISSUE_JSON")
+		return 1
+	}
+	_dispatch_process_candidate "$before" owner 1 && exit 1
+	[[ "$(material_field)" == body:* ]] || exit 1
+	after=$(jq -c --arg new "$NEW" '.updatedAt=$new' <<<"$before")
+	[[ "$(_dispatch_negative_cache_reason "$after")" == dedup_active_claim_durable_launch ]] || exit 1
+	printf 'PASS production candidate preserves its baseline through ceremony and refusal recording\n'
+) || FAIL=$((FAIL + 1))
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
