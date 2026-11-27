@@ -959,6 +959,11 @@ build_sandbox_passthrough_csv() {
 		# GH#38587: user uv tool/Python dirs exported for trusted workers;
 		# triage and private workloads return above and never receive them.
 		UV_TOOL_DIR | UV_TOOL_BIN_DIR | UV_PYTHON_INSTALL_DIR | UV_PYTHON_BIN_DIR) ;;
+		# GH#40566: host npm global config (NixOS /etc/npmrc) and rootless
+		# Docker socket, both non-secret paths, for trusted workers only. Keep
+		# exact names: NPM_CONFIG_* can carry credentials (NPM_CONFIG__AUTH),
+		# and nvm rejects NPM_CONFIG_PREFIX outside NVM_DIR.
+		NPM_CONFIG_GLOBALCONFIG | DOCKER_HOST) ;;
 		*) continue ;;
 		esac
 		if [[ "$seen_names" == *" ${name} "* ]]; then
