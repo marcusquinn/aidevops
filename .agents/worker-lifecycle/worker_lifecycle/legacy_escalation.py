@@ -6,7 +6,9 @@ from pathlib import Path
 
 from .interrupted_removal import half_removed
 from .legacy_options import half_state_outcome, preservation_name
+from .legacy_options import require_manual_confirmation
 from .legacy_probe import checkpoint, operation_id, receipt
+from .legacy_resume import RECONSTRUCTIBLE_REMOVING
 from .retirement import _lock
 
 
@@ -41,3 +43,23 @@ def half_state_report(store, item, journaled, apply):
         return None
     status = escalate_half_state(store, item, code, apply)
     return {"path": item["path"], **half_state_outcome(item, code, status)}
+
+
+def require_confirmation(connection, operation, confirmed):
+    """An interrupted capture carries manual authority before a plan exists."""
+    require_manual_confirmation(
+        (receipt(connection, operation, phase) for phase in ("archive", "plan")),
+        confirmed,
+    )
+
+
+def item_state(store, item, confirmed):
+    """Return the operation id and its retired, plan and removing receipts."""
+    operation = operation_id(store, item["path"])
+    with store.connection() as connection:
+        done = receipt(connection, operation, "retired")
+        pending = receipt(connection, operation, "plan")
+        removing = receipt(connection, operation, RECONSTRUCTIBLE_REMOVING)
+        if not done:
+            require_confirmation(connection, operation, confirmed)
+    return operation, done, pending, removing

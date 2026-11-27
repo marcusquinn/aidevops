@@ -19,7 +19,7 @@ from .filesystem import validate_private_path as _private
 from .interrupted_removal import BOUNDARY, removal_started
 from .interrupted_removal import require_deletion_only, validation_boundary
 from .legacy_discovery import same_tree
-from .legacy_escalation import half_state_report
+from .legacy_escalation import half_state_report, item_state, require_confirmation
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_lookup import pass_pull_requests, prefetched_pull_requests
 from .legacy_lookup import released_pull_requests, writer_released
@@ -37,14 +37,6 @@ from .legacy_takeover import close_quiescent_admission
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .process import ObservationUnavailable
 from .retirement import _git, _id, _lock
-
-
-def require_confirmation(connection, operation, confirmed):
-    """An interrupted capture carries manual authority before a plan exists."""
-    require_manual_confirmation(
-        (receipt(connection, operation, phase) for phase in ("archive", "plan")),
-        confirmed,
-    )
 
 
 def remove_released(connection, *arguments):
@@ -214,14 +206,8 @@ def process_item(store, item, repositories, adapter, options):
     outcome = {"path": item["path"]}
     eligible = attempted = 0
     try:
-        operation = operation_id(store, item["path"])
-        confirmed = item["path"] in options.confirmed_paths
-        with store.connection() as connection:
-            done = receipt(connection, operation, "retired")
-            pending = receipt(connection, operation, "plan")
-            removing = receipt(connection, operation, RECONSTRUCTIBLE_REMOVING)
-            if not done:
-                require_confirmation(connection, operation, confirmed)
+        _operation, done, pending, removing = item_state(
+            store, item, item["path"] in options.confirmed_paths)
         half = half_state_report(store, item, done or removing or pending, options.apply)
         if done:
             outcome["status"] = "already-retired"
