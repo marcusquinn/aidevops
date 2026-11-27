@@ -125,6 +125,10 @@ eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_run_pr_create_cmd() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 # shellcheck disable=SC2312
+eval "$(sed -n '/^_open_head_pr_exists() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_effective_pr_ready() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# shellcheck disable=SC2312
 eval "$(sed -n '/^_explicit_pr_create_base() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # shellcheck disable=SC2312
