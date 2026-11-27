@@ -48,7 +48,9 @@ with open(root+"/writes","a") as f: f.write(sys.argv[1]+"\n")
 if sys.argv[1]=="edit":
  with open(root+"/issue.json") as f: issue=json.load(f)
  issue["body"]=body+os.environ.get("DECISION_CORRUPTION","")
- with open(root+"/issue.json","w") as f: json.dump(issue,f)
+ tmp=root+"/issue.json.%d" % os.getpid()
+ with open(tmp,"w") as f: json.dump(issue,f)
+ os.replace(tmp,root+"/issue.json")
 else:
  with open(root+"/published","a") as f: f.write(body+"\n")' "$2"
 DECISION_WRITE
