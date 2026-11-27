@@ -101,6 +101,12 @@ cmd_pull() {
 							publication_deferred=$((publication_deferred + 1))
 							continue
 						fi
+						# GH#40580: an open PR already adds this row; seeding would duplicate it.
+						if orphan_todo_in_open_pr "$repo" "$num" "$tid"; then
+							print_info "Open PR already adds TODO row for #$num ($tid): deferred seeding"
+							publication_deferred=$((publication_deferred + 1))
+							continue
+						fi
 						# t2698: seed a TODO.md entry for the open orphan
 						if _seed_orphan_todo_line "$num" "$tid" "$title" "$labels_json" "$todo_file" "${DRY_RUN:-}"; then
 							orphan_seeded=$((orphan_seeded + 1))
