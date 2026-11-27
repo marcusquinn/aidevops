@@ -192,6 +192,8 @@ check "record falls back to metadata material when the read fails" prefixed "$(m
 			check "$reason round $round rejects material edit" misses "$changed"
 			COMMENTS_JSON='[{"body":"terminal-blocker-circuit:retry"}]'
 			ISSUE_JSON=$(jq -c '.body="spec"' <<<"$ISSUE_JSON")
+			# Reload the restored body so only the comment can cause the miss.
+			_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
 			check "$reason round $round rejects actionable comment" misses "$changed"
 		done
 	done
