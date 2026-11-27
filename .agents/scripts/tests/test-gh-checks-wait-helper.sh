@@ -447,6 +447,23 @@ assert_eq "unknown policy passing set succeeds after the settle window" "0" "$se
 assert_contains "settled unknown policy reports success" "PASS: required checks completed" "$settled_policy_output"
 assert_eq "branch endpoint verified-unprotected passing set succeeds at once" "0" "$unprotected_rc"
 
+failed_partial_dir="${TMPDIR_TEST}/failed-partial"
+write_fixture "$failed_partial_dir" 1 '[{"name":"maintainer-gate","workflow":"Maintainer Gate","state":"FAILURE","bucket":"fail","link":""}]'
+cancelled_partial_dir="${TMPDIR_TEST}/cancelled-partial"
+write_fixture "$cancelled_partial_dir" 1 '[{"name":"maintainer-gate","workflow":"Maintainer Gate","state":"CANCELLED","bucket":"cancel","link":""}]'
+set +e
+failed_partial_output=$(env "${live_policy_env[@]}" GH_TEST_MODE=protection-admin-only AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$failed_partial_dir" \
+	"${live_policy_wait[@]}" --timeout 0 2>&1)
+failed_partial_rc=$?
+cancelled_partial_output=$(env "${live_policy_env[@]}" GH_TEST_MODE=protection-admin-only AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$cancelled_partial_dir" \
+	"${live_policy_wait[@]}" --timeout 0 2>&1)
+cancelled_partial_rc=$?
+set -e
+assert_eq "failed check beside unregistered contexts is terminal" "1" "$failed_partial_rc"
+assert_contains "failed partial set names the failed check" "  maintainer-gate: fail" "$failed_partial_output"
+assert_eq "cancel-only partial set keeps waiting for missing contexts" "8" "$cancelled_partial_rc"
+assert_contains "cancel-only partial set still names missing contexts" "missing=Complexity Analysis, review-bot-gate" "$cancelled_partial_output"
+
 set +e
 live_api_error_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=api-error AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
 	"$HELPER" wait 123 --repo example/repo --timeout 0 2>&1)

@@ -593,6 +593,20 @@ classify_state() {
 	else
 		configured_contexts=$(configured_required_contexts "$pr_number" "$repo") || configured_rc=$?
 	fi
+	# A cancel with a same-workflow, same-name pass on this head is superseded.
+	checks=$(drop_superseded_cancels "$checks")
+	local has_failure=0
+	if printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
+		'any(.[]; .bucket != $pass and .bucket != $pending and .bucket != $skipping)' >/dev/null; then
+		has_failure=1
+	fi
+	# GH#40626: a reported failure is terminal even while other required
+	# contexts are unregistered. A cancel-only set keeps the missing-context
+	# wait: its superseding run may be what registers them.
+	if [[ "$has_failure" -eq 1 ]] && ! only_cancelled_failures "$checks"; then
+		printf 'failure\n'
+		return 0
+	fi
 	if [[ "$configured_rc" -eq 0 && -n "$configured_contexts" ]] &&
 		missing_contexts=$(configured_context_missing_from_checks "$configured_contexts" "$checks"); then
 		if [[ "$elapsed" -ge "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]] &&
@@ -623,10 +637,7 @@ classify_state() {
 		fi
 		return 0
 	fi
-	# A cancel with a same-workflow, same-name pass on this head is superseded.
-	checks=$(drop_superseded_cancels "$checks")
-	if printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
-		'any(.[]; .bucket != $pass and .bucket != $pending and .bucket != $skipping)' >/dev/null; then
+	if [[ "$has_failure" -eq 1 ]]; then
 		printf 'failure\n'
 		return 0
 	fi
