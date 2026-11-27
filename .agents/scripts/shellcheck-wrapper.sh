@@ -90,7 +90,8 @@ _is_wrapper_copy() {
 	# or Mach-O magic. Shell scripts start with "#!" (shebang).
 	# A 2-byte read is sufficient to distinguish.
 	local header=""
-	IFS= read -r -N 2 header <"$candidate" 2>/dev/null || [[ -n "$header" ]] || return 1
+	# -n is supported by macOS Bash 3.2; -N requires Bash 4+.
+	IFS= read -r -n 2 header <"$candidate" 2>/dev/null || [[ -n "$header" ]] || return 1
 	if [[ "$header" == "#!" ]]; then
 		# Our wrapper or any other shell script named shellcheck — not the real binary
 		return 0
