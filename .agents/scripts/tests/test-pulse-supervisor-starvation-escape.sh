@@ -3,9 +3,11 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
 # GH#38162: the pulse LLM supervisor must not starve behind cooperative drains
-# or degraded prefetch. Exercises _pulse_run_supervisor_phase and the
-# queue-triggers-only branch of _should_run_llm_supervisor with stubbed drain,
-# supervisor, blocker-recovery and epoch state.
+# or degraded prefetch. GH#40536: the supervisor runs in a detached lane, so a
+# drained or undrained cycle only wakes the lane (no drain-escape layers).
+# Exercises _pulse_run_supervisor_phase, the lane wake/entry/tick helpers and
+# the queue-triggers-only branch of _should_run_llm_supervisor with stubbed
+# drain, supervisor, blocker-recovery and epoch state.
 
 set -uo pipefail
 
@@ -43,7 +45,8 @@ check() {
 }
 
 for required_fn in _pulse_run_supervisor_phase _should_run_llm_supervisor \
-	_pulse_supervisor_starved_for _pulse_degraded_prefetch_supervisor_escape_due; do
+	_pulse_supervisor_starved_for _pulse_degraded_prefetch_supervisor_escape_due \
+	_pulse_supervisor_lane_wake _pulse_run_supervisor_lane _pulse_supervisor_lane_tick; do
 	if ! declare -F "$required_fn" >/dev/null 2>&1; then
 		printf 'FAIL %s is not defined after sourcing pulse-wrapper.sh\n' "$required_fn"
 		exit 1
@@ -88,6 +91,7 @@ _pulse_maybe_run_llm_supervisor() {
 	SUPERVISOR_CALLS=$((SUPERVISOR_CALLS + 1))
 	SUPERVISOR_STATE_INCOMPLETE="${_PULSE_SUPERVISOR_STATE_INCOMPLETE:-0}"
 	SUPERVISOR_QUEUE_ONLY="${_PULSE_SUPERVISOR_QUEUE_TRIGGERS_ONLY:-0}"
+	SUPERVISOR_LANE_RUN="${_PULSE_SUPERVISOR_LANE_RUN:-0}"
 	rm -f "${PULSE_DIR}/llm_trigger_mode"
 	if _should_run_llm_supervisor; then
 		SUPERVISOR_ADMITTED="$(cat "${PULSE_DIR}/llm_trigger_mode" 2>/dev/null)"
@@ -114,14 +118,47 @@ reset_case() {
 	SUPERVISOR_ADMITTED=""
 	SUPERVISOR_STATE_INCOMPLETE=""
 	SUPERVISOR_QUEUE_ONLY=""
+	SUPERVISOR_LANE_RUN=""
 	RECOVERY_CALLS=0
+	STUB_TRANSITION_ACTIVE=1
 	_PULSE_PREFETCH_DEGRADED=0
-	unset PULSE_LLM_DRAIN_ESCAPE_SECONDS PULSE_LLM_DEGRADED_ESCAPE_SECONDS PULSE_LLM_DRAIN_ESCAPE_DEFER \
-		PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS
+	unset PULSE_LLM_DEGRADED_ESCAPE_SECONDS PULSE_SUPERVISOR_LANE PULSE_SUPERVISOR_LANE_TICK_SECONDS \
+		PULSE_SUPERVISOR_LANE_MODE PULSE_SUPERVISOR_LANE_SOURCE
+	rm -rf "${LOCKDIR}.llm"
+	rm -f "$LANE_RECORD" "$WRAPPER_LOGFILE"
 	return 0
 }
 
 DEFERRAL_MARKER="${PULSE_DIR}/llm_drain_escape_deferred"
+
+# --- GH#40536 lane stubs: a recording wrapper, no systemd, no API probes -----
+LOCKDIR="${TEST_ROOT}/pulse-wrapper.lockdir"
+WRAPPER_LOGFILE="${TEST_ROOT}/wrapper.log"
+STOP_FLAG="${TEST_ROOT}/pulse-stop.flag"
+export LANE_RECORD="${TEST_ROOT}/lane-record"
+LANE_WRAPPER="${TEST_ROOT}/lane-wrapper.sh"
+# shellcheck disable=SC2016 # the stub expands these when it runs
+printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" "$1" "${PULSE_SUPERVISOR_LANE_SOURCE:-}" >>"$LANE_RECORD"\nexit 0\n' >"$LANE_WRAPPER"
+chmod +x "$LANE_WRAPPER"
+STUB_TRANSITION_ACTIVE=1
+_pulse_supervisor_lane_wrapper() {
+	printf '%s\n' "$LANE_WRAPPER"
+	return 0
+}
+_dlw_systemd_user_service_available() { return 1; }
+_pulse_event_refill_runtime_transition_active() { return "$STUB_TRANSITION_ACTIVE"; }
+_pulse_set_graphql_budget_priority() { return 0; }
+_pulse_set_rest_core_budget_priority() { return 0; }
+
+# Wait up to 5s for the detached lane stub to record its invocation.
+wait_for_lane() {
+	local tries=0
+	while [[ ! -s "$LANE_RECORD" && "$tries" -lt 50 ]]; do
+		sleep 0.1
+		tries=$((tries + 1))
+	done
+	return 0
+}
 
 REPOS_JSON="${TEST_ROOT}/repos.json"
 printf '{"initialized_repos":[]}\n' >"$REPOS_JSON"
@@ -129,105 +166,142 @@ PULSE_LLM_DAILY_INTERVAL=86400
 PULSE_LLM_STALL_THRESHOLD=999999
 PULSE_FORCE_LLM=0
 
-# (a) drain with a recent attempt skips and reports the starvation age.
+# (a) GH#40536: an undrained cycle wakes a full-mode lane and runs no
+# supervisor itself.
 reset_case 60
-STUB_DRAIN_BUNDLE="bundle-next"
 _pulse_run_supervisor_phase
+wait_for_lane
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 0 ]] &&
-	grep -Eq 'Skipping LLM supervisor: cooperative drain requested.*last_attempt_age_s=[0-9]+' "$LOGFILE" && rc=0
-check "(a) drain with recent attempt skips with last_attempt_age_s" "$rc"
+[[ "$SUPERVISOR_CALLS" -eq 0 && "$(cat "$LANE_RECORD" 2>/dev/null)" == "--supervisor-lane=full cycle" ]] &&
+	grep -q 'Supervisor lane: waking mode=full source=cycle ' "$LOGFILE" && rc=0
+check "(a) undrained cycle wakes a full-mode lane without an in-cycle supervisor" "$rc"
 
-# (b) GH#38210: drain with a stale attempt defers the escape, so the drained
-# cycle exits and the activated bundle's first dispatch wave goes first.
+# (b) a drained cycle with a starved supervisor wakes the lane too: no drain
+# skip, no escape, no deferral marker (the retired marker is removed).
 reset_case 7300
 STUB_DRAIN_BUNDLE="bundle-next"
 STUB_RECOVERY_DUE=0
+printf '%s bundle-old\n' "$(date +%s)" >"$DEFERRAL_MARKER"
+_pulse_run_supervisor_phase
+wait_for_lane
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 0 && ! -f "$DEFERRAL_MARKER" ]] &&
+	[[ "$(cat "$LANE_RECORD" 2>/dev/null)" == "--supervisor-lane=full cycle-drained" ]] &&
+	! grep -Eq 'starvation escape|deferr|Skipping LLM supervisor' "$LOGFILE" && rc=0
+check "(b) drained starved cycle wakes the lane with no escape or deferral" "$rc"
+
+# (b1) a degraded-prefetch cycle wakes a degraded-mode lane.
+reset_case 60
+_PULSE_PREFETCH_DEGRADED=1
+_pulse_run_supervisor_phase
+wait_for_lane
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 0 && "$(cat "$LANE_RECORD" 2>/dev/null)" == "--supervisor-lane=degraded cycle" ]] && rc=0
+check "(b1) degraded-prefetch cycle wakes a degraded-mode lane" "$rc"
+
+# (b2a) one session per runner: a live LLM lock holder suppresses the wake.
+reset_case 60
+mkdir -p "${LOCKDIR}.llm"
+sleep 30 &
+llm_holder_pid=$!
+printf '%s\n' "$llm_holder_pid" >"${LOCKDIR}.llm/pid"
 _pulse_run_supervisor_phase
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 0 && -f "$DEFERRAL_MARKER" ]] &&
-	grep -q 'deferring the GH#38162 escape until after bundle bundle-next' "$LOGFILE" &&
-	! grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
-check "(b) drain with stale attempt defers the escape past the activated bundle's first wave" "$rc"
+[[ "$SUPERVISOR_CALLS" -eq 0 && ! -e "$LANE_RECORD" ]] &&
+	grep -q 'wake skipped (LLM session already running, source=cycle' "$WRAPPER_LOGFILE" && rc=0
+check "(b2a) a live LLM session suppresses the lane wake" "$rc"
 
-# (b1) the activated bundle's cycle (no drain) evaluates the deferred escape
-# after its dispatch wave, in that same cycle, and clears the deferral.
-STUB_DRAIN_BUNDLE=""
-: >"$LOGFILE"
-_pulse_run_supervisor_phase
+# (b2a1) the lane entry yields to that live session as well.
+PULSE_SUPERVISOR_LANE_MODE=full
+_pulse_run_supervisor_lane
+trap 'rm -rf "$TEST_ROOT"' EXIT
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && ! -f "$DEFERRAL_MARKER" ]] &&
-	grep -q 'evaluating the deferred drain escape' "$LOGFILE" && rc=0
-check "(b1) activated bundle cycle runs the deferred supervisor and clears the deferral" "$rc"
+[[ "$SUPERVISOR_CALLS" -eq 0 ]] && grep -q 'mode=full source=manual yielding' "$WRAPPER_LOGFILE" && rc=0
+check "(b2a1) the lane yields to a live LLM session" "$rc"
+kill "$llm_holder_pid" 2>/dev/null || true
+wait "$llm_holder_pid" 2>/dev/null || true
 
-# (b2a) GH#38580: a second drained cycle keeps the escape deferred, with the
-# first-deferral epoch, so the activated bundle starts and dispatches first.
-reset_case 7300
-STUB_DRAIN_BUNDLE="bundle-next"
+# (b2b) a dead LLM lock owner does not suppress the wake.
+reset_case 60
+mkdir -p "${LOCKDIR}.llm"
+printf '%s\n' "$llm_holder_pid" >"${LOCKDIR}.llm/pid"
+_pulse_run_supervisor_phase
+wait_for_lane
+rc=1
+[[ "$(cat "$LANE_RECORD" 2>/dev/null)" == "--supervisor-lane=full cycle" ]] && rc=0
+check "(b2b) a dead LLM lock owner does not suppress the wake" "$rc"
+
+# (b2c) the runtime transition lock and the stop flag suppress the wake.
+reset_case 60
+STUB_TRANSITION_ACTIVE=0
+_pulse_run_supervisor_phase
+STUB_TRANSITION_ACTIVE=1
+touch "$STOP_FLAG"
+_pulse_run_supervisor_phase
+rm -f "$STOP_FLAG"
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 0 && ! -e "$LANE_RECORD" ]] &&
+	grep -q 'wake skipped (runtime transition' "$WRAPPER_LOGFILE" &&
+	grep -q 'wake skipped (stop flag' "$WRAPPER_LOGFILE" && rc=0
+check "(b2c) runtime transition and stop flag suppress the wake" "$rc"
+
+# Run the lane entry in this shell, then restore the test's EXIT trap.
+run_lane() {
+	PULSE_SUPERVISOR_LANE_MODE="$1"
+	_pulse_run_supervisor_lane
+	LANE_RC=$?
+	trap 'rm -rf "$TEST_ROOT"' EXIT
+	return 0
+}
+
+# (b2d) a full-mode lane runs one normally gated decision flagged as a lane
+# run (no recycle dispatch), with its own pid file.
+reset_case 60
 STUB_RECOVERY_DUE=0
-_pulse_run_supervisor_phase
-read -r first_deferral_epoch _ <"$DEFERRAL_MARKER"
-STUB_DRAIN_BUNDLE="bundle-after"
-_pulse_run_supervisor_phase
-read -r kept_deferral_epoch kept_bundle <"$DEFERRAL_MARKER"
+run_lane full
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 0 && "$kept_bundle" == "bundle-after" ]] &&
-	[[ "$kept_deferral_epoch" == "$first_deferral_epoch" ]] &&
-	grep -q 'keeping the GH#38162 escape deferred' "$LOGFILE" &&
-	! grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
-check "(b2a) a second drained cycle keeps the escape deferred" "$rc"
+[[ "$LANE_RC" -eq 0 && "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_LANE_RUN" == "1" &&
+	"$SUPERVISOR_QUEUE_ONLY" == "0" && "$SUPERVISOR_STATE_INCOMPLETE" == "0" &&
+	"$SUPERVISOR_ADMITTED" == "blocker_recovery" && "$PIDFILE" == *pulse-supervisor-lane.pid ]] && rc=0
+check "(b2d) full-mode lane runs one gated decision as a lane run" "$rc"
 
-# (b2a1) an older stored epoch is rewritten byte-for-byte, never reconstructed
-# from clock reads, so repeated drains cannot drift toward the backstop.
-stored_epoch=$(($(date +%s) - 1001))
-printf '%s bundle-old\n' "$stored_epoch" >"$DEFERRAL_MARKER"
-_pulse_run_supervisor_phase
-_pulse_run_supervisor_phase
-read -r kept_deferral_epoch kept_bundle <"$DEFERRAL_MARKER"
+# (b2e) a queue-mode lane evaluates queue-driven triggers with state incomplete.
+reset_case 60
+rm -f "${PULSE_DIR}/last_daily_sweep_success_epoch"
+run_lane queue
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 0 && "$kept_deferral_epoch" == "$stored_epoch" && "$kept_bundle" == "bundle-after" ]] && rc=0
-check "(b2a1) repeated drains preserve the stored deferral epoch exactly" "$rc"
+[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_QUEUE_ONLY" == "1" && "$SUPERVISOR_STATE_INCOMPLETE" == "1" &&
+	"$SUPERVISOR_ADMITTED" == "none" && "$RECOVERY_CALLS" -eq 1 ]] && rc=0
+check "(b2e) queue-mode lane never admits the snapshot-driven daily sweep" "$rc"
 
-# (b2b) the next undrained cycle then runs the deferred supervisor.
-STUB_DRAIN_BUNDLE=""
-_pulse_run_supervisor_phase
+# (b2f) an unknown lane mode is rejected without a decision.
+reset_case 60
+run_lane bogus 2>/dev/null
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && ! -f "$DEFERRAL_MARKER" ]] &&
-	grep -q 'evaluating the deferred drain escape' "$LOGFILE" && rc=0
-check "(b2b) the undrained cycle after repeated drains runs the deferred supervisor" "$rc"
+[[ "$LANE_RC" -eq 2 && "$SUPERVISOR_CALLS" -eq 0 ]] && rc=0
+check "(b2f) unknown lane mode is rejected" "$rc"
 
-# (b2c) backstop: a deferral older than the ceiling runs in the drained cycle.
-reset_case 30000
-STUB_DRAIN_BUNDLE="bundle-next"
-STUB_RECOVERY_DUE=0
-printf '%s bundle-old\n' "$(($(date +%s) - 14500))" >"$DEFERRAL_MARKER"
-_pulse_run_supervisor_phase
+# (b3) the routines ticker wakes a queue lane at most once per interval.
+reset_case 60
+rm -f "${PULSE_DIR}/supervisor_lane_tick_epoch"
+_pulse_supervisor_lane_tick
+wait_for_lane
+first_record=$(cat "$LANE_RECORD" 2>/dev/null)
+rm -f "$LANE_RECORD"
+_pulse_supervisor_lane_tick
+sleep 0.3
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && "$SUPERVISOR_QUEUE_ONLY" == "0" && ! -f "$DEFERRAL_MARKER" ]] &&
-	grep -q 'backstop 14400s' "$LOGFILE" && grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
-check "(b2c) a deferral past the backstop runs the escape in the drained cycle" "$rc"
+[[ "$first_record" == "--supervisor-lane=queue routines-tick" && ! -e "$LANE_RECORD" ]] && rc=0
+check "(b3) routines tick wakes one queue lane per interval" "$rc"
 
-# (b2d) PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS=0 never runs it while drained.
-reset_case 30000
-STUB_DRAIN_BUNDLE="bundle-next"
-STUB_RECOVERY_DUE=0
-PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS=0
-printf '%s bundle-old\n' "$(($(date +%s) - 99999))" >"$DEFERRAL_MARKER"
-_pulse_run_supervisor_phase
+# (b3a) PULSE_SUPERVISOR_LANE_TICK_SECONDS=0 disables the ticker wake.
+reset_case 60
+rm -f "${PULSE_DIR}/supervisor_lane_tick_epoch"
+PULSE_SUPERVISOR_LANE_TICK_SECONDS=0 _pulse_supervisor_lane_tick
+sleep 0.3
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 0 && -f "$DEFERRAL_MARKER" ]] && rc=0
-check "(b2d) MAX_DEFER_SECONDS=0 keeps deferring under drains" "$rc"
-
-# (b3) PULSE_LLM_DRAIN_ESCAPE_DEFER=0 runs the escape in the drained cycle.
-reset_case 7300
-STUB_DRAIN_BUNDLE="bundle-next"
-STUB_RECOVERY_DUE=0
-PULSE_LLM_DRAIN_ESCAPE_DEFER=0
-_pulse_run_supervisor_phase
-rc=1
-[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && ! -f "$DEFERRAL_MARKER" ]] &&
-	grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
-check "(b3) PULSE_LLM_DRAIN_ESCAPE_DEFER=0 runs the escape immediately" "$rc"
+[[ ! -e "$LANE_RECORD" ]] && rc=0
+check "(b3a) PULSE_SUPERVISOR_LANE_TICK_SECONDS=0 disables the ticker wake" "$rc"
 
 # (b4) the supervisor phase follows the cycle's dispatch pipeline in main().
 rc=1
@@ -236,20 +310,30 @@ phase_line=$(grep -n -m1 '^[[:space:]]*_pulse_run_supervisor_phase$' "${PULSE_SC
 [[ -n "$pipeline_line" && -n "$phase_line" && "$pipeline_line" -lt "$phase_line" ]] && rc=0
 check "(b4) the supervisor phase runs after the dispatch pipeline" "$rc"
 
-# (b2) PULSE_LLM_DRAIN_ESCAPE_SECONDS=0 disables the drain escape.
+# (b5) the ticker loop wakes the lane after its routines pass.
+rc=1
+grep -q '_pulse_supervisor_lane_tick || true' "${PULSE_SCRIPTS_DIR}/pulse-routines-tick.sh" && rc=0
+check "(b5) the routines ticker calls the lane tick" "$rc"
+
+# (b6) PULSE_SUPERVISOR_LANE=0 rollback: a drained cycle skips (plain GH#37907,
+# no escape even when starved); an undrained cycle runs the supervisor in-cycle.
 reset_case 999999
 STUB_DRAIN_BUNDLE="bundle-next"
-PULSE_LLM_DRAIN_ESCAPE_SECONDS=0
+STUB_RECOVERY_DUE=0
+PULSE_SUPERVISOR_LANE=0
 _pulse_run_supervisor_phase
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 0 ]] && grep -q 'Skipping LLM supervisor: cooperative drain requested' "$LOGFILE" && rc=0
-check "(b2) PULSE_LLM_DRAIN_ESCAPE_SECONDS=0 disables drain escape" "$rc"
+[[ "$SUPERVISOR_CALLS" -eq 0 && ! -e "$LANE_RECORD" ]] &&
+	grep -q 'Skipping LLM supervisor: cooperative drain requested' "$LOGFILE" && rc=0
+STUB_DRAIN_BUNDLE=""
+_pulse_run_supervisor_phase
+[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_LANE_RUN" == "0" && ! -e "$LANE_RECORD" ]] || rc=1
+check "(b6) PULSE_SUPERVISOR_LANE=0 restores the in-cycle supervisor without escapes" "$rc"
 
 # (c) degraded prefetch with recovery due runs with state marked incomplete.
 reset_case 60
-_PULSE_PREFETCH_DEGRADED=1
 STUB_RECOVERY_DUE=0
-_pulse_run_supervisor_phase
+run_lane degraded
 rc=1
 [[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" &&
 	"$SUPERVISOR_STATE_INCOMPLETE" == "1" && "$SUPERVISOR_QUEUE_ONLY" == "1" && "$RECOVERY_CALLS" -eq 1 ]] && rc=0
@@ -257,8 +341,7 @@ check "(c) degraded prefetch with recovery due runs, state incomplete, one recov
 
 # (d) degraded prefetch without recovery due and without a stale attempt skips.
 reset_case 60
-_PULSE_PREFETCH_DEGRADED=1
-_pulse_run_supervisor_phase
+run_lane degraded
 rc=1
 [[ "$SUPERVISOR_ADMITTED" == "none" && "$RECOVERY_CALLS" -eq 1 ]] &&
 	grep -Eq 'Skipping LLM supervisor: prefetch state incomplete.*last_attempt_age_s=[0-9]+' "$LOGFILE" && rc=0
@@ -267,8 +350,7 @@ check "(d) degraded prefetch without recovery due skips with last_attempt_age_s"
 # (e) queue-triggers-only never admits a due daily sweep.
 reset_case 60
 rm -f "${PULSE_DIR}/last_daily_sweep_success_epoch"
-_PULSE_PREFETCH_DEGRADED=1
-_pulse_run_supervisor_phase
+run_lane degraded
 rc=1
 [[ "$SUPERVISOR_QUEUE_ONLY" == "1" && "$SUPERVISOR_ADMITTED" == "none" && "$RECOVERY_CALLS" -eq 1 ]] && rc=0
 check "(e) queue-triggers-only does not admit daily sweep" "$rc"
@@ -276,8 +358,7 @@ check "(e) queue-triggers-only does not admit daily sweep" "$rc"
 # (f) the 6h degraded escape still runs the full trigger set.
 reset_case 30000
 rm -f "${PULSE_DIR}/last_daily_sweep_success_epoch"
-_PULSE_PREFETCH_DEGRADED=1
-_pulse_run_supervisor_phase
+run_lane degraded
 rc=1
 [[ "$SUPERVISOR_QUEUE_ONLY" == "0" && "$SUPERVISOR_STATE_INCOMPLETE" == "1" && "$SUPERVISOR_ADMITTED" == "daily_sweep" ]] && rc=0
 check "(f) degraded 6h escape keeps full trigger set" "$rc"

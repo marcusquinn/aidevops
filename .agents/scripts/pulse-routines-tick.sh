@@ -21,6 +21,9 @@
 #   AIDEVOPS_PULSE_ROUTINES_TICK=0          disable the ticker
 #   AIDEVOPS_PULSE_ROUTINES_TICK_SECONDS=N  tick interval (default 60)
 #   AIDEVOPS_PULSE_BUSY_ROUTINES=0          disables the pass itself
+#   PULSE_SUPERVISOR_LANE_TICK_SECONDS=N    queue-trigger supervisor lane wake
+#                                           interval (default 900, 0 disables;
+#                                           GH#40536, pulse-wrapper-cycle.sh)
 
 [[ -n "${_PULSE_ROUTINES_TICK_LOADED:-}" ]] && return 0
 _PULSE_ROUTINES_TICK_LOADED=1
@@ -74,6 +77,10 @@ _pulse_routines_ticker_loop() {
 		kill -0 "$owner_pid" 2>/dev/null || break
 		[[ -z "${STOP_FLAG:-}" || ! -f "$STOP_FLAG" ]] || break
 		_pulse_run_routines_while_busy "cycle-tick" || true
+		# GH#40536: queue-driven supervisor triggers on their own cadence.
+		if declare -F _pulse_supervisor_lane_tick >/dev/null 2>&1; then
+			_pulse_supervisor_lane_tick || true
+		fi
 	done
 	return 0
 }
