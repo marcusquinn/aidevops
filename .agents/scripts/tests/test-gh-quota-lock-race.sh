@@ -52,9 +52,8 @@ race_lock_dir="${TEST_ROOT}/release-race.lock.d"
 race_marker="${TEST_ROOT}/release-race-triggered"
 race_stderr="${TEST_ROOT}/release-race.stderr"
 
-# Intercept the PID reader so the existence check succeeds before the owner
-# releases its PID. The reclaim guard keeps rmdir from removing the inspected
-# directory while cat observes the disappeared file without emitting stderr.
+# Emulate a PID disappearing after the existence check. The reader must treat
+# this as retryable contention without emitting a shell diagnostic.
 cat() {
 	local target="$1"
 	local cat_rc=0
@@ -65,6 +64,21 @@ cat() {
 	fi
 	command cat "$@" || cat_rc=$?
 	[[ "$cat_rc" -eq 0 ]] || return 1
+	return 0
+}
+
+# Define before any mkdir calls so ShellCheck sees the intercepted command.
+# It is active only for the later publication-boundary fixture.
+mkdir() {
+	local target="$1"
+	command mkdir "$@" || return 1
+	if [[ "$target" == "${publication_lock_dir:-}" ]]; then
+		if _ghqa_lock_reclaim "$target" 100; then
+			return 1
+		fi
+		[[ -d "$target" ]] || return 1
+		: >"$publication_marker"
+	fi
 	return 0
 }
 
@@ -138,18 +152,6 @@ _ghqa_lock_release "$signal_lock_dir"
 # retry counter must not reclaim this in-progress publication.
 publication_lock_dir="${TEST_ROOT}/publication.lock.d"
 publication_marker="${TEST_ROOT}/publication-protected"
-mkdir() {
-	local target="$1"
-	command mkdir "$@" || return 1
-	if [[ "$target" == "$publication_lock_dir" ]]; then
-		if _ghqa_lock_reclaim "$target" 100; then
-			return 1
-		fi
-		[[ -d "$target" ]] || return 1
-		: >"$publication_marker"
-	fi
-	return 0
-}
 publication_rc=0
 _ghqa_lock_acquire "$publication_lock_dir" || publication_rc=$?
 unset -f mkdir
