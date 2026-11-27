@@ -72,7 +72,10 @@ DECISION_WRITE
 		'api repos/owner/repo/git/ref/'*) ref="refs/${args#*git/ref/}"; test -d "${root}/${ref//\//_}" ;;
 		*) return 1 ;;
 		esac
-		return $?
+		local rc=$?
+		# GH#40529: per-process ref trace for the concurrent-decision diagnostic.
+		[[ -z "$ref" ]] || printf '%s root=%s %s rc=%s\n' "$BASHPID" "$root" "${args%% -f sha=*}" "$rc" >>"${DECISION_ROOT}/gh.log"
+		return "$rc"
 	}
 	_pcc_issue_comments() { jq . "${root}/comments.json"; return 0; }
 	_pcc_approval_template() {
@@ -193,6 +196,8 @@ test_decision_policy_races() (
 			"$first_rc" "$second_rc" "${inferences// /}" "${writes// /}" \
 			"$(tr '\n' ',' <"${root}/writes" 2>/dev/null)" \
 			"$(find "$root" -maxdepth 1 -name 'refs_*' -exec basename {} \; | tr '\n' ',')" >&2
+		# The FAIL prefix keeps these lines in the health artifact's early-failure excerpt.
+		sed 's/^/FAIL trace gh-ref: /' "${root}/gh.log" >&2 2>/dev/null || true
 		return 1
 	fi
 	return 0
