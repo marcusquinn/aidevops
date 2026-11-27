@@ -782,15 +782,23 @@ test_crash_replay_is_single_publication() {
 }
 
 test_same_path_contention_is_retryable() {
-	local name="same-path contention returns retryable conflict"
-	local root="" repo="" hook="" rc=0 remote_todo=""
+	local name="multiple same-path conflicts return retryable conflict with recovery guidance"
+	local root="" repo="" hook="" rc=0 remote_todo="" output="" before="" after=""
 	root=$(mktemp -d) || return 0
 	setup_repo "$root" || {
 		fail "$name" setup
 		return 0
 	}
 	repo="${root}/work"
-	printf '%s\n' '- [ ] t005 local ref:GH#5' >>"${repo}/TODO.md"
+	# Separate two conflicting regions with enough unchanged context that
+	# merge-file returns 2 rather than coalescing them into a single conflict.
+	printf '%s\n' '# Tasks' 'context 1' 'context 2' 'context 3' 'context 4' 'context 5' 'context 6' 'context 7' 'context 8' >"${repo}/TODO.md"
+	git -C "$repo" -c user.name=Test -c user.email=test@example.invalid commit -qam context || return 1
+	git -C "$repo" push -q origin main || return 1
+	printf '%s\n' '# Local Tasks' 'context 1' 'context 2' 'context 3' 'context 4' 'context 5' 'context 6' 'context 7' 'context 8' '- [ ] t005 local ref:GH#5' >"${repo}/TODO.md"
+	printf 'staged local-only\n' >>"${repo}/README.md"
+	git -C "$repo" add README.md
+	before=$(state_digest "$repo")
 	hook="${root}/same-path.sh"
 	cat >"$hook" <<'HOOK'
 #!/usr/bin/env bash
@@ -798,7 +806,7 @@ repo="$1"; remote="$2"; branch="$3"; attempt="$6"
 [[ "$attempt" == "1" ]] || exit 0
 tmp=$(mktemp -d)
 git clone -q "$(git -C "$repo" remote get-url "$remote")" "$tmp/work"
-printf '%s\n' '- [ ] t999 rival ref:GH#999' >>"$tmp/work/TODO.md"
+printf '%s\n' '# Rival Tasks' 'context 1' 'context 2' 'context 3' 'context 4' 'context 5' 'context 6' 'context 7' 'context 8' '- [ ] t999 rival ref:GH#999' >"$tmp/work/TODO.md"
 git -C "$tmp/work" add TODO.md
 GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" -c commit.gpgsign=false commit -qm rival
 git -C "$tmp/work" push -q origin "$branch"
@@ -806,14 +814,22 @@ rm -rf "$tmp"
 exit 0
 HOOK
 	chmod +x "$hook"
-	(
+	output=$(
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_VALIDATOR=true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" planning_publish "$repo" "plan: conflict" origin main
+		AIDEVOPS_PLANNING_VALIDATOR=true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" planning_publish "$repo" "plan: conflict" origin main 2>&1
 	) || rc=$?
+	after=$(state_digest "$repo")
 	remote_todo=$(git --git-dir="${root}/remote.git" show main:TODO.md)
-	if [[ $rc -eq 2 && "$remote_todo" == *"t999"* && "$remote_todo" != *"t005"* ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+	if [[ $rc -eq 2 && "$remote_todo" == *"t999"* && "$remote_todo" != *"t005"* &&
+		"$before" == "$after" && "$output" == *"Merge conflict in TODO.md"* &&
+		"$output" == *"Do not reset or move HEAD"* && "$output" == *"original snapshot base"* &&
+		"$output" == *"AIDEVOPS_PLANNING_PUBLISH_STATUS=retryable_conflict"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=$rc; $output"
+	fi
 	rm -rf "$root"
 	return 0
 }

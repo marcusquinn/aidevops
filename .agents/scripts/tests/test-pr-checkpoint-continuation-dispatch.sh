@@ -48,9 +48,7 @@ with open(root+"/writes","a") as f: f.write(sys.argv[1]+"\n")
 if sys.argv[1]=="edit":
  with open(root+"/issue.json") as f: issue=json.load(f)
  issue["body"]=body+os.environ.get("DECISION_CORRUPTION","")
- # GH#40529: replace atomically, like the real API; a truncating rewrite let a
- # concurrent resolver read an empty issue on loaded runners and fail.
- tmp=root+"/issue.json.%d"%os.getpid()
+ tmp=root+"/issue.json.%d" % os.getpid()
  with open(tmp,"w") as f: json.dump(issue,f)
  os.replace(tmp,root+"/issue.json")
 else:
@@ -74,7 +72,7 @@ DECISION_WRITE
 		esac
 		local rc=$?
 		# GH#40529: per-process ref trace for the concurrent-decision diagnostic.
-		[[ -z "$ref" ]] || printf '%s root=%s %s rc=%s\n' "$BASHPID" "$root" "${args%% -f sha=*}" "$rc" >>"${DECISION_ROOT}/gh.log"
+		[[ -z "$ref" ]] || printf '%s t=%s root=%s %s rc=%s\n' "$BASHPID" "${EPOCHREALTIME:-}" "$root" "${args%% -f sha=*}" "$rc" >>"${DECISION_ROOT}/gh.log"
 		return "$rc"
 	}
 	_pcc_issue_comments() { jq . "${root}/comments.json"; return 0; }

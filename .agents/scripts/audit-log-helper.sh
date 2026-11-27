@@ -65,12 +65,16 @@ readonly AUDIT_MAX_DETAIL_LEN=8192
 readonly AUDIT_DEFAULT_ROTATE_MB=50
 readonly AUDIT_DEFAULT_LOCK_TIMEOUT_SECONDS=10
 readonly AUDIT_DEFAULT_LOCK_ORPHAN_AGE_SECONDS=60
+# A reclaim election older than this was abandoned by a killed reclaimer.
+readonly AUDIT_RECLAIM_ELECTION_TTL_SECONDS=30
 readonly AUDIT_EVENT_RECOVER="system.recover"
 readonly AUDIT_INTEGRITY_BROKEN="BROKEN"
 
 # Mutable state for the process-local lock owner and the most recent append.
 _AUDIT_HELD_LOCK_DIR=""
 _AUDIT_HELD_LOCK_OWNER=""
+_AUDIT_STALE_RECORD=""
+_AUDIT_STALE_REASON=""
 _AUDIT_LAST_SEQ=""
 
 # Valid event types (prefix-based hierarchy)
@@ -310,29 +314,51 @@ _audit_error() {
 	return 0
 }
 
-# Remove only the files owned by the audit lock protocol, then the directory.
+# Remove a lock directory with one atomic rename. The lock path is never left
+# ownerless or half-emptied, so a concurrent writer cannot observe (or elect
+# itself inside) a lock that is being torn down. The renamed directory is then
+# deleted from a uniquely named tombstone that no new holder can reach.
 # Arguments: $1 — lock directory
+# Returns: 0 when the lock path was removed, 1 when it could not be removed
 _audit_remove_lock_dir() {
 	local lock_dir="$1"
 
-	rm -f "${lock_dir}/owner" || return 1
-	rmdir "${lock_dir}/.reclaim" 2>/dev/null || true
-	if ! rmdir "$lock_dir" 2>/dev/null; then
+	# mkdir claims a collision-free tombstone parent; renaming onto a path that
+	# already exists could otherwise move the lock inside an unrelated directory.
+	local tomb_root=""
+	local attempt=0
+	while :; do
+		tomb_root="${lock_dir}.rm.${BASHPID:-$$}.${RANDOM}"
+		if (umask 077 && mkdir "$tomb_root") 2>/dev/null; then
+			break
+		fi
+		attempt=$((attempt + 1))
+		if [[ $attempt -ge 20 ]]; then
+			_audit_error "Could not remove audit log lock directory: $lock_dir"
+			return 1
+		fi
+	done
+
+	if ! mv "$lock_dir" "${tomb_root}/lock" 2>/dev/null; then
+		rmdir "$tomb_root" 2>/dev/null || true
 		_audit_error "Could not remove audit log lock directory: $lock_dir"
 		return 1
 	fi
+	rm -rf -- "$tomb_root" 2>/dev/null || _audit_warn "Could not delete audit lock tombstone: $tomb_root"
 
 	return 0
 }
 
-# Reclaim a dead-owner lock, or an old ownerless lock. A .reclaim directory
-# atomically elects one reclaimer while the parent lock still blocks writers.
+# Judge whether the lock currently at a path is stale. Sets _AUDIT_STALE_RECORD
+# (the owner record read) and _AUDIT_STALE_REASON for the instance judged.
 # Arguments: $1 — lock directory, $2 — ownerless-lock minimum age in seconds
-# Returns: 0 only when the stale lock was removed
-_audit_reclaim_stale_lock() {
+# Returns: 0 when the lock is stale, 1 when live, young or absent
+_audit_judge_lock_stale() {
 	local lock_dir="$1"
 	local orphan_age="$2"
 
+	_AUDIT_STALE_RECORD=""
+	_AUDIT_STALE_REASON=""
 	if [[ ! -d "$lock_dir" ]]; then
 		return 1
 	fi
@@ -341,7 +367,8 @@ _audit_reclaim_stale_lock() {
 	local owner_pid=""
 	local stale_reason=""
 	if [[ -f "${lock_dir}/owner" ]]; then
-		IFS= read -r owner_record <"${lock_dir}/owner" || owner_record=""
+		# The holder may release (and the file vanish) between the -f test and read.
+		{ IFS= read -r owner_record <"${lock_dir}/owner"; } 2>/dev/null || owner_record=""
 		owner_pid="${owner_record%% *}"
 		if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
 			if kill -0 "$owner_pid" 2>/dev/null; then
@@ -371,29 +398,134 @@ _audit_reclaim_stale_lock() {
 		stale_reason="missing or invalid owner metadata for ${lock_age}s"
 	fi
 
-	if ! mkdir "${lock_dir}/.reclaim" 2>/dev/null; then
+	_AUDIT_STALE_RECORD="$owner_record"
+	_AUDIT_STALE_REASON="$stale_reason"
+	return 0
+}
+
+# Elect this process as the only active reclaimer for a lock path. The election
+# directory is a sibling of the lock, never inside it: reclaimers must not
+# mutate a lock directory that a new holder may have created after the stale
+# judgement. A reclaimer killed mid-election leaves a marker that expires.
+# Arguments: $1 — election directory
+# Returns: 0 when elected, 1 otherwise
+_audit_elect_reclaimer() {
+	local election_dir="$1"
+
+	# Each election carries a unique token so ownership can be verified later.
+	local reclaimer_pid="${BASHPID:-}"
+	if [[ -z "$reclaimer_pid" ]]; then
+		reclaimer_pid="$(exec sh -c 'printf "%s" "$PPID"')" || return 1
+	fi
+	[[ "$reclaimer_pid" =~ ^[0-9]+$ ]] || return 1
+	_AUDIT_ELECTION_TOKEN="${reclaimer_pid}.${RANDOM}${RANDOM}"
+	if (umask 077 && mkdir "$election_dir") 2>/dev/null; then
+		# A token-named child pins the election: rmdir cannot vacate it while
+		# this reclaimer is live. Publication may race empty-election cleanup;
+		# proceed only if our claim is the sole claim in the current directory.
+		if (umask 077 && mkdir "${election_dir}/claim.${_AUDIT_ELECTION_TOKEN}") 2>/dev/null &&
+			_audit_election_still_held "$election_dir"; then
+			return 0
+		fi
+		_audit_retire_election "$election_dir" "$_AUDIT_ELECTION_TOKEN"
+		_AUDIT_ELECTION_TOKEN=""
 		return 1
+	fi
+	_AUDIT_ELECTION_TOKEN=""
+
+	# Expiry alone never authorises takeover: an election is abandoned only when
+	# its recorded reclaimer PID is dead, or (no record) it is older than the TTL.
+	local observed=""
+	local claim=""
+	local have_claim=0
+	for claim in "$election_dir"/claim.*; do
+		[[ -d "$claim" ]] || continue
+		have_claim=1
+		observed="${claim##*/claim.}"
+		local holder_pid="${observed%%.*}"
+		if [[ "$holder_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$holder_pid" 2>/dev/null; then
+			_audit_retire_election "$election_dir" "$observed"
+		fi
+	done
+	if [[ "$have_claim" -eq 0 ]]; then
+		local election_mtime=""
+		election_mtime="$(_file_mtime_epoch "$election_dir")" || return 1
+		if [[ ! "$election_mtime" =~ ^[0-9]+$ || "$election_mtime" -eq 0 ]]; then
+			return 1
+		fi
+		local now=""
+		now="$(date '+%s')" || return 1
+		if [[ $((now - election_mtime)) -ge $AUDIT_RECLAIM_ELECTION_TTL_SECONDS ]]; then
+			_audit_retire_election "$election_dir" ""
+		fi
 	fi
 
-	# The staleness decision used an earlier read. A short-lived holder can release
-	# and exit, and a new writer can acquire the same path, between that read and
-	# the election above. Only the elected reclaimer sits inside the lock directory,
-	# so re-verify the owner record it judged stale still owns the lock.
-	local current_record=""
-	if [[ -f "${lock_dir}/owner" ]]; then
-		IFS= read -r current_record <"${lock_dir}/owner" || current_record=""
-	fi
-	if [[ "$current_record" != "$owner_record" ]]; then
-		rmdir "${lock_dir}/.reclaim" 2>/dev/null || true
-		return 1
-	fi
+	return 1
+}
 
-	_audit_warn "Reclaiming stale audit log lock (${stale_reason})"
-	if ! _audit_remove_lock_dir "$lock_dir"; then
-		return 1
+# Remove only the observed token's empty claim, then the empty election root.
+# A delayed retirement cannot unlink a replacement token or vacate a live
+# election: its claim keeps the directory nonempty throughout reclamation.
+# Arguments: $1 — election directory, $2 — token observed ("" if none)
+# Returns: 0 always (best effort)
+_audit_retire_election() {
+	local election_dir="$1"
+	local observed="$2"
+	if [[ -n "$observed" ]]; then
+		rmdir "${election_dir}/claim.${observed}" 2>/dev/null || true
 	fi
+	rmdir "$election_dir" 2>/dev/null || true
 
 	return 0
+}
+
+# Confirm this process still holds the election it won.
+# Arguments: $1 — election directory
+# Returns: 0 when the election token on disk is ours
+_audit_election_still_held() {
+	local election_dir="$1"
+	local -a claims=("$election_dir"/claim.*)
+	if [[ -n "$_AUDIT_ELECTION_TOKEN" && ${#claims[@]} -eq 1 &&
+		"${claims[0]}" == "${election_dir}/claim.${_AUDIT_ELECTION_TOKEN}" && -d "${claims[0]}" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Reclaim a dead-owner lock, or an old ownerless lock. Staleness is judged,
+# then judged again after winning a single-reclaimer election. A dead owner's
+# lock cannot be released or removed by anyone else, so while the election is
+# held an unchanged owner record proves the instance judged is the instance
+# removed. A lock created after the first judgement fails the second one.
+# Arguments: $1 — lock directory, $2 — ownerless-lock minimum age in seconds
+# Returns: 0 only when the stale lock was removed
+_audit_reclaim_stale_lock() {
+	local lock_dir="$1"
+	local orphan_age="$2"
+
+	if ! _audit_judge_lock_stale "$lock_dir" "$orphan_age"; then
+		return 1
+	fi
+	local judged_record="$_AUDIT_STALE_RECORD"
+
+	local election_dir="${lock_dir}.reclaim"
+	if ! _audit_elect_reclaimer "$election_dir"; then
+		return 1
+	fi
+
+	local reclaimed=1
+	if _audit_judge_lock_stale "$lock_dir" "$orphan_age" && [[ "$_AUDIT_STALE_RECORD" == "$judged_record" ]]; then
+		_audit_warn "Reclaiming stale audit log lock (${_AUDIT_STALE_REASON})"
+		# Re-verify election ownership immediately before the removal.
+		if _audit_election_still_held "$election_dir" && _audit_remove_lock_dir "$lock_dir"; then
+			reclaimed=0
+		fi
+	fi
+	# Even if a delayed publisher added a competing claim, remove only ours.
+	_audit_retire_election "$election_dir" "$_AUDIT_ELECTION_TOKEN"
+	_AUDIT_ELECTION_TOKEN=""
+
+	return "$reclaimed"
 }
 
 # Acquire a portable process lock using atomic mkdir.
