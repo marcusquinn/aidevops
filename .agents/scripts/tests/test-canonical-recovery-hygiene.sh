@@ -5,7 +5,8 @@
 # Fixture test for canonical-recovery-helper.sh repair-stale-locks and
 # maintenance-gc (GH#39722): held, fresh and stale locks, stale and fresh
 # interrupted-fetch pack temporaries, a live Git process gate, the audit trail,
-# a gc --auto that failed with "failed to run reflog", and the canonical guard.
+# a gc --auto that failed with "failed to run reflog", a gc.log recording
+# reflogs that reference pruned commits (GH#40596), and the canonical guard.
 
 set -uo pipefail
 
@@ -217,6 +218,83 @@ if [[ "$after" != *"failed to run reflog"* && "$after" != exit* ]]; then
 	pass "git gc --auto runs without 'failed to run reflog' after repair"
 else
 	fail "git gc --auto still fails after repair: $after"
+fi
+
+# GH#40596: a gc.log that only records reflogs referencing pruned commits is
+# repaired (stale entries dropped, then gc.log removed); other content stays.
+STALE_REPO="${ROOT}/stale-repo"
+init_repo "$STALE_REPO"
+"$GIT" -C "$STALE_REPO" switch -q -c topic
+printf 'lost\n' >>"${STALE_REPO}/README.md"
+"$GIT" -C "$STALE_REPO" commit -q -am lost
+LOST=$("$GIT" -C "$STALE_REPO" rev-parse HEAD)
+"$GIT" -C "$STALE_REPO" reset -q --hard HEAD~1
+"$GIT" -C "$STALE_REPO" switch -q main
+rm -f "${STALE_REPO}/.git/objects/${LOST:0:2}/${LOST:2}"
+GC_LOG="${STALE_REPO}/.git/gc.log"
+STALE_LINES="warning: reflog of 'HEAD' references pruned commits
+warning: reflog of 'refs/heads/topic' references pruned commits"
+printf '%s\n' "$STALE_LINES" >"$GC_LOG"
+main_entries=$("$GIT" -C "$STALE_REPO" reflog show --format=%H refs/heads/main | wc -l | tr -d ' ')
+probe_before=$("$GIT" -C "$STALE_REPO" rev-list --no-walk --reflog 2>&1 >/dev/null)
+if [[ "$probe_before" == *"reflog of 'refs/heads/topic' references pruned commits"* ]]; then
+	pass "fixture reproduces a reflog that references a pruned commit"
+else
+	fail "fixture did not reproduce the stale reflog: $probe_before"
+fi
+stale_dry=$(run_helper maintenance-gc --repo "$STALE_REPO") || fail "stale-reflog dry run failed: $stale_dry"
+if [[ "$stale_dry" == *"GC_LOG=present lines=2 unknown_lines=0"* &&
+	"$stale_dry" == *"STALE_REFLOG ref=refs/heads/topic"* && "$stale_dry" == *"STALE_REFLOG ref=HEAD"* &&
+	"$stale_dry" == *"GC_LOG_PLAN=repair stale_reflogs=2"* && "$stale_dry" == *"PACK_COUNT="* &&
+	-f "$GC_LOG" ]]; then
+	pass "maintenance-gc dry run reports stale reflogs and plans the gc.log repair without mutation"
+else
+	fail "stale-reflog dry run incorrect: $stale_dry"
+fi
+stale_apply=$(run_helper maintenance-gc --repo "$STALE_REPO" --apply) || fail "stale-reflog apply failed: $stale_apply"
+probe_after=$("$GIT" -C "$STALE_REPO" rev-list --no-walk --reflog 2>&1 >/dev/null)
+main_after=$("$GIT" -C "$STALE_REPO" reflog show --format=%H refs/heads/main | wc -l | tr -d ' ')
+if [[ "$stale_apply" == *"STALE_REFLOG_REPAIR=ok"* && "$stale_apply" == *"REMOVED kind=gc-log path=gc.log"* &&
+	"$stale_apply" == *"GC_RESULT=ok"* && ! -e "$GC_LOG" && -z "$probe_after" &&
+	"$main_after" == "$main_entries" ]]; then
+	pass "maintenance-gc drops only stale reflog entries, removes gc.log and runs gc"
+else
+	fail "stale-reflog apply incorrect (main $main_entries->$main_after, probe='$probe_after'): $stale_apply"
+fi
+if grep -F '"Canonical stale reflog repair finished"' "$AUDIT_FILE" | grep -F '"result":"ok"' >/dev/null &&
+	grep -F '"path":"gc.log"' "$AUDIT_FILE" >/dev/null && ! grep -F "$ROOT" "$AUDIT_FILE" >/dev/null &&
+	AUDIT_LOG_FILE="$AUDIT_FILE" bash "${SCRIPT_DIR}/audit-log-helper.sh" verify --quiet 2>/dev/null; then
+	pass "reflog repair and gc.log removal are audited without a repository path"
+else
+	fail "reflog repair audit trail incorrect"
+fi
+printf '%s\nerror: unexpected gc failure\n' "$STALE_LINES" >"$GC_LOG"
+unknown_apply=$(run_helper maintenance-gc --repo "$STALE_REPO" --apply)
+if [[ "$unknown_apply" == *"GC_LOG_PLAN=keep reason=unknown-content"* && -f "$GC_LOG" ]]; then
+	pass "gc.log with unknown content is reported and kept"
+else
+	fail "unknown gc.log content handling incorrect: $unknown_apply"
+fi
+printf '%s\n' "$STALE_LINES" >"$GC_LOG"
+sleep 120 &
+GC_SLEEP_PID=$!
+printf '%s %s' "$GC_SLEEP_PID" "$(hostname)" >"${STALE_REPO}/.git/gc.pid"
+running_apply=$(run_helper maintenance-gc --repo "$STALE_REPO" --apply)
+kill "$GC_SLEEP_PID" 2>/dev/null
+wait "$GC_SLEEP_PID" 2>/dev/null
+rm -f "${STALE_REPO}/.git/gc.pid"
+if [[ "$running_apply" == *"GC_LOG_PLAN=keep reason=gc-running"* && -f "$GC_LOG" ]]; then
+	pass "gc.log is kept while gc.pid names a live gc"
+else
+	fail "live gc gate for gc.log incorrect: $running_apply"
+fi
+# A gc.log left by a transient state whose reflogs are already clean is removed.
+clean_apply=$(run_helper maintenance-gc --repo "$STALE_REPO" --apply) || fail "clean-probe apply failed: $clean_apply"
+if [[ "$clean_apply" == *"REMOVED kind=gc-log path=gc.log"* && "$clean_apply" != *"STALE_REFLOG "* &&
+	"$clean_apply" != *"STALE_REFLOG_REPAIR="* && ! -e "$GC_LOG" ]]; then
+	pass "stale gc.log is removed when the reflog probe is already clean"
+else
+	fail "clean-probe gc.log removal incorrect: $clean_apply"
 fi
 
 # The helper is the sanctioned path; direct canonical gc stays blocked.

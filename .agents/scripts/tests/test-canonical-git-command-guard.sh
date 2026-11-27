@@ -574,6 +574,15 @@ else
 fi
 assert_allowed "allows the maintenance-gc recovery helper path" "$REPO" \
 	"'${RECOVERY_HELPER}' maintenance-gc --repo '$REPO' --apply"
+# GH#40596: reflog queries are read-only; expiry and deletion stay blocked.
+assert_allowed "allows canonical reflog show" "$REPO" "git reflog show --format=%H refs/heads/main"
+assert_allowed "allows canonical implicit reflog show" "$REPO" "git reflog -n 5"
+assert_allowed "allows canonical reflog exists" "$REPO" "git reflog exists refs/heads/main"
+assert_allowed "allows canonical bare reflog" "$REPO" "git reflog"
+assert_blocked "blocks canonical reflog expire" "git reflog expire --stale-fix --all"
+assert_blocked "blocks canonical reflog delete" "git reflog delete refs/heads/main@{0}"
+assert_blocked "blocks canonical reflog expire after a leading option" "git reflog -n1 expire --all"
+assert_blocked "blocks canonical unknown reflog subcommand" "git reflog rewrite refs/heads/main"
 
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 DEFAULT_BRANCH=$(
