@@ -17,15 +17,13 @@ from uuid import UUID, uuid5
 
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
-from .interrupted_removal import BOUNDARY, half_removed, removal_started
+from .interrupted_removal import BOUNDARY, removal_started
 from .interrupted_removal import require_deletion_only, validation_boundary
 from .legacy_discovery import same_tree
-from .legacy_escalation import escalate_half_state
+from .legacy_escalation import half_state_report
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
-from .legacy_options import half_state_outcome, preservation_name
-from .legacy_options import require_manual_confirmation
-from .legacy_options import require_managed_takeover
+from .legacy_options import require_manual_confirmation, require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
 from .legacy_probe import checkpoint, event_id, host_probe
 from .legacy_probe import operation_id, prepare_reconstructible_probe, receipt
@@ -255,25 +253,6 @@ def take_over_managed(store, item, repositories, adapter, options):
     return process_reconstructible(store, item, repositories, adapter, options)
 
 
-def unresumed_half_state(item, journaled):
-    """Return the half-removal code for a tree with no journal to resume (GH#40569).
-
-    A journaled removal owns the half-state it produced. Operator-preserved names
-    keep their existing exclusion and are never escalated this way.
-    """
-    if journaled or preservation_name(item["path"]):
-        return None
-    return half_removed(Path(item["path"]))
-
-
-def escalate_item(store, item, code, apply):
-    """Escalate a structural half-removal as terminal work, not a transient refusal."""
-    status = escalate_half_state(store, item, code, apply)
-    outcome = {"path": item["path"]}
-    outcome.update(half_state_outcome(item, code, status))
-    return outcome
-
-
 def process_item(store, item, repositories, adapter, options):
     """Plan and, when applying, retire one legacy item and report the outcome."""
     outcome = {"path": item["path"]}
@@ -287,7 +266,7 @@ def process_item(store, item, repositories, adapter, options):
             removing = receipt(connection, operation, RECONSTRUCTIBLE_REMOVING)
             if not done:
                 require_confirmation(connection, operation, confirmed)
-        code = unresumed_half_state(item, done or removing or pending)
+        half = half_state_report(store, item, done or removing or pending, options.apply)
         if done:
             outcome["status"] = "already-retired"
         elif removing:
@@ -300,8 +279,8 @@ def process_item(store, item, repositories, adapter, options):
             # An interrupted host-probe removal is recovered or reported first.
             recover_interrupted_probe(store, item, options.apply)
             outcome["status"] = "already-absent"
-        elif code:
-            return escalate_item(store, item, code, options.apply), eligible, attempted
+        elif half:
+            return half, eligible, attempted
         elif item["modern"]:
             return take_over_managed(store, item, repositories, adapter, options)
         elif not pending and requires_reconstructible(item, repositories, adapter, options):

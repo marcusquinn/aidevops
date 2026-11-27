@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from .interrupted_removal import half_removed
+from .legacy_options import half_state_outcome, preservation_name
 from .legacy_probe import checkpoint, operation_id, receipt
 from .retirement import _lock
 
@@ -22,3 +26,18 @@ def escalate_half_state(store, item, code, apply):
                         "structural": True})
             return "needs-resume"
     return "already-escalated"
+
+
+def half_state_report(store, item, journaled, apply):
+    """Return a terminal outcome for an unjournaled half-removed tree, else None.
+
+    A journaled removal owns the half-state it produced. Operator-preserved names
+    keep their existing exclusion and are never escalated this way (GH#40569).
+    """
+    if journaled or preservation_name(item["path"]):
+        return None
+    code = half_removed(Path(item["path"]))
+    if not code:
+        return None
+    status = escalate_half_state(store, item, code, apply)
+    return {"path": item["path"], **half_state_outcome(item, code, status)}
