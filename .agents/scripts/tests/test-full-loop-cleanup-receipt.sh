@@ -5,7 +5,8 @@
 set -euo pipefail
 # GH#40529: an unexpected set -e exit printed nothing, so name the failing line.
 set -E
-trap 'printf "FAIL unexpected exit at line %s (rc=%s): %s\n" "$LINENO" "$?" "$BASH_COMMAND"' ERR
+# Subshell blocks report their whole body as the command, so keep only a prefix.
+trap 'printf "FAIL unexpected exit at line %s (rc=%s): %.160s\n" "$LINENO" "$?" "$BASH_COMMAND"' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
