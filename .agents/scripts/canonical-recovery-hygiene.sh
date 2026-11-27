@@ -167,6 +167,74 @@ _cgh_live_git_owner() {
 	return 1
 }
 
+# Returns 0 when PID runs a gc, repack or pack-objects Git command; 2 when unknown.
+_cgh_pid_is_repack_command() {
+	local pid="$1"
+	local args="" token="" name="" skip=0 seen_exe=0
+	local -a tokens=()
+
+	# Return 2 (unknown) when the probe fails but the PID may still be alive;
+	# only a confirmed-exited PID is excluded.
+	args=$(ps -o args= -p "$pid" 2>/dev/null) || args=""
+	if [[ -z "$args" ]]; then
+		kill -0 "$pid" 2>/dev/null && return 2
+		return 1
+	fi
+	read -r -a tokens <<<"$args"
+	for token in "${tokens[@]}"; do
+		if [[ "$seen_exe" -eq 0 ]]; then
+			seen_exe=1
+			name="${token##*/}"
+			case "$name" in
+			git-gc | git-repack | git-pack-objects) return 0 ;;
+			git-*) return 1 ;;
+			esac
+			continue
+		fi
+		if [[ "$skip" -eq 1 ]]; then
+			skip=0
+			continue
+		fi
+		case "$token" in
+		-C | -c | --git-dir | --work-tree | --namespace | --exec-path) skip=1 ;;
+		-*) ;;
+		gc | repack | pack-objects) return 0 ;;
+		*) return 1 ;;
+		esac
+	done
+	return 1
+}
+
+# Counts live gc/repack/pack-objects processes on this object store regardless
+# of start time or gc.pid contents (GH#40618: Git treats gc.pid as stale after
+# 12h, so a second gc can take it over while the first still repacks).
+# Sets CGH_REPACK_COUNT; -1 means unverifiable, which callers treat as running.
+_cgh_count_repack_processes() {
+	local common="$1"
+	local top="$2"
+	local start="" pid="" unknown=0
+
+	CGH_REPACK_COUNT=0
+	if [[ "$CGH_PROC_SCAN_OK" -ne 1 ]]; then
+		CGH_REPACK_COUNT=-1
+		return 0
+	fi
+	while IFS=' ' read -r start pid; do
+		[[ "$pid" =~ ^[0-9]+$ ]] || continue
+		local verdict=0
+		_cgh_pid_is_repack_command "$pid" || verdict=$?
+		if [[ "$verdict" -eq 2 ]]; then
+			unknown=1
+			continue
+		fi
+		[[ "$verdict" -eq 0 ]] || continue
+		_cgh_process_targets_repo "$pid" "$common" "$top" || continue
+		CGH_REPACK_COUNT=$((CGH_REPACK_COUNT + 1))
+	done <<<"$CGH_GIT_PROCS"
+	[[ "$unknown" -eq 1 && "$CGH_REPACK_COUNT" -eq 0 ]] && CGH_REPACK_COUNT=-1
+	return 0
+}
+
 # Prints held, free or unknown for an open-file holder check.
 _cgh_holder_state() {
 	local path="$1"
@@ -260,6 +328,11 @@ _cgh_evaluate() {
 	fi
 	if [[ $((now - mtime)) -lt "$min_age" ]]; then
 		CGH_EVAL_REASON="fresh"
+		return 1
+	fi
+	# A live repack keeps writing pack temporaries and may own a taken-over gc.pid.
+	if [[ "$CGH_REPACK_COUNT" -ne 0 && ("${path##*/}" == "gc.pid" || "$path" == "$common"/objects/pack/*) ]]; then
+		CGH_EVAL_REASON="live-repack-process"
 		return 1
 	fi
 	if [[ "${path##*/}" == "gc.pid" ]] && ! _cgh_gc_pid_is_dead "$path"; then
@@ -404,6 +477,7 @@ _cgh_repair() {
 
 	now=$(date +%s)
 	_cgh_load_git_processes "$now"
+	_cgh_count_repack_processes "$common" "$repo"
 	while IFS=$'\t' read -r kind path; do
 		[[ -n "$path" ]] || continue
 		relative="${path#"${common}/"}"
@@ -435,6 +509,8 @@ _cgh_repair() {
 			skipped=$((skipped + 1))
 		fi
 	done < <(_cgh_scope_paths "$common")
+	# More than one repack on one object store wastes memory; operator may stop one.
+	[[ "$CGH_REPACK_COUNT" -gt 1 ]] && printf 'CONCURRENT_GC=%s\n' "$CGH_REPACK_COUNT"
 	printf 'STALE_LOCK_CANDIDATES=%s\nTMP_PACK_CANDIDATES=%s\nSKIPPED=%s\n' \
 		"$lock_candidates" "$tmp_candidates" "$skipped"
 	# Bytes of every scoped pack temporary, and of those kept as too young.
@@ -451,8 +527,11 @@ _cgh_repair() {
 	repo_id=$(printf '%s' "$common" | "$REAL_GIT" hash-object --stdin) || repo_id="unknown"
 	repo_id="${repo_id:0:12}"
 	now=$(date +%s)
-	CGH_PID_VERDICTS=" "
+CGH_PID_VERDICTS=" "
+CGH_REPACK_COUNT=-1
+
 	_cgh_load_git_processes "$now"
+	_cgh_count_repack_processes "$common" "$repo"
 	for ((i = 0; i < ${#plan_paths[@]}; i++)); do
 		path="${plan_paths[$i]}"
 		kind="${plan_kinds[$i]}"
@@ -584,7 +663,15 @@ cgh_main() {
 	_cgh_repair "$repo" "$common" "$((lock_minutes * 60))" "$((tmp_days * 86400))" "$apply" "$cmd" || rc=$?
 	if [[ "$cmd" == "$CGH_GC_CMD" && "$rc" -eq 0 ]]; then
 		if [[ "$apply" -eq 1 ]]; then
-			_cgh_run_gc "$repo" "$common" || rc=$?
+			# Re-scan: a repack may have started since repair; unverifiable fails closed.
+			_cgh_load_git_processes "$(date +%s)"
+			_cgh_count_repack_processes "$common" "$repo"
+			if [[ "$CGH_REPACK_COUNT" -ne 0 ]]; then
+				printf 'GC_RESULT=skipped reason=live-repack-process\n'
+				[[ "$CGH_REPACK_COUNT" -gt 1 ]] && printf 'CONCURRENT_GC=%s\n' "$CGH_REPACK_COUNT"
+			else
+				_cgh_run_gc "$repo" "$common" || rc=$?
+			fi
 		else
 			printf 'GC_PLAN=git gc --auto (foreground, after debris repair; add --apply)\n'
 		fi

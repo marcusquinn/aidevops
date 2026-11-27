@@ -219,6 +219,39 @@ else
 	fail "git gc --auto still fails after repair: $after"
 fi
 
+# GH#40618: a live repack launched from a linked worktree blocks debris removal
+# and gc even when gc.pid names a different, dead process.
+LR_REPO="${ROOT}/lr-repo"
+init_repo "$LR_REPO"
+"$GIT" -C "$LR_REPO" worktree add -q "${ROOT}/lr-linked" -b feature/lr-linked
+LR_COMMON="${LR_REPO}/.git"
+LR_GCLOG="${LR_COMMON}/gc.log"
+LR_PACK="${LR_COMMON}/objects/pack/tmp_pack_live"
+printf 'warning: previous gc\n' >"$LR_GCLOG"
+printf 'partial pack\n' >"$LR_PACK"
+printf '999999 %s' "$(hostname)" >"${LR_COMMON}/gc.pid"
+touch -t "$OLD_STAMP" "$LR_PACK" "${LR_COMMON}/gc.pid"
+# Process name and argv[0] must both be git-repack. A bash symlink provides
+# that; copying coreutils sleep fails on multicall builds (unknown program).
+mkdir -p "${ROOT}/fakebin"
+ln -s "$(command -v bash)" "${ROOT}/fakebin/git-repack"
+(
+	cd "${ROOT}/lr-linked" || exit 1
+	exec "${ROOT}/fakebin/git-repack" -c 'for ((i = 0; i < 120; i++)); do sleep 1; done'
+) &
+REPACK_PID=$!
+sleep 1
+lr_output=$(run_helper maintenance-gc --repo "$LR_REPO" --apply --min-age-minutes 0 --tmp-min-age-days 0)
+kill "$REPACK_PID" 2>/dev/null
+wait "$REPACK_PID" 2>/dev/null
+if [[ "$lr_output" == *"SKIP reason=live-repack-process kind=tmp-pack path=objects/pack/tmp_pack_live"* &&
+	"$lr_output" == *"GC_RESULT=skipped reason=live-repack-process"* &&
+	-f "$LR_PACK" && -f "$LR_GCLOG" && -f "${LR_COMMON}/gc.pid" ]]; then
+	pass "live repack in a linked worktree keeps temp packs, gc.log and gc.pid and skips gc"
+else
+	fail "live repack gate did not hold: $lr_output"
+fi
+
 # The helper is the sanctioned path; direct canonical gc stays blocked.
 printf '{"initialized_repos":[{"path":"%s"}]}\n' "$REPO" >"${ROOT}/repos.json"
 export AIDEVOPS_REPOS_FILE="${ROOT}/repos.json"
