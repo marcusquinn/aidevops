@@ -786,54 +786,6 @@ class RetirementContract(unittest.TestCase):
         self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
         self.assertNotIn(".lifecycle-retire-", self.git("worktree", "list", "--porcelain"))
 
-    def staging_environment(self):
-        """Point the managed base at the disposable root for staging enumeration."""
-        environment = patch.dict(os.environ, {"AIDEVOPS_WORKTREE_BASE_DIR": str(self.root)})
-        environment.start()
-        self.addCleanup(environment.stop)
-
-    def sweep(self, repositories, apply=True):
-        """Run the standalone staging sweep over the disposable managed base.
-
-        The sweep modules are imported here, not at module scope: the registry
-        bundle ships this test module without the legacy cleanup path, so these
-        tests skip there and run in the full suite.
-        """
-        try:
-            from worker_lifecycle import legacy_staging
-            from worker_lifecycle.legacy_options import CleanupOptions
-        except ImportError:
-            self.skipTest("legacy cleanup modules are not in this bundle")
-
-        return legacy_staging.sweep_staging(
-            self.store, repositories, adapter_for(self.store.installation_id()),
-            CleanupOptions(self.output, apply=apply, min_age=0),
-        )
-
-    def test_staging_sweep_completes_relocated_container_without_rotation(self):
-        """GH#40569: filesystem enumeration finds a staged tree the rotation omitted."""
-        self.create()
-        self.interrupt_after_move()
-        self.staging_environment()
-        common = self.git("rev-parse", "--path-format=absolute", "--git-common-dir")
-        results = self.sweep({common: ("fixture/repository", "main")})
-        self.assertEqual([result["status"] for result in results], ["retired"], results)
-        self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
-        self.assertNotIn(".lifecycle-retire-", self.git("worktree", "list", "--porcelain"))
-
-    def test_staging_sweep_reports_unjournaled_container_without_deleting(self):
-        """A private tree no journal can describe is reported, never removed."""
-        self.staging_environment()
-        container = self.root / ".lifecycle-retire-unjournaled"
-        (container / "tree").mkdir(parents=True)
-        (container / "tree" / "keep.txt").write_text("keep")
-        self.assertEqual(self.sweep({}, apply=False), [])
-        results = self.sweep({})
-        self.assertEqual(results[0]["status"], "needs-operator-review", results)
-        self.assertEqual(results[0]["reason"], "staging-container-unjournaled", results)
-        self.assertEqual(results[0]["classification"], "terminal", results)
-        self.assertEqual((container / "tree" / "keep.txt").read_text(), "keep")
-
     def test_partial_remove_keeps_data_written_before_removal_was_journaled(self):
         self.create()
         record = retirement._record

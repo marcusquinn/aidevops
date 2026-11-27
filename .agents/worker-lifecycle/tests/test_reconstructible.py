@@ -20,6 +20,7 @@ from worker_lifecycle import legacy_proc
 from worker_lifecycle import legacy_resume
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id, prepare_cleanup
+from worker_lifecycle.enrollment import _git_directory
 from worker_lifecycle.legacy_options import CleanupOptions
 from worker_lifecycle.runtime import adapter_for
 
@@ -277,6 +278,21 @@ class ReconstructibleContract(unittest.TestCase):
         result, _, _ = self.retire()
         self.assertEqual(result["status"], "needs-resume", result)
         self.assertEqual(result["reason"], "git-administration-unreadable", result)
+
+    def test_empty_git_administration_path_is_terminal(self):
+        (self.target / ".git").write_text("gitdir: \n")
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "needs-resume", result)
+        self.assertEqual(result["reason"], "git-administration-unreadable", result)
+
+    def test_relative_git_administration_uses_link_directory(self):
+        from worker_lifecycle.interrupted_removal import half_removed
+
+        link = self.target / ".git"
+        admin = _git_directory(self.target)
+        link.write_text(f"gitdir: {os.path.relpath(admin, self.target)}\n")
+        self.assertNotEqual(Path.cwd(), self.target)
+        self.assertIsNone(half_removed(self.target))
 
     def test_preserved_name_without_git_keeps_its_exclusion(self):
         """Operator-preserved names are never escalated as half-removals."""

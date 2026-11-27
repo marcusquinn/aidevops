@@ -983,3 +983,90 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertIn("Observation-era cleanup: retired=1",
                       (self.root / "pulse.log").read_text())
         self.assertIn("skipped_nondumpable=0", (self.root / "pulse.log").read_text())
+
+
+class StagingSweepContract(unittest.TestCase):
+    """Legacy-only sweep coverage stays outside the registry bundle's test list."""
+
+    setUp = fixtures.RetirementContract.setUp
+    git = fixtures.RetirementContract.git
+    create = fixtures.RetirementContract.create
+    retire = fixtures.RetirementContract.retire
+    interrupt_after_move = fixtures.RetirementContract.interrupt_after_move
+
+    def staging_environment(self):
+        environment = patch.dict(os.environ, {"AIDEVOPS_WORKTREE_BASE_DIR": str(self.root)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def sweep(self, repositories, apply=True, deadline=None):
+        from worker_lifecycle.legacy_options import CleanupOptions
+        from worker_lifecycle.legacy_staging import sweep_staging
+
+        return sweep_staging(
+            self.store, repositories, adapter_for(self.store.installation_id()),
+            CleanupOptions(self.output, apply=apply, min_age=0),
+            time.monotonic() + 120 if deadline is None else deadline,
+        )
+
+    def test_staging_sweep_completes_relocated_container_without_rotation(self):
+        self.create()
+        self.interrupt_after_move()
+        self.staging_environment()
+        common = self.git("rev-parse", "--path-format=absolute", "--git-common-dir")
+        results = self.sweep({common: ("fixture/repository", "main")})
+        self.assertEqual([result["status"] for result in results], ["retired"], results)
+        self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+        self.assertNotIn(".lifecycle-retire-", self.git("worktree", "list", "--porcelain"))
+
+    def test_staging_sweep_reports_unjournaled_container_without_deleting(self):
+        self.staging_environment()
+        container = self.root / ".lifecycle-retire-unjournaled"
+        (container / "tree").mkdir(parents=True)
+        (container / "tree" / "keep.txt").write_text("keep")
+        self.assertEqual(self.sweep({}, apply=False), [])
+        results = self.sweep({})
+        self.assertEqual(results[0]["status"], "needs-operator-review", results)
+        self.assertEqual(results[0]["reason"], "staging-container-unjournaled", results)
+        self.assertEqual(results[0]["classification"], "terminal", results)
+        self.assertEqual((container / "tree" / "keep.txt").read_text(), "keep")
+
+    def test_persistent_containers_do_not_starve_journaled_retirement(self):
+        self.create()
+        self.interrupt_after_move()
+        self.staging_environment()
+        persistent = [self.root / f".lifecycle-retire-000{index}" for index in range(2)]
+        for container in persistent:
+            container.mkdir()
+        common = self.git("rev-parse", "--path-format=absolute", "--git-common-dir")
+        repositories = {common: ("fixture/repository", "main")}
+        first = self.sweep(repositories)
+        self.assertEqual([result["path"] for result in first], list(map(str, persistent)))
+        second = self.sweep(repositories)
+        self.assertIn("retired", [result["status"] for result in second], second)
+        self.assertTrue(all(container.exists() for container in persistent))
+
+    def test_staging_deadline_checked_after_discovery_and_between_attempts(self):
+        from worker_lifecycle import legacy_staging
+
+        self.staging_environment()
+        for index in range(2):
+            (self.root / f".lifecycle-retire-{index}").mkdir()
+        with patch.object(legacy_staging.time, "monotonic", return_value=10), \
+                patch.object(legacy_staging, "_sweep_one") as attempt:
+            self.assertEqual(self.sweep({}, deadline=10), [])
+            attempt.assert_not_called()
+        with patch.object(legacy_staging.time, "monotonic", side_effect=[9, 10]), \
+                patch.object(legacy_staging, "_sweep_one", return_value={}) as attempt:
+            self.assertEqual(self.sweep({}, deadline=10), [{}])
+            self.assertEqual(attempt.call_count, 1)
+
+    def test_staging_discovery_denial_is_reported(self):
+        from worker_lifecycle import legacy_staging
+
+        self.staging_environment()
+        with patch.object(legacy_staging, "containers", side_effect=PermissionError("private")):
+            results = self.sweep({})
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["status"], "retained", results)
+        self.assertNotIn("private", json.dumps(results))
