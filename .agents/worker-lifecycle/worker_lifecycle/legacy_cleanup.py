@@ -20,6 +20,7 @@ from .filesystem import validate_private_path as _private
 from .interrupted_removal import BOUNDARY, half_removed, removal_started
 from .interrupted_removal import require_deletion_only, validation_boundary
 from .legacy_discovery import same_tree
+from .legacy_escalation import escalate_half_state
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import half_state_outcome, preservation_name
@@ -305,24 +306,6 @@ def process_item(store, item, repositories, adapter, options):
             subprocess.SubprocessError) as error:
         outcome.update(retained_outcome(item, error))
     return outcome, eligible, attempted
-
-
-def escalate_half_state(store, item, code, apply):
-    """Journal one terminal half-removal report; this grants no removal authority.
-
-    The registry write is the escalation: later passes report the same structure as
-    already escalated instead of re-deciding it as a fresh retry (GH#40569).
-    """
-    if not apply:
-        return "needs-resume"
-    operation = operation_id(store, item["path"])
-    with _lock(store, operation), store.connection(write=True) as connection:
-        if receipt(connection, operation, "half-removed") is None:
-            checkpoint(store, connection, operation, "half-removed",
-                       {"type": "legacy-worktree-half-removed", "reason": code,
-                        "structural": True})
-            return "needs-resume"
-    return "already-escalated"
 
 
 def process_reconstructible(store, item, repositories, adapter, options):

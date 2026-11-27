@@ -31,8 +31,10 @@ def staged_plans(connection):
     return plans
 
 
-def _sweep_one(store, container, kind, plan, repositories, adapter, options):
+def _sweep_one(store, container, entry, context):
     """Re-enter the journaled retirement path that owns one container."""
+    kind, plan = entry
+    repositories, adapter, options = context
     if kind == "retirement-planned":
         outcome = retire_worktree(
             store, Path(plan["source"]), plan["generation_id"],
@@ -80,10 +82,10 @@ def sweep_staging(store, repositories, adapter, options, deadline=None):
         if deadline is not None and time.monotonic() >= deadline:
             break
         advance(store, container, STAGING_CURSOR)
-        kind, plan = plans.get(container, (None, None))
+        entry = plans.get(container, (None, None))
         try:
-            results.append(_sweep_one(store, container, kind, plan,
-                                      repositories, adapter, options))
+            results.append(_sweep_one(store, container, entry,
+                                      (repositories, adapter, options)))
         except (ValueError, OSError, sqlite3.Error, ObservationUnavailable,
                 subprocess.SubprocessError) as error:
             results.append({"path": container, "class": "staging",
