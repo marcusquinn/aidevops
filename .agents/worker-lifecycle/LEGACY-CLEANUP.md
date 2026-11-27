@@ -130,6 +130,26 @@ reports its concrete guard in `reason` and retains the ownership classification 
 plan report `already-absent`, without claiming removal or preservation; normal
 admission cleanup owns registry absence reconciliation.
 
+A present tree whose Git administration is gone (no `.git` link, or a linked
+`.git` naming a missing administration directory) and which no journal can resume
+is a structural half-removal, not a guard refusal. It is reported as
+`status: needs-resume` with `reason: git-administration-absent` (or
+`git-administration-unreadable`) and `classification: terminal`, never as
+`retained`. In apply mode the pass journals `legacy-worktree-half-removed` once, so
+later passes report `already-escalated` instead of re-deciding the same structure;
+the top-level `needs_resume` count surfaces the residue. The journal grants no
+removal authority: nothing is deleted while no archive or deletion-only evidence
+exists (GH#40569).
+
+Each apply pass also sweeps private retirement containers
+(`.lifecycle-retire-*`, `.legacy-retire-*`) under the managed base before the
+candidate rotation. Enumeration is filesystem truth, so a container is found even
+when its generation left the rotation; each one re-enters its own journaled
+retirement path (all dirty-content, identity and idle guards apply) or, when no
+journal owns it, is reported as `needs-operator-review` with
+`reason: staging-container-unjournaled` and is never deleted. The sweep is
+bounded to two containers per pass and does not consume the attempt limit.
+
 Preview (no filesystem or registry writes):
 
 ```bash

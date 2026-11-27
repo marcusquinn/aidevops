@@ -5,7 +5,7 @@ import time
 
 from .archive_path import create_archive_root, validate_archive_path
 from .cleanup import _repositories
-from .legacy_cleanup import process_item
+from .legacy_cleanup import process_item, sweep_staging
 from .legacy_discovery import discover
 from .legacy_inventory import inventory
 from .legacy_options import CleanupOptions, advance, queue
@@ -25,12 +25,16 @@ def run(store, config, root, **arguments):
         items = inventory(connection)
     items, discovery_errors = discover(items, repositories)
     items = options.select(items)
+    staging = []
     if options.apply:
         if not root.is_absolute() or root.resolve() != root:
             raise ValueError("canonical-output-root-required")
         create_archive_root(root)
         validate_archive_path(root)
         items = queue(store, items)
+        # Independent of the rotation above: private retirement containers are
+        # enumerated from the filesystem and finished or reported (GH#40569).
+        staging = sweep_staging(store, repositories, adapter, options)
     report: dict = {
         "status": "legacy-cleanup", "apply": options.apply, "paths": len(items),
         "generations": sum(len(i["generations"]) for i in items),
@@ -38,6 +42,9 @@ def run(store, config, root, **arguments):
         "skipped_nondumpable": 0,
         "discovery_errors": discovery_errors,
         "operator_confirmed_paths": list(options.confirmed_paths),
+        "staging": staging,
+        "staging_completed": sum(
+            result.get("status") in ("retired", "already-retired") for result in staging),
     }
     for item in items:
         if (time.monotonic() >= deadline
@@ -55,6 +62,11 @@ def run(store, config, root, **arguments):
         report["retired"] += outcome["status"] == "retired"
         report["results"].append(outcome)
     report["examined"] = len(report["results"])
+    # Terminal half-removals are escalated, not retried: report their count so a
+    # residue host is visible without reading every result (GH#40569).
+    report["needs_resume"] = sum(
+        result.get("status") == "needs-resume" for result in report["results"]
+    ) + sum(result.get("status") == "needs-resume" for result in staging)
     report["budget_exhausted"] = time.monotonic() >= deadline
     report["incomplete"] = bool(discovery_errors) or report["examined"] < len(items)
     report["archive_failed"] = sum(

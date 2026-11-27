@@ -702,7 +702,8 @@ class RetirementContract(unittest.TestCase):
         self.assertEqual((private / "work.txt").read_text(), "unfinished result")
         self.assertEqual((self.target / "replacement").read_text(), "keep")
 
-    def test_resume_rechecks_generation_and_owner_evidence(self):
+    def test_resume_rechecks_private_identity_not_unobtainable_owner_evidence(self):
+        """GH#40569: a relocated tree completes; its private identity still gates."""
         self.create()
         self.interrupt_after_move()
         plan = retirement._event(
@@ -716,14 +717,14 @@ class RetirementContract(unittest.TestCase):
         with self.assertRaisesRegex(StoreConflict, "private-worktree-changed"):
             self.retire()
         marker.write_bytes(original)
+        # Owner evidence gated relocation only, where it was already proven. A run
+        # row that can never reach `ended` must not strand the relocated tree.
         run = str(uuid4())
         identity = adapter_for(self.store.installation_id()).capture(os.getpid())
         self.store.register(str(uuid4()), run, identity)
         self.store.bind(str(uuid4()), run, self.generation, str(self.target))
-        with self.assertRaisesRegex(StoreConflict, "retirement-owner-evidence-changed"):
-            self.retire()
-        private = Path(plan["container"]) / "tree"
-        self.assertEqual((private / "work.txt").read_text(), "unfinished result")
+        self.assertEqual(self.retire()["status"], "retired")
+        self.assertFalse(Path(plan["container"]).exists())
 
     def interrupt_removal(self, late=None):
         """Delete part of the private tree, then fail as a timed-out native removal."""
@@ -771,6 +772,63 @@ class RetirementContract(unittest.TestCase):
         report = cleanup_pass(self.store, self.cleanup_config(), self.output)
         self.assertEqual((report["retired"], report["failed"]), (1, 0), report)
         self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+
+    def test_relocated_retirement_completes_with_unended_run_row(self):
+        """GH#40569 mode B: an interrupted teardown cannot strand a staged tree."""
+        self.create()
+        self.interrupt_after_move()
+        run = str(uuid4())
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        self.store.register(str(uuid4()), run, identity)
+        self.store.bind(str(uuid4()), run, self.generation, str(self.target))
+        report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        self.assertEqual((report["retired"], report["failed"]), (1, 0), report)
+        self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+        self.assertNotIn(".lifecycle-retire-", self.git("worktree", "list", "--porcelain"))
+
+    def staging_environment(self):
+        """Point the managed base at the disposable root for staging enumeration."""
+        environment = patch.dict(os.environ, {"AIDEVOPS_WORKTREE_BASE_DIR": str(self.root)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def sweep(self, repositories, apply=True):
+        """Run the standalone staging sweep over the disposable managed base.
+
+        The sweep modules are imported here, not at module scope: the registry
+        bundle ships this test module and does not carry the legacy cleanup path.
+        """
+        from worker_lifecycle import legacy_cleanup
+        from worker_lifecycle.legacy_options import CleanupOptions
+
+        return legacy_cleanup.sweep_staging(
+            self.store, repositories, adapter_for(self.store.installation_id()),
+            CleanupOptions(self.output, apply=apply, min_age=0),
+        )
+
+    def test_staging_sweep_completes_relocated_container_without_rotation(self):
+        """GH#40569: filesystem enumeration finds a staged tree the rotation omitted."""
+        self.create()
+        self.interrupt_after_move()
+        self.staging_environment()
+        common = self.git("rev-parse", "--path-format=absolute", "--git-common-dir")
+        results = self.sweep({common: ("fixture/repository", "main")})
+        self.assertEqual([result["status"] for result in results], ["retired"], results)
+        self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+        self.assertNotIn(".lifecycle-retire-", self.git("worktree", "list", "--porcelain"))
+
+    def test_staging_sweep_reports_unjournaled_container_without_deleting(self):
+        """A private tree no journal can describe is reported, never removed."""
+        self.staging_environment()
+        container = self.root / ".lifecycle-retire-unjournaled"
+        (container / "tree").mkdir(parents=True)
+        (container / "tree" / "keep.txt").write_text("keep")
+        self.assertEqual(self.sweep({}, apply=False), [])
+        results = self.sweep({})
+        self.assertEqual(results[0]["status"], "needs-operator-review", results)
+        self.assertEqual(results[0]["reason"], "staging-container-unjournaled", results)
+        self.assertEqual(results[0]["classification"], "terminal", results)
+        self.assertEqual((container / "tree" / "keep.txt").read_text(), "keep")
 
     def test_partial_remove_keeps_data_written_before_removal_was_journaled(self):
         self.create()

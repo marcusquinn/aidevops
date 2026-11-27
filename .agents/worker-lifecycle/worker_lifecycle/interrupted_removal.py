@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import time
 
 from .storage import StoreConflict
@@ -28,6 +29,55 @@ REMOVAL_TIMEOUT = 300
 BOUNDARY = "validation_boundary_ns"
 # Coarse filesystem clocks (one kernel tick) can stamp a later change early.
 CLOCK_SLACK_NS = 1_000_000_000
+
+GIT_ADMINISTRATION_ABSENT = "git-administration-absent"
+GIT_ADMINISTRATION_UNREADABLE = "git-administration-unreadable"
+
+
+class UnresumableHalfState(Exception):
+    """A present tree whose Git administration is gone and whose journal cannot resume it.
+
+    This is a structural half-removal, not a transient guard refusal. Reporting it
+    in the same shape as a guard refusal is what let half-removed worktrees retry
+    forever instead of escalating (GH#40569); callers report `code` under a
+    terminal status and never treat it as removal authority.
+    """
+
+    def __init__(self, code: str = GIT_ADMINISTRATION_ABSENT) -> None:
+        """Carry only the stable classification code."""
+        super().__init__(code)
+        self.code = code
+
+
+def half_removed(path: Path) -> str | None:
+    """Return the half-removal code for a present tree with no usable administration.
+
+    Only structural shapes are detected: the `.git` link is absent, or the linked
+    worktree's `.git` file names an administration directory that is gone. A main
+    checkout's administration directory, a verbatim file and every absent path
+    return `None`, so all other classes keep their existing guards and resumes.
+    """
+    if not os.path.lexists(path):
+        return None
+    link = path / ".git"
+    if not os.path.lexists(link):
+        return GIT_ADMINISTRATION_ABSENT
+    try:
+        info = link.lstat()
+    except OSError:
+        return GIT_ADMINISTRATION_UNREADABLE
+    if not stat.S_ISREG(info.st_mode):
+        return None  # A directory (main checkout) or a link is not this class.
+    try:
+        with open(link, "rb") as stream:
+            raw = stream.read(4096)
+        line = raw.decode("utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return GIT_ADMINISTRATION_UNREADABLE
+    if not line.startswith("gitdir:"):
+        return GIT_ADMINISTRATION_UNREADABLE
+    admin = Path(line.removeprefix("gitdir:").strip())
+    return None if os.path.lexists(admin) else GIT_ADMINISTRATION_ABSENT
 
 
 def native_timeout(arguments: tuple[str, ...]) -> int | None:

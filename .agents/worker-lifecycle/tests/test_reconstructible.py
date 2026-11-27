@@ -233,6 +233,59 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertEqual(result["status"], "already-absent", result)
         self.assertEqual((eligible, attempted), (0, 0))
 
+    def test_half_removed_tree_without_git_is_terminal_not_retried(self):
+        """GH#40569 mode A: a present tree whose `.git` is gone is never `retained`."""
+        self.reserve_managed()
+        (self.target / ".git").unlink()
+        self.options = CleanupOptions(self.output, apply=False, min_age=0)
+        preview, _, _ = self.retire()
+        self.assertEqual(preview["status"], "needs-resume", preview)
+        self.assertEqual(preview["reason"], "git-administration-absent", preview)
+        self.options = CleanupOptions(self.output, apply=True, min_age=0)
+        first, eligible, attempted = self.retire()
+        self.assertEqual(first["status"], "needs-resume", first)
+        self.assertEqual(first["reason"], "git-administration-absent", first)
+        self.assertEqual(first["classification"], "terminal", first)
+        self.assertEqual(first["ownership"], "managed-by-current-cleanup", first)
+        self.assertEqual((eligible, attempted), (0, 0), first)
+        # The escalation is durable: the same structure is not re-decided as a
+        # fresh guard refusal on every later pass.
+        second, _, _ = self.retire()
+        self.assertEqual(second["status"], "already-escalated", second)
+        self.assertEqual(second["reason"], "git-administration-absent", second)
+        self.assertTrue(self.target.exists())
+
+    def test_unbound_half_removed_tree_is_terminal_too(self):
+        """Mode A residue also appears with no registry row: still escalated."""
+        (self.target / ".git").unlink()
+        result, eligible, attempted = self.retire()
+        self.assertEqual(result["status"], "needs-resume", result)
+        self.assertEqual(result["reason"], "git-administration-absent", result)
+        self.assertNotIn("ownership", result)
+        self.assertEqual((eligible, attempted), (0, 0), result)
+
+    def test_half_removed_link_without_administration_is_terminal(self):
+        """The linked-worktree `.git` file naming a gone administration is the class."""
+        link = self.target / ".git"
+        link.write_text(f"gitdir: {self.base / 'absent-administration'}\n")
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "needs-resume", result)
+        self.assertEqual(result["reason"], "git-administration-absent", result)
+
+    def test_unreadable_git_link_is_terminal(self):
+        (self.target / ".git").write_text("not an administration line\n")
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "needs-resume", result)
+        self.assertEqual(result["reason"], "git-administration-unreadable", result)
+
+    def test_preserved_name_without_git_keeps_its_exclusion(self):
+        """Operator-preserved names are never escalated as half-removals."""
+        preserved = self.base / "repository-preserved"
+        preserved.mkdir()
+        self.item = dict(self.item, path=str(preserved))
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retained", result)
+
     def test_preview_is_read_only(self):
         self.options = CleanupOptions(self.output, apply=False, min_age=0)
         before = set(self.store.directory.iterdir())

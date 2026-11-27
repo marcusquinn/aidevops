@@ -308,6 +308,8 @@ death no other controller acquires it until surviving helpers close it (kernel d
 Retry the same command/generation after interruption: relocation tolerates public-name reuse and completed removal
 tolerates lost acknowledgements. Completion releases the path reservation; old-UUID retries never target a new generation.
 
+Owner evidence gates relocation only: `prepare_cleanup` proves it before the private move; afterwards a run row that can never reach `ended` no longer strands the tree, while inode, marker, idle-census and deletion-only checks still gate removal (GH#40569). The legacy pass also enumerates private containers from the filesystem each apply pass, completing or terminally reporting each and never deleting an unjournaled one.
+
 Incomplete Git updates, changed archives/private trees or uncertain outcomes stop with journal, archive and surviving data
 retained. No repository-wide repair or unrelated metadata pruning runs. Git locks remain effective: relocation is not forced;
 removal uses only the single force needed for archived dirty state. Ignored files are discarded with the worktree, never archived.

@@ -17,12 +17,14 @@ from uuid import UUID, uuid5
 
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
-from .interrupted_removal import BOUNDARY, removal_started, require_deletion_only
-from .interrupted_removal import validation_boundary
-from .legacy_discovery import same_tree
+from .interrupted_removal import BOUNDARY, half_removed, removal_started
+from .interrupted_removal import require_deletion_only, validation_boundary
+from .legacy_discovery import containers, managed_root, same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
-from .legacy_options import require_manual_confirmation, require_managed_takeover
+from .legacy_options import half_state_outcome, preservation_name
+from .legacy_options import require_manual_confirmation
+from .legacy_options import require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
 from .legacy_probe import checkpoint, event_id, host_probe
 from .legacy_probe import operation_id, prepare_reconstructible_probe, receipt
@@ -35,7 +37,7 @@ from .legacy_takeover import close_quiescent_admission
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
-from .retirement import _git, _id, _lock
+from .retirement import ArchiveTarget, _git, _id, _lock, retire_worktree
 
 
 def require_confirmation(connection, operation, confirmed):
@@ -265,6 +267,11 @@ def process_item(store, item, repositories, adapter, options):
             removing = receipt(connection, operation, RECONSTRUCTIBLE_REMOVING)
             if not done:
                 require_confirmation(connection, operation, confirmed)
+        # A journaled removal owns the half-state it produced; only a tree with no
+        # resume path of its own is classified here (GH#40569). Operator-preserved
+        # names keep their existing exclusion and are never escalated this way.
+        code = (None if done or removing or pending or preservation_name(item["path"])
+                else half_removed(Path(item["path"])))
         if done:
             outcome["status"] = "already-retired"
         elif removing:
@@ -277,6 +284,13 @@ def process_item(store, item, repositories, adapter, options):
             # An interrupted host-probe removal is recovered or reported first.
             recover_interrupted_probe(store, item, options.apply)
             outcome["status"] = "already-absent"
+        elif code:
+            # Root present, Git administration gone, and no journal to resume:
+            # a structural half-removal. It is escalated as terminal work rather
+            # than re-decided as a transient guard refusal on every pass.
+            status = escalate_half_state(store, item, code, options.apply)
+            outcome.update(half_state_outcome(item, code, status))
+            return outcome, eligible, attempted
         elif item["modern"]:
             return take_over_managed(store, item, repositories, adapter, options)
         elif not pending and requires_reconstructible(item, repositories, adapter, options):
@@ -291,6 +305,24 @@ def process_item(store, item, repositories, adapter, options):
             subprocess.SubprocessError) as error:
         outcome.update(retained_outcome(item, error))
     return outcome, eligible, attempted
+
+
+def escalate_half_state(store, item, code, apply):
+    """Journal one terminal half-removal report; this grants no removal authority.
+
+    The registry write is the escalation: later passes report the same structure as
+    already escalated instead of re-deciding it as a fresh retry (GH#40569).
+    """
+    if not apply:
+        return "needs-resume"
+    operation = operation_id(store, item["path"])
+    with _lock(store, operation), store.connection(write=True) as connection:
+        if receipt(connection, operation, "half-removed") is None:
+            checkpoint(store, connection, operation, "half-removed",
+                       {"type": "legacy-worktree-half-removed", "reason": code,
+                        "structural": True})
+            return "needs-resume"
+    return "already-escalated"
 
 
 def process_reconstructible(store, item, repositories, adapter, options):
@@ -350,6 +382,68 @@ def process_reconstructible(store, item, repositories, adapter, options):
                        dict(plan, type="reconstructible-host-probe-verified"))
         outcome["status"] = "retired"
     return outcome, 1, 1
+
+
+# Bounded per-pass staging sweep: enough to drain residue without one pass
+# spending its whole budget on a single large private tree.
+STAGING_LIMIT = 2
+
+
+def staged_plans(connection):
+    """Map each journaled private container to its retirement kind and plan."""
+    plans = {}
+    for row in connection.execute("SELECT payload FROM events"):
+        payload = json.loads(row["payload"])
+        if not isinstance(payload, dict) or not isinstance(payload.get("container"), str):
+            continue
+        if payload.get("type") in ("retirement-planned", "legacy-worktree-removal-planned"):
+            plans[payload["container"]] = (payload["type"], payload)
+    return plans
+
+
+def sweep_staging(store, repositories, adapter, options):
+    """Complete or terminally report each private retirement container (GH#40569).
+
+    Enumeration comes from the filesystem, so a container is found even when its
+    generation left the cleanup rotation of either pass. Each one re-enters its own
+    journaled retirement path, which keeps every dirty-content, identity and idle
+    guard; a container that no journal owns is reported, never deleted.
+    """
+    if not options.apply:
+        return []
+    try:
+        found = containers(managed_root())
+    except ValueError as error:
+        return [{"class": "staging", **retained_outcome({"path": "", "modern": False},
+                                                        error)}]
+    with store.connection() as connection:
+        plans = staged_plans(connection)
+    results = []
+    for container in found[:STAGING_LIMIT]:
+        kind, plan = plans.get(container, (None, None))
+        try:
+            if kind == "retirement-planned":
+                outcome = retire_worktree(
+                    store, Path(plan["source"]), plan["generation_id"],
+                    ArchiveTarget(plan["repo"], plan["base"], Path(plan["output_root"])),
+                )
+                results.append({"path": container, "class": "lifecycle-staging",
+                                "status": outcome.get("status", "retired")})
+            elif kind == "legacy-worktree-removal-planned":
+                results.append({"path": container, "class": "legacy-staging",
+                                "status": retire(store, {"path": plan["source"]},
+                                                 repositories, adapter, options)})
+            else:
+                # Never delete a private tree no journal can describe.
+                results.append({"path": container, "class": "staging",
+                                "status": "needs-operator-review",
+                                "reason": "staging-container-unjournaled",
+                                "classification": "terminal"})
+        except (ValueError, OSError, sqlite3.Error, ObservationUnavailable,
+                subprocess.SubprocessError) as error:
+            results.append({"path": container, "class": "staging",
+                            **retained_outcome({"path": container, "modern": False}, error)})
+    return results
 
 
 def run(store, config, root, **arguments):
