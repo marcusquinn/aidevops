@@ -26,7 +26,14 @@ mcp:
 - **Tool Prefix**: `quickfile_*` (37 curated tools plus 75 generated REST operations in quickfile-mcp v4.0.0)
 - **MCP Server**: [quickfile-mcp](https://github.com/marcusquinn/quickfile-mcp)
 - **API Docs**: https://api-beta.quickfile.co.uk/api-docs/
-- **OpenCode activation**: invoke `@quickfile`; it connects the disabled MCP on demand
+- **OpenCode activation**: invoke `@quickfile` or delegate via Task
+  `subagent_type: quickfile` (Build+ allows it); the agent connects the disabled
+  MCP on demand. It is subagent-only: with the generated OpenCode agent
+  definition deployed (`setup.sh`, Markdown or `opencode.json`),
+  `headless-runtime-helper.sh run --agent quickfile` fails fast; without any
+  definition OpenCode itself falls back to its default agent, so never rely on
+  headless `--agent quickfile`. The MCP is scoped to this agent, so a default or
+  primary agent cannot `aidevops_mcp connect quickfile`
 - **Auth**: personal REST bearer tokens stored as
   `QUICKFILE_<ACCOUNT>_API_KEY` with `aidevops secret`
 - **Routing**: every tool requires an explicit `account` alias
@@ -154,6 +161,29 @@ quickfile-helper.sh record-expense receipt-quickfile.json --account business --a
 Nominal code suggestions are heuristics, not authority. Verify with
 `quickfile_report_chart_of_accounts` and override with `--nominal <code>`.
 
+## Payments and bank reconciliation
+
+Payment tools (`quickfile_rest_*` payment operations) cannot link a payment to an
+existing bank line. Recording a payment with a bank account creates a second,
+tagged bank transaction, so the bank balance counts the receipt twice when the
+statement line is already imported untagged.
+
+- Before recording any payment, run `quickfile_bank_search` for the account,
+  amount and date range. If a matching untagged line exists, do not create the
+  payment with a bank account.
+- Tag or match the existing bank line to the invoice or purchase instead. If no
+  exposed tool can do that, stop and report that it cannot be done through the
+  API; leave matching to the operator in the QuickFile UI.
+- After any payment write, search the bank account again for both the new tagged
+  line and any matching untagged line (same amount and date range; a statement
+  import may have landed after the pre-write search). Two matching lines mean a
+  possible duplicate: report both for operator review rather than treating one
+  tagged line as proof.
+- Payment read tools can disagree: a direct payment get and the payment search
+  list have returned different amounts for one payment ID. Treat a mismatch as
+  unverified, compare against the bank line and invoice balance, and report both
+  values rather than choosing one.
+
 ## Available tools
 
 quickfile-mcp v4.0.0 exposes 112 operations: 37 stable curated tools and 75
@@ -198,6 +228,10 @@ invoices, purchases, payments, or journals.
 - Runtime mismatch: select the exact version in
   `~/Git/mcp/quickfile-mcp/.nvmrc`, rebuild, and restart the runtime.
 - MCP missing: build `~/Git/mcp/quickfile-mcp`, then restart the runtime.
+- `quickfile_*` tools vanish partway through a Task child (reconnecting does not
+  restore them): stop, do not retry writes, and report the last confirmed
+  provider IDs and any mutation whose read-back is outstanding, so the parent
+  can verify it and re-delegate in a fresh Task.
 - Capture repeated endpoint gaps, classification corrections, provider quirks,
   and verified recovery patterns under `reference/self-improvement.md`; keep
   account data private and never generalize one entity's accounting treatment.
