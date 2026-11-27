@@ -191,7 +191,7 @@ test_live_pid_active() {
 		issue: 99001,
 		slug: "testowner/testrepo",
 		worktree_path: "/tmp/wt-claim-99001",
-		claimed_at: "2026-04-29T00:00:00Z",
+		claimed_at: (now | todate),
 		pid: $pid,
 		hostname: $host,
 		user: "testuser"
@@ -420,7 +420,7 @@ test_should_skip_cleanup_with_claim() {
 		jq -n --arg host "$current_host" --argjson pid "$$" '{
 			issue: 99005, slug: "testowner/testrepo",
 			worktree_path: "'"$FAKE_REPO"'",
-			claimed_at: "2026-04-29T00:00:00Z",
+			claimed_at: (now | todate),
 			pid: $pid, hostname: $host, user: "testuser"
 		}' >"$stamp"
 
@@ -547,7 +547,7 @@ test_cli_subcommand() {
 	jq -n --arg host "$current_host" --argjson pid "$$" '{
 		issue: 99008, slug: "testowner/testrepo",
 		worktree_path: "'"$FAKE_REPO"'",
-		claimed_at: "2026-04-29T00:00:00Z",
+		claimed_at: (now | todate),
 		pid: $pid, hostname: $host, user: "testuser"
 	}' >"$stamp"
 
