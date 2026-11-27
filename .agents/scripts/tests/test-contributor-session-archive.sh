@@ -672,7 +672,8 @@ test_session_engine_sibling_modules_deploy_together() {
 	mkdir -p "$deploy_dir"
 	cp "${SCRIPT_DIR}/../session-time-interval-engine.py" "${SCRIPT_DIR}/../session_time_common.py" \
 		"${SCRIPT_DIR}/../session_time_db.py" "${SCRIPT_DIR}/../session_time_db_roots.py" \
-		"${SCRIPT_DIR}/../session_time_aggregate.py" "$deploy_dir/"
+		"${SCRIPT_DIR}/../session_time_aggregate.py" "${SCRIPT_DIR}/../session_time_incremental.py" \
+		"${SCRIPT_DIR}/../session_time_incremental_obs.py" "${SCRIPT_DIR}/../session_time_state.py" "$deploy_dir/"
 	local output
 	output=$(HOME="${TEST_DIR}/home" python3 "${deploy_dir}/session-time-interval-engine.py" --all-dirs --period day)
 	if [[ "$(printf '%s' "$output" | jq -r '.status')" != "unavailable" ]]; then
