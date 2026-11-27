@@ -1,5 +1,7 @@
 """Selection and limits for the temporary legacy cleanup operation."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 import json
 import math

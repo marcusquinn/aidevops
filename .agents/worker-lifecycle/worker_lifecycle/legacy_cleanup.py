@@ -255,6 +255,25 @@ def take_over_managed(store, item, repositories, adapter, options):
     return process_reconstructible(store, item, repositories, adapter, options)
 
 
+def unresumed_half_state(item, journaled):
+    """Return the half-removal code for a tree with no journal to resume (GH#40569).
+
+    A journaled removal owns the half-state it produced. Operator-preserved names
+    keep their existing exclusion and are never escalated this way.
+    """
+    if journaled or preservation_name(item["path"]):
+        return None
+    return half_removed(Path(item["path"]))
+
+
+def escalate_item(store, item, code, apply):
+    """Escalate a structural half-removal as terminal work, not a transient refusal."""
+    status = escalate_half_state(store, item, code, apply)
+    outcome = {"path": item["path"]}
+    outcome.update(half_state_outcome(item, code, status))
+    return outcome
+
+
 def process_item(store, item, repositories, adapter, options):
     """Plan and, when applying, retire one legacy item and report the outcome."""
     outcome = {"path": item["path"]}
@@ -268,11 +287,7 @@ def process_item(store, item, repositories, adapter, options):
             removing = receipt(connection, operation, RECONSTRUCTIBLE_REMOVING)
             if not done:
                 require_confirmation(connection, operation, confirmed)
-        # A journaled removal owns the half-state it produced; only a tree with no
-        # resume path of its own is classified here (GH#40569). Operator-preserved
-        # names keep their existing exclusion and are never escalated this way.
-        code = (None if done or removing or pending or preservation_name(item["path"])
-                else half_removed(Path(item["path"])))
+        code = unresumed_half_state(item, done or removing or pending)
         if done:
             outcome["status"] = "already-retired"
         elif removing:
@@ -286,12 +301,7 @@ def process_item(store, item, repositories, adapter, options):
             recover_interrupted_probe(store, item, options.apply)
             outcome["status"] = "already-absent"
         elif code:
-            # Root present, Git administration gone, and no journal to resume:
-            # a structural half-removal. It is escalated as terminal work rather
-            # than re-decided as a transient guard refusal on every pass.
-            status = escalate_half_state(store, item, code, options.apply)
-            outcome.update(half_state_outcome(item, code, status))
-            return outcome, eligible, attempted
+            return escalate_item(store, item, code, options.apply), eligible, attempted
         elif item["modern"]:
             return take_over_managed(store, item, repositories, adapter, options)
         elif not pending and requires_reconstructible(item, repositories, adapter, options):
