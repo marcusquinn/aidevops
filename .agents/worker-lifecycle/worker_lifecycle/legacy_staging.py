@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 import sqlite3
 import subprocess  # nosec B404 # exception classification; helpers execute fixed argv
+import time
 
+from . import legacy_cleanup
 from .legacy_discovery import containers, managed_root
-from .legacy_options import retained_outcome
+from .legacy_options import advance, queue, retained_outcome
 from .process import ObservationUnavailable
 from .retirement import ArchiveTarget, retire_worktree
 
@@ -31,9 +33,6 @@ def staged_plans(connection):
 
 def _sweep_one(store, container, kind, plan, repositories, adapter, options):
     """Re-enter the journaled retirement path that owns one container."""
-    # Late import: legacy_cleanup re-exports sweep_staging from this module.
-    from . import legacy_cleanup
-
     if kind == "retirement-planned":
         outcome = retire_worktree(
             store, Path(plan["source"]), plan["generation_id"],
@@ -52,7 +51,10 @@ def _sweep_one(store, container, kind, plan, repositories, adapter, options):
             "classification": "terminal"}
 
 
-def sweep_staging(store, repositories, adapter, options):
+STAGING_CURSOR = "legacy-staging-position"
+
+
+def sweep_staging(store, repositories, adapter, options, deadline=None):
     """Complete or terminally report each private retirement container (GH#40569).
 
     Enumeration comes from the filesystem, so a container is found even when its
@@ -64,13 +66,20 @@ def sweep_staging(store, repositories, adapter, options):
         return []
     try:
         found = containers(managed_root())
-    except ValueError as error:
+    except (ValueError, OSError) as error:
         return [{"class": "staging", **retained_outcome({"path": "", "modern": False},
                                                         error)}]
     with store.connection() as connection:
         plans = staged_plans(connection)
     results = []
-    for container in found[:STAGING_LIMIT]:
+    # A persisted cursor rotates the selection so retained or failing containers
+    # cannot starve later ones; the deadline is checked before every attempt.
+    ordered = [item["path"] for item in queue(
+        store, [{"path": name} for name in found], STAGING_CURSOR)]
+    for container in ordered[:STAGING_LIMIT]:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        advance(store, container, STAGING_CURSOR)
         kind, plan = plans.get(container, (None, None))
         try:
             results.append(_sweep_one(store, container, kind, plan,

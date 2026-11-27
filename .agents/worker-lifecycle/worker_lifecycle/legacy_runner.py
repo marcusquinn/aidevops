@@ -5,11 +5,12 @@ import time
 
 from .archive_path import create_archive_root, validate_archive_path
 from .cleanup import _repositories
-from .legacy_cleanup import process_item, sweep_staging
+from .legacy_cleanup import process_item
 from .legacy_discovery import discover
 from .legacy_inventory import inventory
 from .legacy_options import CleanupOptions, advance, queue
 from .legacy_proc import collect_proc_observations
+from .legacy_staging import sweep_staging
 from .runtime import adapter_for, require_ready
 
 
@@ -34,7 +35,7 @@ def run(store, config, root, **arguments):
         items = queue(store, items)
         # Independent of the rotation above: private retirement containers are
         # enumerated from the filesystem and finished or reported (GH#40569).
-        staging = sweep_staging(store, repositories, adapter, options)
+        staging = sweep_staging(store, repositories, adapter, options, deadline)
     report: dict = {
         "status": "legacy-cleanup", "apply": options.apply, "paths": len(items),
         "generations": sum(len(i["generations"]) for i in items),

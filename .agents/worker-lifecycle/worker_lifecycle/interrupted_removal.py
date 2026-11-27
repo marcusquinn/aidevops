@@ -85,7 +85,12 @@ def _link_state(link: Path) -> tuple[str | None, Path | None]:
         return None, None
     if not line.startswith("gitdir:"):
         return GIT_ADMINISTRATION_UNREADABLE, None
-    return None, Path(line.removeprefix("gitdir:").strip())
+    pathname = line.removeprefix("gitdir:").strip()
+    if not pathname:
+        return GIT_ADMINISTRATION_UNREADABLE, None
+    admin = Path(pathname)
+    # Git resolves a relative pathname against the directory of the `.git` file.
+    return None, admin if admin.is_absolute() else link.parent / admin
 
 
 def native_timeout(arguments: tuple[str, ...]) -> int | None:

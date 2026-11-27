@@ -37,7 +37,6 @@ from .legacy_takeover import close_quiescent_admission
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
-from .legacy_staging import sweep_staging  # noqa: F401 # re-exported API
 from .retirement import _git, _id, _lock
 
 

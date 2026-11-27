@@ -796,12 +796,16 @@ class RetirementContract(unittest.TestCase):
         """Run the standalone staging sweep over the disposable managed base.
 
         The sweep modules are imported here, not at module scope: the registry
-        bundle ships this test module and does not carry the legacy cleanup path.
+        bundle ships this test module without the legacy cleanup path, so these
+        tests skip there and run in the full suite.
         """
-        from worker_lifecycle import legacy_cleanup
-        from worker_lifecycle.legacy_options import CleanupOptions
+        try:
+            from worker_lifecycle import legacy_staging
+            from worker_lifecycle.legacy_options import CleanupOptions
+        except ImportError:
+            self.skipTest("legacy cleanup modules are not in this bundle")
 
-        return legacy_cleanup.sweep_staging(
+        return legacy_staging.sweep_staging(
             self.store, repositories, adapter_for(self.store.installation_id()),
             CleanupOptions(self.output, apply=apply, min_age=0),
         )

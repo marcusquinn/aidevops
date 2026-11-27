@@ -17,9 +17,9 @@ from .pull_requests import PassPullRequests
 HALF_STATE_STATUS = "needs-resume"
 
 
-def queue(store, items):
+def queue(store, items, name="legacy-cleanup-position"):
     """A private cursor gives bounded passes fair progress; it grants no authority."""
-    cursor = store.directory / "legacy-cleanup-position"
+    cursor = store.directory / name
     position = ""
     if os.path.lexists(cursor):
         _private(cursor)
@@ -33,7 +33,7 @@ def queue(store, items):
             + [item for item in ordered if item["path"] <= position])
 
 
-def advance(store, path):
+def advance(store, path, name="legacy-cleanup-position"):
     """Atomically advance the persisted cleanup position."""
     temporary = None
     try:
@@ -43,7 +43,7 @@ def advance(store, path):
             json.dump(path, stream)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, store.directory / "legacy-cleanup-position")
+        os.replace(temporary, store.directory / name)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
