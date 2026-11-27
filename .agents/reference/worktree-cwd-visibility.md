@@ -10,14 +10,18 @@ sealed managed-lifetime receipt as described below. Without that alternative
 evidence it fails closed with `cwd-visibility-degraded`.
 
 To see which processes currently cause this, run
-`worktree-helper.sh recovery unreadable-processes`. It lists the PID, `comm`
-and remedy of each process that still blocks visibility after the inspector
-below has been tried. The remedy is `inspector` when the inspector's UID rule
-accepts the process, so installing or repairing the inspector clears it, and
-`stop-only` when only stopping the process through its normal controls clears
-it. These labels describe the optional inspector's capabilities, not permission
-to stop a service. On NixOS the label is `unprivileged-review` and the inspector
-is never invoked. The listing is read-only and is for manual review only.
+`worktree-helper.sh recovery unreadable-processes`. It lists PID, sanitized
+`comm`, review label, four UIDs (real,effective,saved,filesystem), and TID for
+unreadable CWDs across all visible processes and threads, including foreign UIDs
+(GH#40571). Match PID/TID to the native refusal. `foreign-review` means every
+UID is foreign; the census may already exclude that task. Other entries use
+`unprivileged-review`; unavailable UID fields are shown as `unknown`. A root-owned
+`sudo` can retain the caller's real UID, so `/proc` ownership alone is not proof
+that it is unrelated. Private thread CWDs are checked even if the leader's CWD
+is readable. The listing never invokes sudo or the optional inspector, on any
+platform, and never authorizes stopping a service or removing a worktree. An
+empty CWD listing does not prove census completeness: FD-only denials or other
+observation failures can still block retirement.
 
 ## Saved lifetime evidence: the rootless cleanup path
 

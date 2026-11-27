@@ -437,16 +437,15 @@ For rootless proof, the classifier accepts a sealed generation matching the arch
 2. Repair missing enrollment, unfinished sealing or invalid receipts at the owning lifecycle transition; never fabricate receipts or infer a need for sudo.
 3. See `reference/worktree-cwd-visibility.md` for the proof contract and limitations; [shared launch](worktree-registry.md#shared-pulse-and-manual-launch-gh35295) covers Pulse/manual provenance.
 
-The sole operator-invoked output exception is `worktree-helper.sh recovery unreadable-processes` (GH#32853). On a `/proc` host it prints `<pid>\t<comm>\t<remedy>` for each live, non-zombie process not provably foreign-UID whose CWD neither direct read nor the opt-in inspector can read: exactly the entries degrading visibility.
+The sole operator-invoked output exception is `worktree-helper.sh recovery unreadable-processes` (GH#32853, GH#40571). On a `/proc` host it prints `<pid>\t<comm>\t<remedy>\t<uids>\t<tid>` for unreadable process/thread CWDs, including foreign UIDs and private thread CWDs. UIDs are real,effective,saved,filesystem, or `unknown` when unavailable. Match PID/TID to the native refusal; this broader diagnostic is not the census and grants no clearance. An empty listing does not prove visibility complete: FD-only denials and other observation failures remain possible.
 
 | Platform / UID evidence | `<remedy>` |
 | --- | --- |
-| Supported non-NixOS Linux; real UID is caller, other UIDs caller or root | `inspector` |
-| Supported non-NixOS Linux; inspector UID rule rejects process | `stop-only` (GH#32871) |
-| NixOS | `unprivileged-review`; never invoke inspector |
+| All four UIDs known and foreign to the caller | `foreign-review`; census may already exclude it |
+| Caller UID present, or UID evidence unavailable (including NixOS) | `unprivileged-review` |
 | No `/proc` | Exit 3: `lsof` cannot identify denied processes |
 
-This read-only diagnostic prints only to the terminal, never through automatic maintenance, advisories, logs or plans. The escalation advisory names the command, never its output. Labels do not instruct stopping login/session services; names identify processes, never exempt them.
+This read-only diagnostic never invokes sudo or the optional inspector. It prints only to the terminal, never through automatic maintenance, advisories, logs or plans. The escalation advisory names the command, never its output. Labels do not instruct stopping login/session services; names identify processes, never exempt them. Root-owned setuid helpers can retain the caller's real UID and are not proven foreign merely by `/proc` ownership.
 Without complete visibility or valid managed-lifetime proof, retain affected archives; degraded visibility alone does not block every archive on the host. No deletion authority, root access, weaker kernel protections or trust in process names follows from this outcome. Readable CWD matches still block as live references; all other candidacy/apply invariants remain unchanged.
 
 ## Session-history limitations

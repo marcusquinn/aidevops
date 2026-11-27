@@ -723,8 +723,8 @@ test_maintenance_help_does_not_run_maintenance() {
 	return 0
 }
 
-# GH#32853: the manual diagnostic names exactly the entries that degrade
-# process visibility: same-UID, live, non-zombie, unreadable CWD.
+# GH#40571: the manual diagnostic includes foreign UIDs and private thread
+# CWDs without weakening the snapshot's foreign-UID exclusions.
 # $3 is one UID for all four Uid: fields, or four space-separated fields
 # (real effective saved filesystem) for mixed-UID processes (GH#32871).
 make_fake_proc_entry() {
@@ -774,21 +774,25 @@ test_unreadable_process_listing_matches_degraded_visibility() {
 	make_fake_proc_entry "$proc_root" 106 "$uid 0 0 0" 'S (sleeping)' 'fusermount3' unreadable || rc=1
 	make_fake_proc_entry "$proc_root" 107 "$uid $foreign_uid $foreign_uid $foreign_uid" 'S (sleeping)' 'setuid-other' unreadable || rc=1
 	make_fake_proc_entry "$proc_root" 108 "0 $uid $uid $uid" 'S (sleeping)' 'root-real' unreadable || rc=1
+	# Readable leader, unreadable private thread: report the native refusal's TID.
+	make_fake_proc_entry "$proc_root" 109 "$uid" 'S (sleeping)' 'leader' readable || rc=1
+	make_fake_proc_entry "$proc_root/109/task" 109 "$uid" 'S (sleeping)' 'leader' readable || rc=1
+	make_fake_proc_entry "$proc_root/109/task" 110 "$uid 0 0 0" 'S (sleeping)' 'sudo' unreadable || rc=1
 	listing=$(list_worktree_unreadable_proc_cwds "$proc_root") || rc=1
-	expected=$(printf '101\tgpg-agent\tinspector\n105\tbadname\tinspector\n106\tfusermount3\tinspector\n107\tsetuid-other\tstop-only\n108\troot-real\tstop-only')
-	if ! worktree_process_inspector_allowed; then
-		expected=$(printf '101\tgpg-agent\tunprivileged-review\n105\tbadname\tunprivileged-review\n106\tfusermount3\tunprivileged-review\n107\tsetuid-other\tunprivileged-review\n108\troot-real\tunprivileged-review')
-	fi
+	expected=$(printf '101\tgpg-agent\tunprivileged-review\t%s,%s,%s,%s\t101\n104\tsshd\tforeign-review\t%s,%s,%s,%s\t104\n105\tbadname\tunprivileged-review\t%s,%s,%s,%s\t105\n106\tfusermount3\tunprivileged-review\t%s,0,0,0\t106\n107\tsetuid-other\tunprivileged-review\t%s,%s,%s,%s\t107\n108\troot-real\tunprivileged-review\t0,%s,%s,%s\t108\n109\tsudo\tunprivileged-review\t%s,0,0,0\t110' \
+		"$uid" "$uid" "$uid" "$uid" "$foreign_uid" "$foreign_uid" "$foreign_uid" "$foreign_uid" \
+		"$uid" "$uid" "$uid" "$uid" "$uid" "$uid" "$foreign_uid" "$foreign_uid" "$foreign_uid" \
+		"$uid" "$uid" "$uid" "$uid")
 	[[ "$listing" == "$expected" ]] || {
 		printf '  listing:\n%s\n' "$listing"
 		rc=1
 	}
-	# The degraded capture agrees on the same fixture.
+	# Capture still degrades; diagnostic inclusion grants no removal authority.
 	_capture_worktree_proc_cwds "$proc_root" >/dev/null 2>&1 || capture_rc=$?
 	[[ "$capture_rc" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
 	list_worktree_unreadable_proc_cwds "${TEST_DIR}/missing-proc" >/dev/null 2>&1 && rc=1
 	print_result "unreadable_process_listing_matches_degraded_visibility" "$rc" \
-		"Expected only live same-UID unreadable-CWD processes, with sanitized comm"
+		"Expected unreadable process/thread CWDs across UIDs, with sanitized comm and numeric identities"
 	return 0
 }
 

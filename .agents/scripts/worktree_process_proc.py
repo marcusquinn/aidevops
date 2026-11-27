@@ -17,6 +17,7 @@ import sys
 
 import worktree_process_attestation as attestation
 from worktree_process_census import require_proc_visibility
+from worktree_process_diagnostics import diagnostic_name, unreadable_tasks
 
 
 def attestation_enabled(proc_root: Path) -> bool:
@@ -106,14 +107,6 @@ def collect(proc_root: Path) -> tuple[list[str], list[Path]]:
     return paths, denied
 
 
-def diagnostic_name(process: Path) -> str:
-    try:
-        name = (process / "comm").read_text().strip()
-    except (OSError, UnicodeError):
-        return "unknown"
-    return "".join(char for char in name if 32 <= ord(char) < 127)[:32] or "unknown"
-
-
 def cwd_map_line(entry: os.DirEntry, attest: bool = False) -> str:
     """Classify one process: `R<TAB>pid<TAB>cwd`, `S<TAB>pid` (provably irrelevant), else `F<TAB>pid`.
 
@@ -146,6 +139,8 @@ def cwd_map(proc_root: Path) -> int:
 def main(arguments: list[str]) -> int:
     if len(arguments) == 2 and arguments[0] == "cwdmap":
         return run_cwd_map(Path(arguments[1]))
+    if len(arguments) == 2 and arguments[0] == "unreadable":
+        return unreadable_tasks(Path(arguments[1]))
     return run_collect(arguments)
 
 

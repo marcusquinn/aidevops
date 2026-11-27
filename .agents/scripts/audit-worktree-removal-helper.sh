@@ -397,56 +397,17 @@ _worktree_parse_privileged_cwds() {
 # shellcheck source=worktree-process-providers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/worktree-process-providers.sh"
 
-# Operator-invoked diagnostic only (GH#32853). Print "<pid>\t<comm>\t<remedy>"
-# for each process that makes _capture_worktree_proc_cwds report degraded
-# visibility, applying the same vanished, zombie, provably-foreign-UID, and
-# opt-in inspector rules. <remedy> is "inspector" when the opt-in inspector's
-# UID rule accepts the process (install or repair it) and "stop-only" when only
-# stopping the process clears it (GH#32871). Automatic maintenance output must
-# never call this: its results stay free of process names under the #31690
-# contract. Returns 0 on a completed scan (even when nothing is listed) and 1
-# when proc_root is not a directory.
+# Operator-invoked diagnostic only (GH#40571). Include foreign UIDs and private
+# thread CWDs, even when the snapshot excludes them: native retirement can have
+# different evidence. No inspector, process control, or cleanup authorization.
+# Rows: PID, sanitized COMM, review label, real/effective/saved/filesystem UIDs,
+# TID. Automatic maintenance must never call this (#31690).
 list_worktree_unreadable_proc_cwds() {
 	local proc_root="${1:-/proc}"
-	local cwd_link=""
-	local cwd_target=""
-	local proc_dir=""
-	local pid=""
-	local comm=""
-	local current_uid=""
-	local remedy=""
 
 	[[ -d "$proc_root" ]] || return 1
-	if [[ "$proc_root" == /proc && "$(worktree_process_platform)" == nixos ]]; then
-		_worktree_unprivileged_proc_scan denied
-		return $?
-	fi
-	current_uid=$(id -u 2>/dev/null) || current_uid=""
-	for cwd_link in "$proc_root"/[0-9]*/cwd; do
-		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
-		readlink "$cwd_link" >/dev/null 2>&1 && continue
-		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
-		proc_dir="${cwd_link%/cwd}"
-		_worktree_proc_entry_is_zombie "$proc_dir" && continue
-		_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && continue
-		if cwd_target=$(_worktree_privileged_read_cwd "$proc_root" "$proc_dir"); then
-			[[ "$cwd_target" == /* && "$cwd_target" != *$'\n'* ]] && continue
-		fi
-		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
-		pid="${proc_dir##*/}"
-		comm=""
-		if [[ -r "$proc_dir/comm" ]]; then
-			IFS= read -r comm <"$proc_dir/comm" 2>/dev/null || comm=""
-		fi
-		comm=$(printf '%s' "$comm" | LC_ALL=C tr -cd '[:print:]' | cut -c1-32)
-		remedy="stop-only"
-		_worktree_proc_entry_is_inspectable_uid "$proc_dir" "$current_uid" && remedy="inspector"
-		if ! worktree_process_inspector_allowed; then
-			remedy="unprivileged-review"
-		fi
-		printf '%s\t%s\t%s\n' "$pid" "${comm:-unknown}" "$remedy"
-	done
-	return 0
+	python3 "$(dirname "${BASH_SOURCE[0]}")/worktree_process_proc.py" unreadable "$proc_root"
+	return $?
 }
 
 # Return 0 when a captured cwd is inside the candidate worktree.

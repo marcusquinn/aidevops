@@ -1557,8 +1557,8 @@ _worktree_recovery_lifecycle_usage() {
 }
 
 # Manual, read-only diagnostic for process-evidence-unavailable (GH#32853).
-# Lists same-user processes whose CWD cannot be read as "<pid>\t<comm>\t<remedy>"
-# (remedy: inspector | stop-only, GH#32871). This is the only recovery surface
+# Lists unreadable process/thread CWDs across all visible UIDs (GH#40571).
+# This is the only recovery surface
 # that names processes; automatic maintenance, advisories, logs, and plans
 # never call it. Exit 3 where /proc is unavailable.
 worktree_recovery_unreadable_processes() {
@@ -1570,15 +1570,11 @@ worktree_recovery_unreadable_processes() {
 	fi
 	listing=$(list_worktree_unreadable_proc_cwds /proc) || return 1
 	if [[ -z "$listing" ]]; then
-		printf '%s\n' 'No same-user processes with unreadable CWDs were found; process visibility is currently complete.'
+		printf '%s\n' 'No unreadable process/thread CWDs were found in this scan. This does not prove census completeness: FD-only denials or other observation failures can still block retirement.'
 		return 0
 	fi
-	if worktree_process_inspector_allowed; then
-		printf '%s\n' 'Same-user processes whose CWD is unreadable. REMEDY "inspector": install or repair the opt-in inspector in reference/worktree-cwd-visibility.md. REMEDY "stop-only": stop the process through its normal controls.'
-	else
-		printf '%s\n' 'Same-user processes whose CWD is unreadable. REMEDY "unprivileged-review": review candidate ownership and recoverable-cleanup evidence. Unknown CWDs remain protected; no privileged inspector is invoked.'
-	fi
-	printf 'PID\tCOMM\tREMEDY\n'
+	printf '%s\n' 'Unreadable process/thread CWDs, including foreign UIDs. Match PID/TID to the native refusal; foreign-review entries may already be excluded by the census. UIDs are real,effective,saved,filesystem (unknown when unavailable). Root ownership alone does not prove a setuid helper is foreign. Review only: no privileged inspector is invoked, and this listing does not authorize stopping processes or removing worktrees.'
+	printf 'PID\tCOMM\tREMEDY\tUIDS\tTID\n'
 	printf '%s\n' "$listing"
 	return 0
 }
