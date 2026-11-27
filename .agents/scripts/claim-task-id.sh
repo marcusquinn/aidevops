@@ -2044,9 +2044,11 @@ _main_preflight_allocation() {
 		return 4
 	fi
 
-	# True when this run will create a GitHub issue after allocation.
+	# True when this run will create a GitHub issue after allocation (mirrors
+	# _main_create_issues: no CLI means allocation proceeds without an issue).
 	local _github_issue_write="false" _val_slug=""
-	if [[ "$OFFLINE_MODE" == "false" && "$DRY_RUN" == "false" && "$NO_ISSUE" == "false" && "$platform" == "github" ]]; then
+	if [[ "$OFFLINE_MODE" == "false" && "$DRY_RUN" == "false" && "$NO_ISSUE" == "false" && "$platform" == "github" ]] \
+		&& check_cli "$platform"; then
 		_github_issue_write="true"
 		_val_slug=$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME")
 	fi
