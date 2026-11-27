@@ -31,12 +31,13 @@ from session_time_state import Scan, file_identity, load_state, save_state
 SETTLE_MS = 2 * 3600 * 1000
 SESSION_CHUNK_ROWS = 50000
 INTERNAL_KEYS = ("previous_role", "previous_completed")
+# MESSAGE_FIELDS is a module constant; every value is bound as a parameter.
 INC_SESSION_QUERY = f"""
     SELECT s.id, s.title, s.directory, m.time_created, {MESSAGE_FIELDS}, m.rowid
     FROM session s JOIN message m ON m.session_id=s.id
     WHERE s.parent_id IS NULL AND m.rowid > ? AND m.rowid <= ? AND m.time_created >= ?
     ORDER BY s.id, m.time_created
-"""
+"""  # nosec B608
 
 
 def prune_session_entry(entry, floor):
@@ -139,7 +140,7 @@ def collect_sessions_incremental(home, explicit, state, scan):
         entry, archive = session_entry(state, path, scan)
         rows, source_ok, source_done = source_rows(path, entry, archive, scan)
         ok = ok or source_ok
-        complete = complete and source_done
+        complete = complete and source_ok and source_done
         skipped += entry["skipped"]
         for row in rows:
             if row["session_id"] not in seen:
