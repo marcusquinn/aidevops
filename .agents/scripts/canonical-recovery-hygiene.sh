@@ -167,15 +167,19 @@ _cgh_live_git_owner() {
 	return 1
 }
 
-# Returns 0 when PID runs a gc, repack or pack-objects Git command.
+# Returns 0 when PID runs a gc, repack or pack-objects Git command; 2 when unknown.
 _cgh_pid_is_repack_command() {
 	local pid="$1"
 	local args="" token="" name="" skip=0 seen_exe=0
 	local -a tokens=()
 
-	# An exited process (empty or failed probe) cannot be repacking any more.
-	args=$(ps -o args= -p "$pid" 2>/dev/null) || return 1
-	[[ -n "$args" ]] || return 1
+	# Return 2 (unknown) when the probe fails but the PID may still be alive;
+	# only a confirmed-exited PID is excluded.
+	args=$(ps -o args= -p "$pid" 2>/dev/null) || args=""
+	if [[ -z "$args" ]]; then
+		kill -0 "$pid" 2>/dev/null && return 2
+		return 1
+	fi
 	read -r -a tokens <<<"$args"
 	for token in "${tokens[@]}"; do
 		if [[ "$seen_exe" -eq 0 ]]; then
@@ -208,7 +212,7 @@ _cgh_pid_is_repack_command() {
 _cgh_count_repack_processes() {
 	local common="$1"
 	local top="$2"
-	local start="" pid=""
+	local start="" pid="" unknown=0
 
 	CGH_REPACK_COUNT=0
 	if [[ "$CGH_PROC_SCAN_OK" -ne 1 ]]; then
@@ -217,10 +221,17 @@ _cgh_count_repack_processes() {
 	fi
 	while IFS=' ' read -r start pid; do
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
-		_cgh_pid_is_repack_command "$pid" || continue
+		local verdict=0
+		_cgh_pid_is_repack_command "$pid" || verdict=$?
+		if [[ "$verdict" -eq 2 ]]; then
+			unknown=1
+			continue
+		fi
+		[[ "$verdict" -eq 0 ]] || continue
 		_cgh_process_targets_repo "$pid" "$common" "$top" || continue
 		CGH_REPACK_COUNT=$((CGH_REPACK_COUNT + 1))
 	done <<<"$CGH_GIT_PROCS"
+	[[ "$unknown" -eq 1 && "$CGH_REPACK_COUNT" -eq 0 ]] && CGH_REPACK_COUNT=-1
 	return 0
 }
 
