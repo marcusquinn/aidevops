@@ -242,6 +242,35 @@ are unchanged. New standalone lock scripts must source this library before locki
 | serve-sim | macOS Apple Silicon only | N/A | Browser-visible Apple Simulator stream/control |
 | ClaudeBar | macOS only | N/A | Menu bar quota monitor with live background refresh for Claude, Codex, Gemini, Copilot, Antigravity, Kimi, Kiro, and Amp |
 
+## Local runtime substitutes (headless workers)
+
+A macOS runner usually can run "Linux-only" or WordPress work locally. Before a
+worker ends with `runner_capability_unmet` for a missing platform or runtime
+(GH#40636), it checks these routes, one bounded attempt each:
+
+| Need | Detect | Route |
+|------|--------|-------|
+| Linux userland or tool (`bwrap`, GNU tools, `apt` packages) | `docker info`, `orb version` | `docker run --rm -v "$PWD":/w -w /w <image> <cmd>`; for a persistent Linux host, `orb create ubuntu <name>` then `orb run -m <name> <cmd>` |
+| Container runtime | `docker info` (OrbStack engine), `container --version` (Apple, macOS 26+) | the same commands; label anything that outlives the command per `tools/containers/disposable-resources.md` |
+| WordPress site | `npx --version`, `php --version`, `docker info` | per-worktree WordPress Playground (`npx @wp-playground/cli server`) or a labelled Docker `wordpress` stack; see `tools/wordpress/wp-dev.md` |
+| Existing LocalWP site | `localhost-helper.sh list-localwp` | read-only, or `local-site-sync-helper.sh` only; LocalWP sites are shared by all sessions |
+| Private network peer | mesh client already connected (NetBird, Tailscale, ZeroTier) | use the existing route only |
+
+Limits:
+
+- Never connect, disconnect or switch a host VPN (IVPN, WireGuard, Nostr VPN).
+  It changes routing for every session on the runner and for the operator.
+  When a brief needs a specific exit network, run that work in a container
+  with its own tunnel only if the brief names the config secret. Otherwise the
+  blocker stands.
+- A repo doc that requires "a Linux runner" is met by an OrbStack Linux VM or
+  container unless it forbids VMs or containers, or needs real hardware
+  (for example a self-hosted runner's devices or network identity).
+- Inside a Linux `pulse-cgroup-v1` managed worktree, the containment rule in
+  `prompts/worker-efficiency-protocol.md` still forbids container handoff.
+- `runner_capability_unmet` remains correct when no route exists, the route
+  fails (record the command and error), or the brief forbids it.
+
 ## Installing Clipboard Tools on Linux
 
 ```bash
