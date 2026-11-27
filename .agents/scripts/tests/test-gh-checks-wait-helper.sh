@@ -250,11 +250,23 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/branches/main/protect
 		printf '%s\n' 'gh: Resource not accessible (HTTP 403)' >&2
 		exit 1
 	fi
+	if [[ "${GH_TEST_MODE:-}" == protection-admin-only* ]]; then
+		printf '%s\n' 'gh: Not Found (HTTP 404)' >&2
+		exit 1
+	fi
 	if [[ "${GH_TEST_MODE:-}" == "required-protection" ]]; then
 		printf '%s\n' '{"contexts":["Format"]}'
 	else
 		printf '%s\n' '{"contexts":[],"checks":[]}'
 	fi
+	exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/branches/main" ]]; then
+	case "${GH_TEST_MODE:-}" in
+	protection-admin-only) printf '%s\n' '{"protected":true,"protection":{"enabled":true,"required_status_checks":{"contexts":["review-bot-gate","Complexity Analysis","maintainer-gate"]}}}' ;;
+	protection-admin-only-unprotected) printf '%s\n' '{"protected":false}' ;;
+	*) exit 1 ;;
+	esac
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/rules/branches/main" ]]; then
@@ -393,6 +405,64 @@ protection_error_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=protection-error
 protection_error_rc=$?
 set -e
 [[ "$protection_error_rc" -ne 0 ]] && pass "unreadable protection stays non-clear" || fail "unreadable protection stays non-clear" "$protection_error_output"
+
+# GH#40626: fixture polls with the live policy read, as a write-access session
+# sees it (the admin-only protection endpoint 404s).
+live_policy_env=(PATH="${live_bin}:$PATH" AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1
+	AIDEVOPS_GH_CHECKS_TEST_HEAD=fixture-head AIDEVOPS_GH_CHECKS_TEST_DRAFT=false AIDEVOPS_GH_CHECKS_TEST_PR_STATE=OPEN)
+live_policy_wait=("$HELPER" wait 123 --repo example/repo --initial-interval 1 --max-interval 4)
+late_dir="${TMPDIR_TEST}/late-registration"
+write_fixture "$late_dir" 1 '[]'
+write_fixture "$late_dir" 2 '[{"name":"maintainer-gate","workflow":"Maintainer Gate","state":"SUCCESS","bucket":"pass","link":""}]'
+write_fixture "$late_dir" 3 '[{"name":"maintainer-gate","workflow":"Maintainer Gate","state":"SUCCESS","bucket":"pass","link":""},{"name":"Complexity Analysis","workflow":"Code Quality","state":"PENDING","bucket":"pending","link":"https://example.invalid/ca"},{"name":"review-bot-gate","workflow":"","state":"PENDING","bucket":"pending","link":""}]'
+write_fixture "$late_dir" 4 '[{"name":"maintainer-gate","workflow":"Maintainer Gate","state":"SUCCESS","bucket":"pass","link":""},{"name":"Complexity Analysis","workflow":"Code Quality","state":"SUCCESS","bucket":"pass","link":"https://example.invalid/ca"},{"name":"review-bot-gate","workflow":"","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+late_output=$(env "${live_policy_env[@]}" GH_TEST_MODE=protection-admin-only AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$late_dir" \
+	"${live_policy_wait[@]}" 2>&1)
+late_rc=$?
+set -e
+assert_eq "late-registering required contexts end in success" "0" "$late_rc"
+assert_contains "branch endpoint supplies required contexts without admin" "CI wait started: none=0 missing=Complexity Analysis, maintainer-gate, review-bot-gate" "$late_output"
+late_partial="${late_output%%+ Complexity Analysis: added as pending*}"
+[[ "$late_partial" != "$late_output" ]] && pass "late contexts register after the partial set" || fail "late contexts register after the partial set" "$late_output"
+assert_not_contains "partial maintainer-gate-only set is not success" "PASS:" "$late_partial"
+assert_contains "success follows the full required set" "PASS: required checks completed" "${late_output#"$late_partial"}"
+
+partial_only_dir="${TMPDIR_TEST}/partial-only"
+write_fixture "$partial_only_dir" 1 '[{"name":"maintainer-gate","workflow":"Maintainer Gate","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+unknown_policy_output=$(env "${live_policy_env[@]}" GH_TEST_MODE=protection-error AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$partial_only_dir" \
+	"${live_policy_wait[@]}" --timeout 0 2>&1)
+unknown_policy_rc=$?
+settled_policy_output=$(env "${live_policy_env[@]}" GH_TEST_MODE=protection-error AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$partial_only_dir" \
+	AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS=0 "${live_policy_wait[@]}" --timeout 0 2>&1)
+settled_policy_rc=$?
+unprotected_output=$(env "${live_policy_env[@]}" GH_TEST_MODE=protection-admin-only-unprotected AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$partial_only_dir" \
+	"${live_policy_wait[@]}" --timeout 0 2>&1)
+unprotected_rc=$?
+set -e
+assert_eq "unknown policy holds a passing partial set inside the settle window" "8" "$unknown_policy_rc"
+assert_not_contains "unknown policy partial set prints no success" "PASS:" "$unknown_policy_output"
+assert_eq "unknown policy passing set succeeds after the settle window" "0" "$settled_policy_rc"
+assert_contains "settled unknown policy reports success" "PASS: required checks completed" "$settled_policy_output"
+assert_eq "branch endpoint verified-unprotected passing set succeeds at once" "0" "$unprotected_rc"
+
+failed_partial_dir="${TMPDIR_TEST}/failed-partial"
+write_fixture "$failed_partial_dir" 1 '[{"name":"maintainer-gate","workflow":"Maintainer Gate","state":"FAILURE","bucket":"fail","link":""}]'
+cancelled_partial_dir="${TMPDIR_TEST}/cancelled-partial"
+write_fixture "$cancelled_partial_dir" 1 '[{"name":"maintainer-gate","workflow":"Maintainer Gate","state":"CANCELLED","bucket":"cancel","link":""}]'
+set +e
+failed_partial_output=$(env "${live_policy_env[@]}" GH_TEST_MODE=protection-admin-only AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$failed_partial_dir" \
+	"${live_policy_wait[@]}" --timeout 0 2>&1)
+failed_partial_rc=$?
+cancelled_partial_output=$(env "${live_policy_env[@]}" GH_TEST_MODE=protection-admin-only AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$cancelled_partial_dir" \
+	"${live_policy_wait[@]}" --timeout 0 2>&1)
+cancelled_partial_rc=$?
+set -e
+assert_eq "failed check beside unregistered contexts is terminal" "1" "$failed_partial_rc"
+assert_contains "failed partial set names the failed check" "  maintainer-gate: fail" "$failed_partial_output"
+assert_eq "cancel-only partial set keeps waiting for missing contexts" "8" "$cancelled_partial_rc"
+assert_contains "cancel-only partial set still names missing contexts" "missing=Complexity Analysis, review-bot-gate" "$cancelled_partial_output"
 
 set +e
 live_api_error_output=$(PATH="${live_bin}:$PATH" GH_TEST_MODE=api-error AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 AIDEVOPS_GH_SINGLEFLIGHT_DISABLE=1 \
