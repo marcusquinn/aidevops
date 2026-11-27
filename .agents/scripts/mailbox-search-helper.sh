@@ -161,8 +161,8 @@ spotlight_search() {
 		# Spotlight may not index the live Mail.app store (Full Disk Access /
 		# Mail privacy indexing). Fall back to a bounded .emlx scan (GH#40617).
 		if mail_store_has_emlx; then
-			emlx_scan_search "$query" "$limit" "spotlight_zero_results_live_emlx_present"
-			return $?
+			emlx_scan_search "$query" "$limit" "spotlight_zero_results_live_emlx_present" || return 1
+			return 0
 		fi
 		echo "[]"
 		return 0
@@ -201,10 +201,13 @@ mail_store_has_emlx() {
 	return 1
 }
 
-# JSON-escape a string (backslash, quote; tabs/CRs become spaces)
+# JSON-escape a string (backslash, quote, newline; tabs/CRs become spaces)
 json_escape() {
 	local value="$1"
-	printf '%s' "$value" | tr '\t\r' '  ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g'
+	value=${value//\\/\\\\}
+	value=${value//\"/\\\"}
+	value=${value//$'\n'/\\n}
+	printf '%s' "$value" | tr '\t\r' '  '
 	return 0
 }
 
@@ -240,7 +243,7 @@ emlx_scan_search() {
 	local max_candidates="${MAILBOX_EMLX_MAX_CANDIDATES:-2000}"
 
 	if ! command -v rg >/dev/null 2>&1; then
-		print_error "ripgrep (rg) not found; cannot run the .emlx fallback scan. Install with: brew install ripgrep"
+		print_error "Direct .emlx search is unavailable: ripgrep (rg) is required." >&2
 		return 1
 	fi
 
@@ -260,8 +263,13 @@ emlx_scan_search() {
 	local draft_re='/(Drafts|Outbox|SendLater)[^/]*\.mbox/'
 	# Empty sentinels keep array expansion safe under Bash 3.2 nounset.
 	local preferred=("") low=("")
-	local candidates=0 path rg_rc scan_incomplete=0 truncated=0
+	local candidates=0 path rg_rc=0 scan_truncated=0
 	while IFS= read -r -d '' path; do
+		if [[ "$candidates" -ge "$max_candidates" ]]; then
+			print_warning "Direct .emlx search truncated at ${max_candidates} candidates; results are incomplete. Increase MAILBOX_EMLX_MAX_CANDIDATES and rerun to expand the scan." >&2
+			scan_truncated=1
+			break
+		fi
 		candidates=$((candidates + 1))
 		rg_rc=0
 		rg -q -i -F -e "$query" -- "$path" 2>/dev/null || rg_rc=$?
@@ -272,11 +280,8 @@ emlx_scan_search() {
 				preferred+=("$path")
 			fi
 		elif [[ "$rg_rc" -ne 1 ]]; then
-			scan_incomplete=1
-		fi
-		if [[ "$candidates" -ge "$max_candidates" ]]; then
-			truncated=1
-			break
+			print_error "Direct .emlx search is incomplete: rg failed to read a message (exit ${rg_rc}); check Full Disk Access." >&2
+			return 1
 		fi
 	done < <(rg --files -0 --glob '*.emlx' -- "${dirs[@]}" 2>/dev/null)
 
@@ -306,13 +311,7 @@ emlx_scan_search() {
 			"$(json_escape "$date_str")" "$(json_escape "$reason")" "$(json_escape "$msgid")"
 	done
 	printf ']'
-	if [[ "$scan_incomplete" -eq 1 ]]; then
-		print_error "emlx scan incomplete: one or more message files could not be read (check Full Disk Access)"
-		return 1
-	fi
-	if [[ "$truncated" -eq 1 ]]; then
-		print_warning "emlx scan stopped after ${max_candidates} files; results may be incomplete. Raise MAILBOX_EMLX_MAX_CANDIDATES to scan more."
-	fi
+	[[ "$scan_truncated" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -440,24 +439,27 @@ spotlight_index_status() {
 
 	# Live Mail.app store (~/Library/Mail/V*) indexed count, reported separately.
 	# Spotlight may index archived stores but not the live one (GH#40617).
-	local live_count=0 live_present="false" warning="" live_count_failed=0
-	local live_dir live_dir_count
+	local live_count=0 live_present="false" warning="" live_dir live_dir_count
 	while IFS= read -r live_dir; do
 		[[ -z "$live_dir" ]] && continue
-		live_dir_count=$(mdfind -onlyin "$live_dir" -count "kMDItemContentType == '${SPOTLIGHT_EMAIL_KIND}'" 2>/dev/null | tr -d ' ') || live_dir_count=""
-		if [[ "$live_dir_count" =~ ^[0-9]+$ ]]; then
-			live_count=$((live_count + live_dir_count))
-		else
-			live_count_failed=1
+		if ! live_dir_count=$(mdfind -onlyin "$live_dir" -count "kMDItemContentType == '${SPOTLIGHT_EMAIL_KIND}'" 2>/dev/null | tr -d ' '); then
+			print_error "Cannot determine the live-store indexed count: mdfind failed." >&2
+			return 1
 		fi
+		if [[ ! "$live_dir_count" =~ ^[0-9]+$ ]]; then
+			print_error "Cannot determine the live-store indexed count: mdfind returned an invalid count." >&2
+			return 1
+		fi
+		live_count=$((live_count + 10#$live_dir_count))
 	done < <(mail_store_dirs)
 	if mail_store_has_emlx; then
 		live_present="true"
-		if [[ "$live_count_failed" -eq 1 ]]; then
-			warning="Could not determine the Spotlight indexed count for the live Mail.app store (mdfind failed)."
-			echo "WARNING: $warning" >&2
-		elif [[ "$live_count" -eq 0 ]]; then
-			warning="Spotlight has 0 indexed messages for the live Mail.app store but .emlx files exist on disk; search falls back to a direct .emlx scan when rg is installed. Check Full Disk Access and Spotlight Mail privacy settings."
+		if [[ "$live_count" -eq 0 ]]; then
+			local fallback_status="direct .emlx fallback is unavailable because ripgrep (rg) is missing"
+			if command -v rg >/dev/null 2>&1; then
+				fallback_status="search falls back to a direct .emlx scan"
+			fi
+			warning="Spotlight has 0 indexed messages for the live Mail.app store but .emlx files exist on disk; ${fallback_status}. Check Full Disk Access and Spotlight Mail privacy settings."
 			echo "WARNING: $warning" >&2
 		fi
 	fi
@@ -802,7 +804,7 @@ cmd_search() {
 
 	case "$resolved_backend" in
 	spotlight)
-		spotlight_search "$query" "$limit" || return $?
+		spotlight_search "$query" "$limit" || return 1
 		;;
 	notmuch)
 		notmuch_search "$query" "$limit" "$maildir"
@@ -987,6 +989,12 @@ Options:
   --limit             Max results (default: 50)
   --maildir           Path to maildir (default: ~/Maildir, for notmuch/mu)
   --type              Attachment type filter: pdf, docx, txt, all (default: all)
+
+Direct .emlx fallback:
+  Requires ripgrep (rg). MAILBOX_EMLX_MAX_CANDIDATES sets the maximum number of
+  messages examined (default: 2000). A truncated scan returns partial JSON,
+  a warning on stderr, and a nonzero exit status. Increase the cap and rerun
+  to expand the scan.
 
 Backends:
   spotlight   macOS only. No setup required. Indexes Mail.app and .eml files.
