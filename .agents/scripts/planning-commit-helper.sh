@@ -663,7 +663,7 @@ commit_planning_files() {
 		if [[ "$PLANNING_PUBLISH_RESULT" == "published_receipt_failed" ]]; then
 			log_error "Planning files reached the remote branch, but receipt persistence failed; retry to reconstruct the safe handoff"
 		else
-			log_error "Planning file publication failed; see the publication output above for remote, PR and worktree state. On a reported merge conflict, local HEAD is behind the remote default branch: run 'git reset -q origin/${default_branch}' (mixed, keeps edits) and retry"
+			log_error "Planning file publication failed; see the publication output above for remote, PR and worktree state. On a reported merge conflict, local HEAD is behind the remote default branch: update this checkout to origin/${default_branch} without discarding local commits or staged changes, re-apply your planning edits on top, and retry"
 		fi
 		return 1
 	fi

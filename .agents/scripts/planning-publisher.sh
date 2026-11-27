@@ -58,7 +58,7 @@ _planning_publish_log_conflict_detail() {
 	local behind=""
 	behind=$(_planning_git -C "$repo_path" rev-list --count "HEAD..${parent_sha}" 2>/dev/null) || behind="unknown"
 	_planning_publish_log error \
-		"Merge conflict in ${path}: local edits overlap remote changes made since this checkout's HEAD (HEAD is ${behind} commit(s) behind the remote branch). Fast-forward, or run 'git reset -q <remote>/<default-branch>' (mixed; keeps the working tree) in this checkout, then retry."
+		"Merge conflict in ${path}: local edits overlap remote changes made since this checkout's HEAD (HEAD is ${behind} commit(s) behind the remote branch). Save a copy of your local edits to ${path}, bring this checkout up to date with the remote default branch without discarding local commits or staged changes, re-apply your edits on top of the remote content, then retry. Do not retry from a stale copy: it would overwrite the remote changes."
 	return 0
 }
 
@@ -555,7 +555,8 @@ _planning_publish_build_index() {
 				merge_rc=0
 				_planning_git -C "$repo_path" merge-file -p --diff3 "$ours_file" "$base_file" "$theirs_file" >"$merged_file" || merge_rc=$?
 				if [[ "$merge_rc" -ne 0 ]]; then
-					[[ "$merge_rc" -eq 1 ]] || return 1
+					# git merge-file returns the conflict count (1-127); higher values are errors.
+					[[ "$merge_rc" -ge 1 && "$merge_rc" -le 127 ]] || return 1
 					_planning_publish_log_conflict_detail "$repo_path" "$parent_sha" "$path"
 					_planning_publish_log_retryable_conflict "$PLANNING_PUBLICATION_ID"
 					return 2
