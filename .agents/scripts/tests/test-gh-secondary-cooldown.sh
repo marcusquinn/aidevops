@@ -342,7 +342,7 @@ test_no_jq_fallback_escapes_json_strings() {
 	local tool=""
 	mkdir -p "$nojq_bin"
 	for tool in date mkdir mv sed; do
-		ln -sf "$(command -v "$tool")" "${nojq_bin}/${tool}"
+		ln -sf "$(type -P "$tool")" "${nojq_bin}/${tool}"
 	done
 	PATH="$nojq_bin" _gh_secondary_cooldown_write 'quote " reason' 'request id: REQ-123' >/dev/null 2>&1
 	if jq -e '.reason == "quote \" reason" and .last_request_id == "REQ-123" and (.expires_at > .first_seen) and .diagnostic.decision_branch == "quote \" reason" and .diagnostic.request_id == "REQ-123"' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then

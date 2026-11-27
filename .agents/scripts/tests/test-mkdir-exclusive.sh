@@ -62,6 +62,8 @@ race plain-mkdir-negative-control 1
 	source "$TEST_SCRIPT_DIR/../mkdir-exclusive.sh"
 	[[ "$(type -t mkdir)" == function ]]
 	race gnumkdir-selected
+	PATH="$TEST_ROOT" mkdir "$TEST_ROOT/pinned-path"
+	[[ -d "$TEST_ROOT/pinned-path" ]]
 )
 (
 	if ! command -v python3 >/dev/null 2>&1; then

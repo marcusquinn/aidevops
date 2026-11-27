@@ -325,6 +325,7 @@ chmod +x "$TMP/scripts/gh-signature-helper.sh"
 # instead of the real one installed in ~/.aidevops/agents/scripts/.
 cp "$SHIM" "$TMP/scripts/gh"
 chmod +x "$TMP/scripts/gh"
+cp "$REPO_DIR/.agents/scripts/mkdir-exclusive.sh" "$TMP/scripts/mkdir-exclusive.sh"
 cp "$REPO_DIR/.agents/scripts/gh-native-transport-lib.sh" "$TMP/scripts/gh-native-transport-lib.sh"
 cp "$REPO_DIR/.agents/scripts/gh-api-guards-lib.sh" "$TMP/scripts/gh-api-guards-lib.sh"
 cp "$REPO_DIR/.agents/scripts/managed-label-provisioning-lib.sh" "$TMP/scripts/managed-label-provisioning-lib.sh"

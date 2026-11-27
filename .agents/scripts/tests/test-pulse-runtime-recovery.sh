@@ -171,7 +171,7 @@ test_external_convergence_reconciles_key_value_state_without_jq() {
 	local status=""
 	mkdir -p "$fake_bin"
 	for command_name in date mkdir mv rm; do
-		ln -s "$(command -v "$command_name")" "${fake_bin}/${command_name}"
+		ln -s "$(type -P "$command_name")" "${fake_bin}/${command_name}"
 	done
 	printf 'status=attempting\nreason=safe_canonical_deployment\nrecorded_epoch=1\n' >"$state_file"
 	PATH="$fake_bin" AIDEVOPS_PULSE_RUNTIME_RECOVERY_STATE_FILE="$state_file" \

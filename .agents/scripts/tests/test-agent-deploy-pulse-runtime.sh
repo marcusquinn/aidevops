@@ -87,6 +87,8 @@ write_runtime_bundle() {
 	# The helper sources portable-stat.sh to date the async housekeeping marker.
 	cp "$REPO_ROOT/.agents/scripts/portable-stat.sh" \
 		"$bundle_root/agents/scripts/portable-stat.sh"
+	cp "$REPO_ROOT/.agents/scripts/mkdir-exclusive.sh" \
+		"$bundle_root/agents/scripts/mkdir-exclusive.sh"
 	cp "$REPO_ROOT/.agents/scripts/setup/modules/agent-runtime.sh" \
 		"$bundle_root/agents/scripts/setup/modules/agent-runtime.sh"
 	# PULSE_FIXTURE_MERGE_PID_FILE makes the cycle spawn an in-cycle merge

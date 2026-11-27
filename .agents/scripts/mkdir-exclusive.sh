@@ -13,9 +13,12 @@ aidevops_mkdir_exclusive() {
 }
 
 if [[ "$(command mkdir --version 2>/dev/null || true)" == *uutils* ]]; then
-	if command -v gnumkdir >/dev/null 2>&1; then
+	# Pin the executable: callers can later restrict PATH (for example no-jq
+	# bootstrap paths), but that must not lose the selected exclusive creator.
+	if command -v gnumkdir >/dev/null 2>&1 &&
+		_AIDEVOPS_MKDIR_GNU=$(type -P gnumkdir); then
 		aidevops_mkdir_exclusive() {
-			command gnumkdir "$@"
+			"$_AIDEVOPS_MKDIR_GNU" "$@"
 			return $?
 		}
 	else
