@@ -305,6 +305,13 @@ def execute(item):
             rerun = os.path.exists(scratch_path(suite))
             sink = open(scratch_path(suite), "ab")
             if rerun:
+                # t19426: keep the marker on its own line even if the prior output lacked a final newline.
+                with open(scratch_path(suite), "rb") as previous:
+                    previous.seek(0, os.SEEK_END)
+                    if previous.tell():
+                        previous.seek(-1, os.SEEK_END)
+                        if previous.read(1) != b"\n":
+                            sink.write(b"\n")
                 sink.write(b"--- rerun attempt ---\n")
                 sink.flush()
         try:
@@ -418,14 +425,27 @@ if log_scratch:
             continue
         with open(source, "rb") as handle:
             lines = handle.read().splitlines(keepends=True)
-        head_lines, tail = lines[:-LOG_TAIL_LINES], lines[-LOG_TAIL_LINES:]
-        early = [line for line in head_lines if early_failure_line.search(line)][:LOG_EARLY_FAILURE_LINES]
+        # t19426: split on rerun markers so each attempt keeps its own tail;
+        # a long passing rerun must not evict the first attempt's evidence.
+        attempt_chunks = [[]]
+        for line in lines:
+            if line.rstrip(b"\r\n") == b"--- rerun attempt ---":
+                attempt_chunks.append([])
+            else:
+                attempt_chunks[-1].append(line)
         with open(os.path.join(args.log_dir, log_name(suite)), "wb") as handle:
-            if early:
-                handle.write(b"--- failure lines before the last %d lines ---\n" % LOG_TAIL_LINES)
-                handle.writelines(line if line.endswith(b"\n") else line + b"\n" for line in early)
-                handle.write(b"--- last %d lines ---\n" % LOG_TAIL_LINES)
-            handle.writelines(tail)
+            for index, chunk in enumerate(attempt_chunks):
+                if index:
+                    handle.write(b"--- rerun attempt ---\n")
+                head_lines, tail = chunk[:-LOG_TAIL_LINES], chunk[-LOG_TAIL_LINES:]
+                early = [line for line in head_lines if early_failure_line.search(line)][:LOG_EARLY_FAILURE_LINES]
+                if early:
+                    handle.write(b"--- failure lines before the last %d lines ---\n" % LOG_TAIL_LINES)
+                    handle.writelines(line if line.endswith(b"\n") else line + b"\n" for line in early)
+                    handle.write(b"--- last %d lines ---\n" % LOG_TAIL_LINES)
+                if tail and index < len(attempt_chunks) - 1 and not tail[-1].endswith(b"\n"):
+                    tail = tail[:-1] + [tail[-1] + b"\n"]
+                handle.writelines(tail)
     shutil.rmtree(log_scratch, ignore_errors=True)
 sys.exit(1 if regression else 0)
 PY
