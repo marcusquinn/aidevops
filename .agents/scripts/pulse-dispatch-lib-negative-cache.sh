@@ -350,6 +350,21 @@ _dispatch_candidate_claimed_owner_snapshot() {
 	return 0
 }
 
+# GH#40551: reader gate for a draft block on an assigned issue. The claimed owner
+# is pinned by the issue revision (an assignee or label change fails the material
+# refresh), but its liveness is not observable here: the caller also caps the
+# hold at the claim TTL, and an empty local pool never holds a claim this runner
+# could own (GH#37780). Only the plain draft block qualifies, never a routed one.
+_dispatch_claimed_owner_draft_hold() {
+	local reason="$1" candidate="$2"
+	[[ "$reason" == worker_draft_checkpoint_blocked ]] || return 1
+	_dispatch_candidate_claimed_owner_snapshot "$candidate" || return 1
+	if [[ "${_DISPATCH_ACTIVE_WORKERS:-0}" == 0 ]]; then
+		_dispatch_claim_owned_elsewhere "$candidate" || return 1
+	fi
+	return 0
+}
+
 # Reasons whose hint carries its own validity evidence (exact PR fingerprint,
 # owner generation, maintainer gate or a self-expiring window) instead of the
 # claimed-owner snapshot check that active-claim hints require.
@@ -494,15 +509,7 @@ _dispatch_negative_cache_reason() {
 		ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
 		((ttl <= 21600)) || ttl=21600
 		if ! jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null; then
-			# GH#40551: a claimed owner is a boundary the issue revision pins
-			# (an assignee or label change fails the material refresh). Its
-			# liveness is not observable here, so hold only for the claim TTL,
-			# and never for a claim this runner could own while its pool is empty.
-			[[ "$reason" == worker_draft_checkpoint_blocked ]] || return 1
-			_dispatch_candidate_claimed_owner_snapshot "$candidate" || return 1
-			if [[ "${_DISPATCH_ACTIVE_WORKERS:-0}" == 0 ]]; then
-				_dispatch_claim_owned_elsewhere "$candidate" || return 1
-			fi
+			_dispatch_claimed_owner_draft_hold "$reason" "$candidate" || return 1
 			((ttl <= _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS)) || ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 		fi
 		# GH#34402: the PR read can cost an API call, so expire first.
