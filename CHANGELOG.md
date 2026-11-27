@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.291] - 2026-11-27
+
+### Fixed
+
+- serve AI Model Usage from an incremental rollup; keep published tables when observability is incomplete (#40610)
+
 ## [3.39.290] - 2026-11-27
 
 ### Added
