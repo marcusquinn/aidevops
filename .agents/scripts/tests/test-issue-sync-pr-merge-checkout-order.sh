@@ -117,13 +117,13 @@ fi
 # parked before the caller checkout, enabled only after framework restore, and
 # parked again before actions/checkout performs its post-job cleanup.
 # ============================================================
-PARK_GUARD_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'mv[[:space:]]+"?\$\{SHIM_DIR\}/git"?[[:space:]]+"?\$\{SHIM_DIR\}/aidevops-git-guard"?' | cut -d: -f1 | head -1 || true)
-CALLER_CHECKOUT_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Checkout repo before closing-hygiene validation' | cut -d: -f1 || true)
-RESTORE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Restore framework scripts before task resolution' | cut -d: -f1 || true)
-ENABLE_GUARD_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Enable canonical Git guard after trusted checkouts' | cut -d: -f1 || true)
-RESOLVE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Resolve task-backed closing issues' | cut -d: -f1 || true)
-PLANS_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Sync PLANS\.md status from TODO\.md completions' | cut -d: -f1 || true)
-PARK_CLEANUP_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Park canonical Git guard before action cleanup' | cut -d: -f1 || true)
+PARK_GUARD_REL_LINE=$(grep -nE 'mv[[:space:]]+"?\$\{SHIM_DIR\}/git"?[[:space:]]+"?\$\{SHIM_DIR\}/aidevops-git-guard"?' <<<"${JOB_BODY}" | cut -d: -f1 | sed -n '1p' || true)
+CALLER_CHECKOUT_REL_LINE=$(grep -nE 'name:[[:space:]]+Checkout repo before closing-hygiene validation' <<<"${JOB_BODY}" | cut -d: -f1 || true)
+RESTORE_REL_LINE=$(grep -nE 'name:[[:space:]]+Restore framework scripts before task resolution' <<<"${JOB_BODY}" | cut -d: -f1 || true)
+ENABLE_GUARD_REL_LINE=$(grep -nE 'name:[[:space:]]+Enable canonical Git guard after trusted checkouts' <<<"${JOB_BODY}" | cut -d: -f1 || true)
+RESOLVE_REL_LINE=$(grep -nE 'name:[[:space:]]+Resolve task-backed closing issues' <<<"${JOB_BODY}" | cut -d: -f1 || true)
+PLANS_REL_LINE=$(grep -nE 'name:[[:space:]]+Sync PLANS\.md status from TODO\.md completions' <<<"${JOB_BODY}" | cut -d: -f1 || true)
+PARK_CLEANUP_REL_LINE=$(grep -nE 'name:[[:space:]]+Park canonical Git guard before action cleanup' <<<"${JOB_BODY}" | cut -d: -f1 || true)
 
 if [[ -n "${PARK_GUARD_REL_LINE}" && -n "${CALLER_CHECKOUT_REL_LINE}" &&
 	"${PARK_GUARD_REL_LINE}" -lt "${CALLER_CHECKOUT_REL_LINE}" ]]; then
@@ -212,13 +212,13 @@ fi
 # followed by framework restoration and resolution. No later caller checkout
 # may replace that snapshot before proof-log mutation.
 # ============================================================
-PROOF_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Update TODO\.md proof-log' | cut -d: -f1 || true)
-CALLER_CHECKOUT_COUNT=$(printf '%s\n' "${JOB_BODY}" | grep -cE 'name:[[:space:]]+Checkout repo (before closing-hygiene validation|for TODO\.md update)' || true)
-CALLER_CHECKOUT_BODY=$(printf '%s\n' "${JOB_BODY}" | awk '
+PROOF_REL_LINE=$(grep -nE 'name:[[:space:]]+Update TODO\.md proof-log' <<<"${JOB_BODY}" | cut -d: -f1 || true)
+CALLER_CHECKOUT_COUNT=$(grep -cE 'name:[[:space:]]+Checkout repo (before closing-hygiene validation|for TODO\.md update)' <<<"${JOB_BODY}" || true)
+CALLER_CHECKOUT_BODY=$(awk '
 	capture && /^      - name:/ { exit }
 	/name:[[:space:]]+Checkout repo before closing-hygiene validation/ { capture=1 }
 	capture { print }
-')
+' <<<"${JOB_BODY}")
 
 if [[ -z "${CALLER_CHECKOUT_REL_LINE}" ]]; then
 	check 0 "early caller checkout step present" "validated TODO snapshot checkout is missing"
@@ -258,16 +258,16 @@ fi
 # Test 6: task-backed proof publication uses the protected-branch-safe issue
 # sync publisher, while PLANS.md keeps the capability-scoped planner.
 # ============================================================
-PROOF_BODY=$(printf '%s\n' "${JOB_BODY}" | awk '
+PROOF_BODY=$(awk '
 	/name:[[:space:]]+Update TODO\.md proof-log/ { capture=1 }
 	capture && /name:[[:space:]]+Sync PLANS\.md status from TODO\.md completions/ { exit }
 	capture { print }
-')
-PLANS_BODY=$(printf '%s\n' "${JOB_BODY}" | awk '
+' <<<"${JOB_BODY}")
+PLANS_BODY=$(awk '
 	/name:[[:space:]]+Sync PLANS\.md status from TODO\.md completions/ { capture=1 }
 	capture && /name:[[:space:]]+Park canonical Git guard before action cleanup/ { exit }
 	capture { print }
-')
+' <<<"${JOB_BODY}")
 # shellcheck disable=SC2016 # Assert the literal workflow variable reference.
 if grep -qE 'AIDEVOPS_PLANNING_GIT_BIN=.*RUNNER_GIT' <<<"${JOB_BODY}" &&
 	grep -qE 'issue-sync-git-push-helper\.sh"?[[:space:]]+publish-todo[[:space:]]+"\$ISSUE_SYNC_TARGET_BRANCH"' <<<"${PROOF_BODY}" &&
