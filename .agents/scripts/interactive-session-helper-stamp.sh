@@ -468,7 +468,7 @@ CLAIM_RELEASED reason=${reason} host=${hostname} stamp_pid=${stamp_pid:-none}
 EOF
 	)
 	gh_issue_comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
-		_isc_warn "release audit comment failed on #$issue — continuing"
+		_isc_warn "release audit comment failed on #$issue (reason=${reason} host=${hostname} stamp_pid=${stamp_pid:-none}) — continuing"
 	}
 	return 0
 }
