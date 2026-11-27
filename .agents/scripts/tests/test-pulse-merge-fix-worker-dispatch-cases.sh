@@ -619,6 +619,8 @@ test_dispatch_preserves_nonclosing_replacement_linkage() {
 			}
 			_derive_runtime_risk() { printf '%s' Low; return 0; }
 			_resolve_runtime_testing_level() { printf '%s' runtime-verified; return 0; }
+			# GH#40607: a runtime-verified body has no Verifier line.
+			_runtime_verifier_line() { return 0; }
 			print_info() { return 0; }
 			print_error() { return 0; }
 			print_success() { return 0; }
