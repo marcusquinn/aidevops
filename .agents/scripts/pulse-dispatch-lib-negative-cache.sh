@@ -16,6 +16,8 @@ _dispatch_negative_cache_path() {
 }
 
 _DISPATCH_LIVE_OWNER_HOLD_REASON="worktree_live_owner_refused"
+# GH#40551: boundary-field marker on a draft block recorded for a claimed owner.
+_DISPATCH_DRAFT_OWNER_MARKER="claimed_owner"
 
 # GH#33026: a live-owner hold is valid only while the exact refusing process
 # generation is alive and still owns the recorded worktree. Owner exit, PID
@@ -112,13 +114,16 @@ _dispatch_checkpoint_decimal() {
 # (_pcc_fleet_rearm_allowed) is anchored on an attention record or a stall
 # release and doubles up to _PCC_ATTENTION_REARM_MAX_DOUBLINGS (6) times, so
 # every such anchor contributes each doubled deadline.
-# Assigned issues must retain the live/stale-owner checks on every cycle.
+# Assigned issues keep the live/stale-owner checks on every cycle unless the
+# caller passes allow_assigned (GH#40551): only the claimed-owner draft block
+# does, and its reader then applies the claim TTL and owner-pool rules.
 # GH#38353: an external_trigger_pending hold also wakes at its first revisit
 # deadline and at the next revisit recorded by terminal-blocker-trigger-revisit.sh.
 _dispatch_draft_hint_boundary() {
-	local candidate="$1" repo="$2" issue="$3" comments="" rearm="" observed="" revisit="" due=""
+	local candidate="$1" repo="$2" issue="$3" owner_mode="${4:-}" comments="" rearm="" observed="" revisit="" due=""
 	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-trigger-revisit.sh"
-	jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
+	[[ "$owner_mode" == allow_assigned ]] ||
+		jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
 	rearm=$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)
 	revisit=$(_dispatch_checkpoint_decimal "${AIDEVOPS_TRIGGER_REVISIT_INTERVAL_S:-86400}" 86400)
 	[[ ! -x "$helper" ]] || due=$("$helper" next-due "$repo" "$issue" 2>/dev/null) || due=""
@@ -207,7 +212,8 @@ _dispatch_negative_cache_ops_only() (
 # reason and skip reason. The marker is a sibling of the per-issue record
 # (readers open only the exact record path), so every pulse process and
 # parallel dispatch child shares the once-per-issue suppression. detail=assigned
-# is by design: assigned issues keep live/stale-owner checks every cycle.
+# is by design for assignees without an active claim and for routed stale
+# continuations; a claimed-owner draft block records (GH#40551).
 # Args: candidate JSON, candidate revision, cache reason, skip reason
 # Returns: 0 always (diagnostic only; never changes the dispatch decision)
 #######################################
@@ -251,16 +257,26 @@ _dispatch_negative_cache_record() {
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 0
 	# Unassigned/available claim hints cannot pass the reader's owner gate.
 	# Do not repeatedly write records that can never be used.
-	if [[ "$reason" == dedup_active_claim* ]] && ! jq -e '(.assignees // [] | length) > 0 and
-		([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1; then
+	if [[ "$reason" == dedup_active_claim* ]] && ! _dispatch_candidate_claimed_owner_snapshot "$candidate"; then
 		return 0
 	fi
 	# GH#38352: a draft-checkpoint hint that cannot be recorded names its
 	# reason once per issue revision instead of silently re-running the ceremony.
 	if [[ "$reason" == worker_draft_checkpoint_blocked || "$reason" == stale_draft_checkpoint ]]; then
+		# GH#40551: a claimed-owner draft block is recorded with the owner snapshot
+		# as its boundary; the reader bounds it by the claim TTL and owner-pool
+		# rules. A routed stale continuation (stale_draft_checkpoint) stays
+		# unassigned-only, and an unclaimed assignee never records.
+		# The record carries that write-time owner state in the otherwise unused
+		# boundary field, so the reader never infers it from a stale snapshot.
+		local owner_mode=""
+		if [[ "$reason" == worker_draft_checkpoint_blocked ]] && _dispatch_candidate_claimed_owner_snapshot "$candidate"; then
+			owner_mode=allow_assigned
+			checkpoint_boundary="$_DISPATCH_DRAFT_OWNER_MARKER"
+		fi
 		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") ||
 			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" fingerprint; return 0; }
-		owner_path=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") ||
+		owner_path=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue" "$owner_mode") ||
 			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" boundary; return 0; }
 	fi
 	if [[ "$reason" == dedup_pr_evidence ]]; then
@@ -327,6 +343,32 @@ _dispatch_claim_owned_elsewhere() {
 	jq -e --arg self "$self" '
 		[.assignees // [] | .[] | (.login? // .) | strings | ascii_downcase] as $owners |
 		($owners | length) > 0 and all($owners[]; . != ($self | ascii_downcase))' <<<"$candidate" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# GH#40551: the candidate snapshot shows an assigned owner with an active claim
+# status label. Shared by the assigned draft-checkpoint writer and reader.
+_dispatch_candidate_claimed_owner_snapshot() {
+	local candidate="$1"
+	jq -e '(.assignees // [] | length) > 0 and
+		([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# GH#40551: reader gate for a draft block written for a claimed owner (marked by
+# _DISPATCH_DRAFT_OWNER_MARKER; the write-time state decides, never the ranked
+# snapshot). The owner is pinned by the issue revision (an assignee or label
+# change fails the material refresh), but its liveness is not observable here:
+# the caller caps the hold at the claim TTL from the write stamp, the snapshot
+# must still show the claimed owner, and an empty local pool never holds a claim
+# this runner could own (GH#37780). Only the plain draft block qualifies.
+_dispatch_claimed_owner_draft_hold() {
+	local reason="$1" candidate="$2"
+	[[ "$reason" == worker_draft_checkpoint_blocked ]] || return 1
+	_dispatch_candidate_claimed_owner_snapshot "$candidate" || return 1
+	if [[ "${_DISPATCH_ACTIVE_WORKERS:-0}" == 0 ]]; then
+		_dispatch_claim_owned_elsewhere "$candidate" || return 1
+	fi
 	return 0
 }
 
@@ -434,8 +476,7 @@ _dispatch_negative_cache_reason() {
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses the exact PR fingerprint from a
 		# fresh complete snapshot or one bounded REST read; neither permits a launch.
-		jq -e '(.assignees // [] | length) > 0 and
-			([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1 || return 1
+		_dispatch_candidate_claimed_owner_snapshot "$candidate" || return 1
 	fi
 	case "$reason" in
 	worker_draft_checkpoint_cooldown)
@@ -472,9 +513,14 @@ _dispatch_negative_cache_reason() {
 		[[ "$owner_path" =~ ^([0-9]+):([0-9]+)$ ]] || return 1
 		local boundary="${BASH_REMATCH[1]}" rearm="${BASH_REMATCH[2]}"
 		[[ "$rearm" == "$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)" ]] || return 1
-		jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
 		ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
 		((ttl <= 21600)) || ttl=21600
+		if [[ "$checkpoint_boundary" == "$_DISPATCH_DRAFT_OWNER_MARKER" ]]; then
+			_dispatch_claimed_owner_draft_hold "$reason" "$candidate" || return 1
+			((ttl <= _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS)) || ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
+		else
+			jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
+		fi
 		# GH#34402: the PR read can cost an API call, so expire first.
 		now=$(date +%s)
 		((now >= stamp && now - stamp < ttl)) || return 1
@@ -541,6 +587,13 @@ _dispatch_cache_confirmed_block() {
 		pr="${BASH_REMATCH[1]}"
 		reason=worker_draft_checkpoint_blocked
 		[[ "$lines" != *"stale_draft_checkpoint"* ]] || reason=stale_draft_checkpoint
+		# GH#40551: for a claimed owner, layer 6 may have recovered or routed a
+		# stale assignment this attempt. That outcome is not a plain owner block.
+		if jq -e '(.assignees // [] | length) > 0' <<<"$candidate" >/dev/null 2>&1 &&
+			[[ "$lines" == *STALE_* || "$lines" == *"routed stale draft"* || "$lines" == *"exact-head continuation"* ||
+			"$lines" == *"stale draft continuation"* ]]; then
+			return 0
+		fi
 		_dispatch_negative_cache_record "$candidate" "$reason" "$pr"
 		return 0
 	fi

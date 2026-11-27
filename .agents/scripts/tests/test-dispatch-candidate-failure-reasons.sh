@@ -308,6 +308,68 @@ for draft_reason in worker_draft_checkpoint_blocked stale_draft_checkpoint; do
 	rm -f "$cache"
 done
 printf 'PASS draft hints: stale recording, extended ceiling, revision/head/config wake and age boundary\n'
+# GH#40551: a claimed-owner draft block is cached with the owner as its boundary,
+# bounded by the claim TTL; it never outlives an owner change or an empty local pool.
+claimed=$(jq -c '.assignees = [{login:"other-runner"}] | .labels = ["status:in-progress","auto-dispatch"]' <<<"$candidate")
+self_owned=$(jq -c '.assignees = [{login:"runner"}]' <<<"$claimed")
+unclaimed=$(jq -c '.labels = ["status:available","auto-dispatch"]' <<<"$claimed")
+_DISPATCH_SELF_LOGIN=runner
+_DISPATCH_ACTIVE_WORKERS=0
+ATTEMPT_REASON=worker_draft_checkpoint_blocked
+ATTEMPT_LINES='WORKER_DRAFT_CHECKPOINT: draft PR #123 DISPATCH_BLOCK_REASON reason=worker_draft_checkpoint_blocked'
+rm -f "$cache"
+_dispatch_cache_confirmed_block "$claimed" 34526 example/repo
+for cycle in 1 2 3; do
+	[[ "$(_dispatch_negative_cache_reason "$claimed")" == worker_draft_checkpoint_blocked ]]
+done
+# An empty local pool never holds a claim this runner could own.
+if _dispatch_negative_cache_reason "$self_owned"; then exit 1; fi
+_DISPATCH_ACTIVE_WORKERS=1
+[[ "$(_dispatch_negative_cache_reason "$self_owned")" == worker_draft_checkpoint_blocked ]]
+_DISPATCH_ACTIVE_WORKERS=0
+# The owner snapshot is the boundary: an unclaimed assignee or an owner change misses.
+if _dispatch_negative_cache_reason "$unclaimed"; then exit 1; fi
+# An owner change always bumps updatedAt, and a body-less record cannot refresh across it.
+if _dispatch_negative_cache_reason "$(jq -c '.assignees = [{login:"third-runner"}] | .updatedAt = "2026-10-13T00:00:01Z"' <<<"$claimed")"; then exit 1; fi
+# The claim TTL (1800s), not the 21600s unassigned ceiling, bounds the stale-hit delay.
+for age in 1700 1801; do
+	printf '%s\t%s\t%s\t123\t%s\t%s:43200\tclaimed_owner\n' "$((now - age))" \
+		'2026-10-13T00:00:00Z' worker_draft_checkpoint_blocked "$PR_FINGERPRINT" "$((now + 100))" >"$cache"
+	if ((age < 1800)); then
+		[[ "$(_dispatch_negative_cache_reason "$claimed")" == worker_draft_checkpoint_blocked ]]
+		# The write-time owner state decides the bound, not the ranked snapshot: a
+		# stale unassigned snapshot must neither hit nor reach the 21600s ceiling.
+		if _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
+	else
+		if _dispatch_negative_cache_reason "$claimed"; then exit 1; fi
+		if _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
+	fi
+done
+# An unmarked (unassigned-era or older-bundle) record never serves a claimed owner.
+printf '%s\t%s\t%s\t123\t%s\t%s:43200\n' "$((now - 60))" \
+	'2026-10-13T00:00:00Z' worker_draft_checkpoint_blocked "$PR_FINGERPRINT" "$((now + 100))" >"$cache"
+if _dispatch_negative_cache_reason "$claimed"; then exit 1; fi
+# A recorded boundary crossing, PR change or routed stale recovery still wakes the owner hint.
+printf '%s\t%s\t%s\t123\t%s\t%s:43200\tclaimed_owner\n' "$now" \
+	'2026-10-13T00:00:00Z' worker_draft_checkpoint_blocked "$PR_FINGERPRINT" "$now" >"$cache"
+if _dispatch_negative_cache_reason "$claimed"; then exit 1; fi
+rm -f "$cache"
+_dispatch_negative_cache_record "$unclaimed" worker_draft_checkpoint_blocked 123
+[[ ! -f "$cache" ]]
+_dispatch_negative_cache_record "$claimed" stale_draft_checkpoint 123
+[[ ! -f "$cache" ]]
+for routed in 'STALE_PR_CONTINUATION: issue #34526' 'Dedup: routed stale draft PR #123 for issue #34526 to exact-head continuation' 'STALE_RECOVERED'; do
+	ATTEMPT_LINES="WORKER_DRAFT_CHECKPOINT: draft PR #123 ${routed}"
+	_dispatch_cache_confirmed_block "$claimed" 34526 example/repo
+	[[ ! -f "$cache" ]]
+done
+# Unassigned behaviour is unchanged by the assigned path.
+ATTEMPT_LINES='WORKER_DRAFT_CHECKPOINT: draft PR #123 DISPATCH_BLOCK_REASON reason=worker_draft_checkpoint_blocked'
+_dispatch_cache_confirmed_block "$candidate" 34526 example/repo
+[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_blocked ]]
+rm -f "$cache"
+unset _DISPATCH_ACTIVE_WORKERS _DISPATCH_SELF_LOGIN
+printf 'PASS claimed-owner draft block: cached with claim-TTL bound, pool/owner/stale-route guards\n'
 for signal in 'checkpoint_routed' 'CONTINUATION_ROUTED'; do
 	ATTEMPT_LINES="WORKER_DRAFT_CHECKPOINT: draft PR #123 BLOCKED_CHECKPOINT_ATTENTION_EXISTS $signal"
 	_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
