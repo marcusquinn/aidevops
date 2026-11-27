@@ -2557,7 +2557,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19421 perf(pulse): make the cross-cycle negative cache hit so repeatedly refused candidates skip the dedup ceremony #auto-dispatch #feat #framework #pulse ref:GH#40538
 
-- [ ] t19422 fix(audit-log): stale-lock reclaim acts on a newer holder's lock, wedging or overlapping concurrent writers #auto-dispatch #bug ref:GH#40549
+- [x] t19422 fix(audit-log): stale-lock reclaim acts on a newer holder's lock, wedging or overlapping concurrent writers #auto-dispatch #bug ref:GH#40549 pr:#40557 completed:2026-11-27
+
+- [ ] t19423 fix(tests): explain intermittent double reservation in checkpoint test_decision_policy_races on hosted runners #bug ref:GH#40562
 
 ## In Progress
 
