@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# shellcheck source=../../mkdir-exclusive.sh
+source "${BASH_SOURCE[0]%/*}/../../mkdir-exclusive.sh"
+
 # Runtime agent deployment: convert and copy agents to each runtime's native directory.
 # Strips aidevops-only frontmatter (mode, subagents); keeps standard fields
 # (name, description, tools, model, permissionMode, hooks, mcpServers, etc.).

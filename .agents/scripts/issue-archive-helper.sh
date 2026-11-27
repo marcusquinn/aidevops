@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# shellcheck source=mkdir-exclusive.sh
+source "${BASH_SOURCE[0]%/*}/mkdir-exclusive.sh"
+
 # =============================================================================
 # issue-archive-helper.sh — Archive GitHub issue/PR discussions to an orphan
 # branch in the same repository (t18571, GH#33146).

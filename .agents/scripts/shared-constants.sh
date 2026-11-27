@@ -22,6 +22,10 @@ _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # shellcheck source=runtime-env.sh
 source "${_SC_SELF%/*}/runtime-env.sh"
 
+# Bootstrap callers load this same dependency-light primitive directly.
+# shellcheck source=mkdir-exclusive.sh
+source "${_SC_SELF%/*}/mkdir-exclusive.sh"
+
 # =============================================================================
 # GH#18950 (t2087): Bash 3.2 → bash 4+ runtime re-exec self-heal guard.
 # =============================================================================

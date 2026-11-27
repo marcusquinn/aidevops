@@ -217,6 +217,16 @@ Used when systemd is unavailable (containers, older distros, WSL2 without system
 
 ## Known Limitations on Linux/WSL2
 
+Ubuntu 26.04 uses uutils coreutils 0.10.0, whose `mkdir` can report success to
+both concurrent creators of the same directory (GH#40582). In the original
+2,000-iteration reproduction, double successes were: uutils `mkdir` **885**,
+GNU `gnumkdir` **0**, and uutils `ln -s` **0**. Locking scripts source
+`scripts/mkdir-exclusive.sh` (also loaded by `shared-constants.sh`): on uutils
+it selects `gnumkdir`, or Python's exclusive `os.mkdir` when GNU is absent.
+The Python fallback supports plain operands, `--`, octal `-m` and `-v`; unsupported
+options/modes fail closed and `-p` retains native behavior. GNU and macOS commands
+are unchanged. New standalone lock scripts must source this library before locking.
+
 | Feature | macOS | Linux | Notes |
 |---------|-------|-------|-------|
 | Clipboard auto-copy | pbcopy | xclip / xsel / wl-copy | Install `xclip` for clipboard support |
