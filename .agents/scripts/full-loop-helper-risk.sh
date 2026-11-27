@@ -51,17 +51,68 @@ _normalize_runtime_testing_level() {
 	return 0
 }
 
+# GH#40607: who may verify a runtime-pending PR. `worker-eligible` is an
+# explicit author declaration that the verification plan needs only the
+# repository, the local toolchain and read-only GitHub access; it is never
+# inferred from --testing prose. Anything else stays `interactive`.
+_full_loop_verifier_worker_eligible="worker-eligible"
+_full_loop_verifier_interactive="interactive"
+
+_normalize_runtime_verifier() {
+	local requested_verifier="${1:-}"
+	local normalized=""
+	normalized=$(printf '%s' "$requested_verifier" | tr '[:upper:]' '[:lower:]')
+	case "$normalized" in
+	"$_full_loop_verifier_worker_eligible" | "$_full_loop_verifier_interactive")
+		printf '%s\n' "$normalized"
+		;;
+	*)
+		print_error "Invalid --runtime-verifier '${requested_verifier}'. Expected ${_full_loop_verifier_worker_eligible} or ${_full_loop_verifier_interactive}."
+		return 1
+		;;
+	esac
+	return 0
+}
+
+# Print the generated Verifier bullet for a runtime-pending body, or nothing
+# for any other level. Critical risk is never worker-verifiable (GH#40607).
+# Arguments: runtime_risk, testing_level, requested_verifier (optional)
+_runtime_verifier_line() {
+	local runtime_risk="$1"
+	local testing_level="$2"
+	local requested_verifier="${3:-}"
+	local verifier="$_full_loop_verifier_interactive"
+	[[ "$testing_level" == "$_full_loop_runtime_pending_marker" ]] || return 0
+	if [[ -n "$requested_verifier" ]]; then
+		verifier=$(_normalize_runtime_verifier "$requested_verifier") || return 1
+	fi
+	if [[ "$verifier" == "$_full_loop_verifier_worker_eligible" && "$runtime_risk" != "High" ]]; then
+		print_error "--runtime-verifier ${_full_loop_verifier_worker_eligible} is only for High runtime risk; ${runtime_risk:-unclassified}-risk runtime verification stays ${_full_loop_verifier_interactive}. PR body generation blocked."
+		return 1
+	fi
+	if [[ "$verifier" == "$_full_loop_verifier_worker_eligible" ]]; then
+		printf -- '- **Verifier:** %s — the verification plan needs only the repository, the local toolchain and read-only GitHub access\n' "$verifier"
+	else
+		printf -- '- **Verifier:** %s — a person or interactive session verifies this head\n' "$verifier"
+	fi
+	return 0
+}
+
 # Reject invalid caller-supplied metadata before commit-and-pr mutates Git state.
 # Empty values remain deferred because their defaults require the final diff.
 _validate_explicit_pr_metadata() {
 	local requested_risk="${1:-}"
 	local requested_testing_level="${2:-}"
+	local requested_verifier="${3:-}"
 
 	if [[ -n "$requested_risk" ]]; then
 		_normalize_runtime_risk "$requested_risk" >/dev/null || return 1
 	fi
 	if [[ -n "$requested_testing_level" ]]; then
 		_normalize_runtime_testing_level "$requested_testing_level" >/dev/null || return 1
+	fi
+	if [[ -n "$requested_verifier" ]]; then
+		_normalize_runtime_verifier "$requested_verifier" >/dev/null || return 1
 	fi
 	return 0
 }
@@ -605,7 +656,7 @@ _resolve_runtime_testing_level() {
 }
 
 # Parse the generated `## Runtime Testing` section of a PR body (stdin) into
-# JSON {present, sections, risk, level, evidence}. One parser serves
+# JSON {present, sections, risk, level, evidence, verifier}. One parser serves
 # continued-PR inheritance and the merge-time recheck, so both read the format
 # that _build_pr_body emits. `sections` > 1 means the metadata is ambiguous and
 # consumers must fail closed. The body travels on stdin: it can exceed argv limits.
@@ -621,10 +672,15 @@ risk = re.search(r"^- \*\*Risk level:\*\*[ \t]+(.+)$", text, re.M)
 # Any "- **" bullet ends the evidence: a hand-added "- **Notes:**" must not
 # pass as evidence. _build_pr_body renders bold bullets inside evidence plainly.
 verification = re.search(r"^- \*\*Verification:\*\*[ \t]+([\w-]+)[ \t]+—[ \t]*(.*?)(?=^- \*\*|\Z)", text, re.M | re.S)
+# GH#40607: exactly one generated Verifier line classifies who may verify a
+# runtime-pending body; a missing, repeated or unknown line reads as "".
+verifiers = re.findall(r"^- \*\*Verifier:\*\*[ \t]+([\w-]+)", text, re.M)
+verifier = verifiers[0] if len(verifiers) == 1 and verifiers[0] in ("worker-eligible", "interactive") else ""
 print(json.dumps({"present": bool(section), "sections": sections,
                   "risk": risk[1].strip() if risk else "",
                   "level": verification[1] if verification else "",
-                  "evidence": verification[2].strip() if verification else ""}))
+                  "evidence": verification[2].strip() if verification else "",
+                  "verifier": verifier}))
 '
 	return $?
 }

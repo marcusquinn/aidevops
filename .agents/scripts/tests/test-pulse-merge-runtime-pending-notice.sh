@@ -38,8 +38,8 @@ if [[ "${4:-}" == --lift-completed ]]; then
 	exit 0
 fi
 jq -nc --argjson pr "$2" --arg repo "$3" --arg head "$(cat "$STUB_DIR/head")" \
-	--arg risk "${STUB_RISK:-High}" --arg level "${STUB_LEVEL:-runtime-pending}" \
-	'{pr: $pr, repo: $repo, head: $head, risk:$risk, level:$level, held_since: "2026-11-21T05:00:00Z", reason: "no device available", command: "full-loop-helper.sh verify-runtime \($pr) \($repo) --testing \"<evidence>\""}'
+	--arg risk "${STUB_RISK:-High}" --arg level "${STUB_LEVEL:-runtime-pending}" --arg verifier "${STUB_VERIFIER:-}" \
+	'{pr: $pr, repo: $repo, head: $head, risk:$risk, level:$level, verifier:$verifier, held_since: "2026-11-21T05:00:00Z", reason: "no device available", command: "full-loop-helper.sh verify-runtime \($pr) \($repo) --testing \"<evidence>\""}'
 EOF
 # Like the real CLI, send opens --text-file as a path ("-" is not stdin).
 cat >"${WORK}/bus.sh" <<'EOF'
@@ -236,6 +236,34 @@ printf 'keep\n' >"${STUB_DIR}/decision"
 _pmrp_route_held_pr 18 o/r 77 "$WORKER_LABELS"
 check "non-liftable completed scope remains held" "1" "$(wc -l <"${STUB_DIR}/lifts" | tr -d ' ')"
 
+# GH#40607: a green High PR declared worker-eligible routes a verifier worker
+# instead of an interactive notice; Critical, unclassified, interactive-owned
+# or failed routes keep the interactive notice.
+printf 'lift\n' >"${STUB_DIR}/decision"
+export STUB_RISK=High STUB_LEVEL=runtime-pending STUB_VERIFIER=worker-eligible
+before_routes=$(route_count)
+before_sent=$(sent_count)
+_pmrp_route_held_pr 30 o/r 77 "$WORKER_LABELS"
+check "High worker-eligible routes a verifier worker" "1" "$(grep -cF "30|o/r|77|runtime-verify-high|${WORKER_LABELS}|${HEAD_B}" "${STUB_DIR}/routes")"
+check "High worker-eligible sends no interactive notice" "$before_sent" "$(sent_count)"
+check "verifier route logs that the hold is kept" "1" "$(grep -cF 'o/r#30@bbbbbbbbbbbb: verifier worker route rc=0' "$LOGFILE")"
+STUB_RISK=Critical
+_pmrp_route_held_pr 31 o/r 77 "$WORKER_LABELS"
+check "Critical worker-eligible routes no worker" "$((before_routes + 1))" "$(route_count)"
+check "Critical worker-eligible notifies interactively" "$((before_sent + 1))" "$(sent_count)"
+STUB_RISK=High STUB_VERIFIER=""
+_pmrp_route_held_pr 32 o/r 77 "$WORKER_LABELS"
+check "unclassified High routes no worker" "$((before_routes + 1))" "$(route_count)"
+check "unclassified High notifies interactively" "$((before_sent + 2))" "$(sent_count)"
+STUB_VERIFIER=worker-eligible
+_pmrp_route_held_pr 33 o/r 77 "origin:interactive,hold-for-review"
+check "interactive-owned worker-eligible routes no worker" "$((before_routes + 1))" "$(route_count)"
+printf '1\n' >"${STUB_DIR}/route_rc"
+_pmrp_route_held_pr 34 o/r 77 "$WORKER_LABELS"
+check "an unroutable verifier falls back to the interactive notice" "$((before_sent + 4))" "$(sent_count)"
+rm -f "${STUB_DIR}/route_rc"
+unset STUB_VERIFIER
+
 # Exercise the real completion dispatcher and prompt, stubbing only GitHub and
 # the already-covered CI branch lease/launcher. No worker or external write runs.
 # shellcheck source=../pulse-merge-feedback-ci-repair.sh
@@ -262,6 +290,44 @@ check "completion prompt includes deferred Verification data" "1" "$(grep -cF 'n
 STUB_RISK=High
 _dispatch_runtime_pending_completion_worker 19 o/r 77
 check "real completion dispatcher refuses High" "1" "$?"
+
+# GH#40607: the real verifier dispatcher accepts only High worker-eligible PRs
+# and writes the read-only verifier prompt.
+_dispatch_ci_repair_session() {
+	local pr="$1" repo="$2" issue="$3" head="$4" branch="$5" fingerprint="$6" reason="$7"
+	printf '%s\n' "${_CI_REPAIR_RUNTIME_VERIFY_KIND:-}" >"${WORK}/verify-kind"
+	_ci_repair_write_prompt "${WORK}/verify.md" "$repo" "$pr" "$issue" "$head" "$branch" "$fingerprint" "$reason"
+	return $?
+}
+export STUB_RISK=High STUB_VERIFIER=worker-eligible
+_dispatch_runtime_verify_high_worker 40 o/r 77
+check "real verifier dispatcher accepts High worker-eligible" "0" "$?"
+check "verifier dispatch names its kind" "runtime-verify-high" "$(<"${WORK}/verify-kind")"
+check "verifier prompt records evidence through verify-runtime" "1" "$(grep -cF 'full-loop-helper.sh verify-runtime 40 o/r --testing' "${WORK}/verify.md")"
+check "verifier prompt names the decline path" "1" "$(grep -cF 'verify-runtime 40 o/r --decline --testing' "${WORK}/verify.md")"
+check "verifier prompt forbids credentials" "1" "$(grep -cF 'Never use credentials, secrets, external accounts' "${WORK}/verify.md")"
+check "verifier prompt binds the exact head" "1" "$(grep -cF "Expected head: ${HEAD_B}" "${WORK}/verify.md")"
+check "verifier kind does not leak to later dispatches" "" "${_CI_REPAIR_RUNTIME_VERIFY_KIND:-}"
+STUB_RISK=Critical
+_dispatch_runtime_verify_high_worker 40 o/r 77
+check "real verifier dispatcher refuses Critical" "1" "$?"
+STUB_RISK=High STUB_VERIFIER=interactive
+_dispatch_runtime_verify_high_worker 40 o/r 77
+check "real verifier dispatcher refuses an interactive classification" "1" "$?"
+STUB_VERIFIER=worker-eligible
+gh() {
+	printf '%s\tbranch\tfalse\t%s\n' "$HEAD_A" "$WORKER_LABELS"
+	return 0
+}
+_dispatch_runtime_verify_high_worker 40 o/r 77
+check "real verifier dispatcher refuses a moved head" "1" "$?"
+gh() {
+	printf '%s\tbranch\tfalse\t%s\n' "$HEAD_B" "origin:worker,hold-for-review,no-takeover"
+	return 0
+}
+_dispatch_runtime_verify_high_worker 40 o/r 77
+check "real verifier dispatcher refuses no-takeover" "1" "$?"
+unset STUB_VERIFIER
 
 if [[ "$FAILURES" -gt 0 ]]; then
 	printf '%s failure(s)\n' "$FAILURES"

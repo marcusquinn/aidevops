@@ -12,6 +12,9 @@
 # label application is runtime-pending alone. The hold-scope record is written
 # by _apply_pr_only_hold. Evidence is recorded even when the hold is kept, so a
 # maintainer reviewing a PR-only scope does not have to repeat the runtime check.
+# GH#40607: a fresh Pulse runtime-verify-high worker may also run it, only for a
+# High-risk PR its author classified worker-eligible and only to lift a
+# runtime-pending-only hold; `--decline` reclassifies the PR interactive instead.
 #
 # Usage: source "${SCRIPT_DIR}/full-loop-helper-verify-runtime.sh"
 #
@@ -41,6 +44,9 @@ _FULL_LOOP_HOLD_SCOPE_PREFIX="<!-- aidevops:hold-scope scopes="
 _FULL_LOOP_HOLD_LABEL="hold-for-review"
 _FULL_LOOP_RUNTIME_PENDING_SCOPE="runtime-pending"
 _FULL_LOOP_OPS_START="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->"
+_VERIFY_RUNTIME_LIFT="lift"
+# jq predicate over a PR's labels: no ownership label keeps it with a person.
+_VERIFY_RUNTIME_NOT_PERSON_OWNED='all(.labels[]?; .name != "no-takeover" and .name != "external-contributor" and .name != "needs-maintainer-review")'
 # A hold-scope record is the first two lines of the producer's envelope. A
 # marker quoted anywhere else (an audit comment, a merge summary) is not one.
 _FULL_LOOP_HOLD_SCOPE_RE='\A<!-- ops:start[^\n]*-->\n<!-- aidevops:hold-scope scopes=(?<s>[a-z,-]+) -->(\n|\z)'
@@ -147,12 +153,13 @@ _record_hold_scope_marker() {
 # --- verify-runtime ---
 
 _verify_runtime_usage() {
-	printf 'Usage: full-loop-helper.sh verify-runtime <PR> [REPO] --testing "<evidence>" [--repo owner/repo] [--dry-run]\n' >&2
+	printf 'Usage: full-loop-helper.sh verify-runtime <PR> [REPO] --testing "<evidence>" [--repo owner/repo] [--dry-run] [--decline]\n' >&2
 	return 0
 }
 
 #aidevops:trust-boundary GH#39639 -- the verifier is a person or session that
-# exercised the change; workers and CI never certify runtime evidence here.
+# exercised the change; ordinary workers and CI never certify runtime evidence
+# here. GH#40607 adds one narrow headless exception, gated below.
 _verify_runtime_session_is_interactive() {
 	local on="${_FULL_LOOP_TRUE:-true}"
 	if [[ "${HEADLESS:-false}" == "$on" || "${FULL_LOOP_HEADLESS:-}" == "$on" ||
@@ -164,6 +171,65 @@ _verify_runtime_session_is_interactive() {
 	declare -F detect_session_origin >/dev/null 2>&1 || return 1
 	[[ "$(detect_session_origin)" == "interactive" ]] || return 1
 	return 0
+}
+
+_VERIFY_RUNTIME_HIGH_KIND="runtime-verify-high"
+
+#aidevops:trust-boundary GH#40607 -- a headless caller is considered only
+# inside a fresh Pulse runtime-verify-high dispatch for exactly this PR. These
+# are launch-environment preconditions, never authority on their own:
+# _verify_runtime_headless_pr_eligible decides from the live PR, and the
+# authenticated write permission, exact-head binding, hold-scope and PR-only
+# checks of the interactive route all still apply. CI is never a verifier.
+_verify_runtime_headless_dispatch_matches() {
+	local pr="$1"
+	[[ "${GITHUB_ACTIONS:-}" != "${_FULL_LOOP_TRUE:-true}" ]] || return 1
+	[[ "${AIDEVOPS_RUNTIME_VERIFY_KIND:-}" == "$_VERIFY_RUNTIME_HIGH_KIND" ]] || return 1
+	[[ "$pr" =~ ^[1-9][0-9]*$ && "${AIDEVOPS_PR_REPAIR_NUMBER:-}" == "$pr" ]] || return 1
+	[[ "${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || return 1
+	[[ "${AIDEVOPS_RUNTIME_VERIFY_DISPATCH:-}" =~ ^[A-Za-z0-9._-]{1,160}$ ]] || return 1
+	return 0
+}
+
+#aidevops:trust-boundary GH#40607 -- a headless verifier may act only on an
+# open same-repository worker/takeover PR at the dispatched head whose single
+# generated Runtime Testing section declares High risk (never Critical) and
+# the author's explicit worker-eligible classification. Ownership labels that
+# keep a PR with a person (no-takeover, external-contributor,
+# needs-maintainer-review) refuse. Prints the refusal reason on stderr.
+_verify_runtime_headless_pr_eligible() {
+	local pr_json="$1"
+	local metadata="" risk="" verifier="" sections=""
+	if ! printf '%s' "$pr_json" | jq -e --arg open "$_VERIFY_RUNTIME_OPEN_STATE" --arg head "${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" '
+		.state == $open and .isCrossRepository == false and .headRefOid == $head
+		and any(.labels[]?; .name == "origin:worker" or .name == "origin:worker-takeover")
+		and '"$_VERIFY_RUNTIME_NOT_PERSON_OWNED" >/dev/null 2>&1; then
+		print_error "PR #${vr_pr:-?} is not an open same-repository worker PR at the dispatched head ${AIDEVOPS_PR_REPAIR_HEAD_SHA:0:12}, or an ownership label keeps it with a person; a ${_VERIFY_RUNTIME_HIGH_KIND} verifier does not act on it"
+		return 1
+	fi
+	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
+	sections=$(printf '%s' "$metadata" | jq -r '.sections // 0') || return 1
+	risk=$(printf '%s' "$metadata" | jq -r '.risk // "" | ascii_downcase') || return 1
+	verifier=$(printf '%s' "$metadata" | jq -r '.verifier // ""') || return 1
+	# shellcheck disable=SC2154 # initialized by full-loop-helper-risk.sh
+	if [[ "$sections" != 1 || "${risk%%[^a-z]*}" != high || "$verifier" != "$_full_loop_verifier_worker_eligible" ]]; then
+		print_error "PR #${vr_pr:-?} declares risk '${risk:-none}' with verifier '${verifier:-unclassified}'; only High-risk ${_full_loop_verifier_worker_eligible} PRs are verified headlessly, so this one stays interactive"
+		return 1
+	fi
+	return 0
+}
+
+# Resolve the verifier route for this call. Sets vr_headless (0 interactive,
+# 1 matching runtime-verify-high dispatch); returns 1 for any other session.
+_verify_runtime_resolve_session() {
+	vr_headless=0
+	_verify_runtime_session_is_interactive && return 0
+	if _verify_runtime_headless_dispatch_matches "$vr_pr"; then
+		vr_headless=1
+		return 0
+	fi
+	print_error "verify-runtime is restricted to interactive maintainer sessions and to a ${_VERIFY_RUNTIME_HIGH_KIND} dispatch for this exact PR; workers hand runtime-pending PRs off with POST_PR_HANDOFF"
+	return 1
 }
 
 # Normalize free-text evidence the way commit-and-pr does and reject text that
@@ -323,6 +389,10 @@ _verify_runtime_parse_args() {
 			vr_dry_run=1
 			index=$((index + 1))
 			;;
+		--decline)
+			vr_decline=1
+			index=$((index + 1))
+			;;
 		-*)
 			print_error "Unknown verify-runtime option: $arg"
 			_verify_runtime_usage
@@ -432,6 +502,11 @@ _verify_runtime_prepare() {
 		return 1
 	fi
 	vr_final_evidence="${evidence} (verified at head ${vr_head:0:12} by @${login})"
+	if [[ "${vr_headless:-0}" -eq 1 ]]; then
+		# GH#40607: record both identities; the verifier is a fresh dispatch,
+		# not the session that authored the PR.
+		vr_final_evidence="${evidence} (verified at head ${vr_head:0:12} by @${login} in ${_VERIFY_RUNTIME_HIGH_KIND} dispatch ${AIDEVOPS_RUNTIME_VERIFY_DISPATCH}; PR author @$(printf '%s' "$pr_json" | jq -r '.author.login // "unknown"'))"
+	fi
 	_verify_runtime_select_level "$metadata" || return 1
 	if [[ "$vr_rewrite" -eq 0 ]]; then
 		vr_new_body="$body"
@@ -540,6 +615,12 @@ _verify_runtime_lift_hold() {
 	if [[ "${vr_legacy_completion:-0}" == 1 ]]; then
 		_verify_runtime_legacy_completed "$fresh_json" || return 1
 	fi
+	#aidevops:trust-boundary GH#40607 -- a headless verifier rechecks High,
+	# worker-eligible and ownership on the final read before removal.
+	if [[ "${vr_headless:-0}" -eq 1 ]] && ! _verify_runtime_headless_pr_eligible "$fresh_json"; then
+		print_error "PR #${vr_pr} is no longer eligible for headless runtime verification; ${_FULL_LOOP_HOLD_LABEL} kept"
+		return 1
+	fi
 	decision=$(_verify_runtime_hold_decision "$vr_pr" "$repo" "$fresh_json") || decision=""
 	case "$decision" in
 	lift) ;;
@@ -580,12 +661,15 @@ _verify_runtime_audit_comment() {
 	local login="$2"
 	local evidence="$3"
 	local hold_line="$4"
-	local body_file="" rc=0
+	local body_file="" rc=0 route="interactive session"
+	if [[ "${vr_headless:-0}" -eq 1 ]]; then
+		route="headless ${_VERIFY_RUNTIME_HIGH_KIND} dispatch \`${AIDEVOPS_RUNTIME_VERIFY_DISPATCH}\`, GH#40607"
+	fi
 	body_file=$(mktemp) || return 1
 	cat >"$body_file" <<EOF
 ${_FULL_LOOP_OPS_START}
 <!-- aidevops:verify-runtime head=${vr_head} -->
-**Runtime verified** by @${login} at head \`${vr_head}\` (\`full-loop-helper.sh verify-runtime\`, GH#39639).
+**Runtime verified** by @${login} at head \`${vr_head}\` (\`full-loop-helper.sh verify-runtime\`, GH#39639; ${route}).
 
 - Evidence: ${evidence}
 - Previous ${vr_from_level:-verification} evidence: ${vr_previous_evidence:-not recorded}
@@ -617,8 +701,8 @@ _runtime_completion_target_branch() {
 	printf '%s' "$pr_json" | jq -e --arg target "$target" --arg open "$_VERIFY_RUNTIME_OPEN_STATE" '
 		.state == $open and .isCrossRepository == false and .headRefName == $target
 		and any(.labels[]?; .name == "origin:worker" or .name == "origin:worker-takeover")
-		and all(.labels[]?; .name != "no-takeover" and .name != "external-contributor" and .name != "needs-maintainer-review")' >/dev/null || return 1
-	[[ "$(_verify_runtime_hold_decision "$pr" "$repo" "$pr_json")" == lift ]] || return 1
+		and '"$_VERIFY_RUNTIME_NOT_PERSON_OWNED" >/dev/null || return 1
+	[[ "$(_verify_runtime_hold_decision "$pr" "$repo" "$pr_json")" == "$_VERIFY_RUNTIME_LIFT" ]] || return 1
 	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
 	risk=$(printf '%s' "$metadata" | jq -r '.risk | ascii_downcase') || return 1
 	case "${risk%%[^a-z]*}" in low | medium) ;; *) return 1 ;; esac
@@ -639,8 +723,7 @@ _verify_runtime_legacy_completed() {
 	# #aidevops:trust-boundary — retain live ownership and same-repository
 	# constraints on the final read as well as the Pulse route's initial read.
 	printf '%s' "$pr_json" | jq -e --arg open "$_VERIFY_RUNTIME_OPEN_STATE" '.state == $open and .isCrossRepository == false
-		and all(.labels[]?; .name != "no-takeover" and .name != "external-contributor"
-			and .name != "needs-maintainer-review")' >/dev/null || return 1
+		and '"$_VERIFY_RUNTIME_NOT_PERSON_OWNED" >/dev/null || return 1
 	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
 	risk=$(printf '%s' "$metadata" | jq -r '.risk | ascii_downcase') || return 1
 	case "${risk%%[^a-z]*}" in low | medium) ;; *) return 1 ;; esac
@@ -652,7 +735,7 @@ _verify_runtime_legacy_completed() {
 
 # runtime-pending-notice <PR> [REPO] [--lift-completed]
 # Read-only by default (t19241/GH#39645). Prints one JSON object including
-# risk and level, and exits 0 only when the PR is open, carries a hold whose
+# risk, level and verifier classification (GH#40607), and exits 0 only when the PR is open, carries a hold whose
 # recorded scope is runtime-pending alone with no PR-only contract (decision
 # "lift"), and its body declares runtime-pending, runtime-verified, or completed
 # Low/Medium self-assessed evidence. --lift-completed is an explicit write:
@@ -663,7 +746,7 @@ _verify_runtime_legacy_completed() {
 # otherwise, so a caller never notifies for a hold a verifier cannot lift.
 cmd_runtime_pending_notice() {
 	local pr="${1:-}" repo_arg="${2:-}"
-	local action="${3:-}" risk=""
+	local action="${3:-}" risk="" verifier=""
 	local repo="" pr_json="" metadata="" level="" reason="" head="" held_since="" command=""
 	local -x AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1
 	local hold_decision
@@ -673,7 +756,7 @@ cmd_runtime_pending_notice() {
 		--json state,isCrossRepository,headRefOid,body,labels,closingIssuesReferences) || return 1
 	printf '%s' "$pr_json" | jq -e --arg open "$_VERIFY_RUNTIME_OPEN_STATE" '.state == $open' >/dev/null 2>&1 || return 1
 	hold_decision=$(_verify_runtime_hold_decision "$pr" "$repo" "$pr_json") || return 1
-	[[ "$hold_decision" == "lift" ]] || return 1
+	[[ "$hold_decision" == "$_VERIFY_RUNTIME_LIFT" ]] || return 1
 	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
 	level=$(printf '%s' "$metadata" | jq -r '.level // ""') || return 1
 	risk=$(printf '%s' "$metadata" | jq -r '.risk // ""') || return 1
@@ -708,17 +791,120 @@ cmd_runtime_pending_notice() {
 	[[ -z "$action" ]] || return 1
 	held_since=$(_hold_label_applied_at "$pr" "$repo") || held_since=""
 	command="full-loop-helper.sh verify-runtime ${pr} ${repo} --testing \"<evidence>\""
+	# GH#40607: the generated Verifier classification; "" (legacy or
+	# unreadable) is interactive for every consumer.
+	verifier=$(printf '%s' "$metadata" | jq -r '.verifier // ""') || return 1
 	jq -nc --argjson pr "$pr" --arg repo "$repo" --arg head "$head" --arg since "$held_since" \
 		--arg reason "$reason" --arg command "$command" --arg risk "$risk" --arg level "$level" \
-		'{pr: $pr, repo: $repo, head: $head, held_since: $since, reason: $reason, command: $command, risk: $risk, level: $level}'
+		--arg verifier "$verifier" \
+		'{pr: $pr, repo: $repo, head: $head, held_since: $since, reason: $reason, command: $command, risk: $risk, level: $level, verifier: $verifier}'
 	return 0
 }
 
-# verify-runtime <PR> [REPO] --testing "<evidence>" [--repo R] [--dry-run]
+# Rewrite the single generated worker-eligible Verifier line as interactive.
+# Body on stdin, replacement text in VR_DECLINE_LINE. Exits 3 unless exactly
+# one Runtime Testing section holds exactly one worker-eligible Verifier line.
+_verify_runtime_decline_rewrite_body() {
+	PYTHONIOENCODING=utf-8 python3 -c '
+import os, re, sys
+body = sys.stdin.read()
+line = os.environ["VR_DECLINE_LINE"]
+if len(re.findall(r"^## Runtime Testing[ \t]*$", body, re.M)) != 1:
+    sys.exit(3)
+section = re.search(r"^## Runtime Testing\s*\n(.*?)(?=^## |\Z)", body, re.M | re.S)
+start, end = section.span(1)
+text = body[start:end]
+matches = list(re.finditer(r"^- \*\*Verifier:\*\*[ \t]+worker-eligible\b[^\n]*", text, re.M))
+if len(matches) != 1 or len(re.findall(r"^- \*\*Verifier:\*\*", text, re.M)) != 1:
+    sys.exit(3)
+m = matches[0]
+sys.stdout.write(body[:start] + text[:m.start()] + line + text[m.end():] + body[end:])
+'
+	return $?
+}
+
+# verify-runtime --decline (GH#40607 failure path): the verifier could not
+# exercise the change, or found that verification needs credentials, an
+# account, hardware or a live third-party API after all. Record what was tried,
+# reclassify the PR as interactive so Pulse stops routing it to a worker, and
+# keep hold-for-review. No runtime evidence is recorded and no label changes.
+# shellcheck disable=SC2154 # _full_loop_verifier_* are initialized by full-loop-helper-risk.sh
+_verify_runtime_decline() {
+	local repo="$1"
+	local pr_json="$2"
+	local evidence="$3"
+	local login="$4"
+	local body="" new_body="" metadata="" new_metadata="" flat="" live_json="" after_body="" field=""
+	local head="" body_file="" rc=0
+	head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""')
+	if [[ "$(printf '%s' "$pr_json" | jq -r '.state // ""')" != "$_VERIFY_RUNTIME_OPEN_STATE" ]]; then
+		print_error "PR #${vr_pr} is not open; nothing to decline"
+		return 1
+	fi
+	body=$(printf '%s' "$pr_json" | jq -r '.body // ""')
+	metadata=$(printf '%s' "$body" | _runtime_testing_metadata_from_body) || return 1
+	if [[ "$(printf '%s' "$metadata" | jq -r '.verifier // ""')" != "$_full_loop_verifier_worker_eligible" ]]; then
+		print_info "PR #${vr_pr} is not classified ${_full_loop_verifier_worker_eligible}; it already stays interactive"
+		printf 'VERIFY_RUNTIME_HOLD=keep\n'
+		return 0
+	fi
+	flat=$(printf '%s' "$evidence" | tr '\r\n\t' '   ' | sed -E 's/[[:space:]]+/ /g; s/\*\*//g')
+	new_body=$(printf '%s' "$body" | VR_DECLINE_LINE="- **Verifier:** ${_full_loop_verifier_interactive} — declined by @${login} at head ${head:0:12}: ${flat}" \
+		_verify_runtime_decline_rewrite_body) || {
+		print_error "PR #${vr_pr} body has no single generated ${_full_loop_verifier_worker_eligible} Verifier line to reclassify"
+		return 1
+	}
+	new_metadata=$(printf '%s' "$new_body" | _runtime_testing_metadata_from_body) || return 1
+	for field in risk level evidence sections; do
+		if [[ "$(printf '%s' "$new_metadata" | jq -r ".${field}")" != "$(printf '%s' "$metadata" | jq -r ".${field}")" ]]; then
+			print_error "The reclassified body would change its ${field}; nothing was written"
+			return 1
+		fi
+	done
+	[[ "$(printf '%s' "$new_metadata" | jq -r '.verifier')" == "$_full_loop_verifier_interactive" ]] || return 1
+	if [[ "$vr_dry_run" -eq 1 ]]; then
+		print_info "Dry run: PR #${vr_pr} would be reclassified ${_full_loop_verifier_interactive}"
+		printf 'VERIFY_RUNTIME_HOLD=keep (declined; dry run)\n'
+		return 0
+	fi
+	#aidevops:trust-boundary GH#39639 -- never overwrite an edit made after the read.
+	live_json=$(_flm_gh_read gh pr view "$vr_pr" --repo "$repo" --json headRefOid,body) || return 1
+	if [[ "$(_verify_runtime_body_key "$(printf '%s' "$live_json" | jq -r '.body // ""')")" != "$(_verify_runtime_body_key "$body")" ]]; then
+		print_error "PR #${vr_pr} body changed after it was read; nothing was written. Rerun verify-runtime --decline"
+		return 1
+	fi
+	vr_new_body="$new_body"
+	_verify_runtime_put_body "$repo" "$vr_new_body" || {
+		print_error "Could not update PR #${vr_pr} body"
+		return 1
+	}
+	after_body=$(_flm_gh_read gh pr view "$vr_pr" --repo "$repo" --json body --jq '.body // ""') || after_body=""
+	if [[ "$(printf '%s' "$after_body" | _runtime_testing_metadata_from_body | jq -r '.verifier // ""' 2>/dev/null)" != "$_full_loop_verifier_interactive" ]]; then
+		print_error "PR #${vr_pr} body did not reach the ${_full_loop_verifier_interactive} postcondition; review it before any verifier route"
+		return 1
+	fi
+	body_file=$(mktemp) || return 1
+	printf '%s\n' "${_FULL_LOOP_OPS_START}" \
+		"<!-- aidevops:verify-runtime-declined head=${head} -->" \
+		"**Runtime verification declined** by @${login} at head \`${head}\` (\`full-loop-helper.sh verify-runtime --decline\`, GH#40607)." \
+		"" \
+		"- Tried: ${flat}" \
+		"- Verifier: reclassified ${_full_loop_verifier_interactive}; a person or interactive session verifies this PR" \
+		"- Hold: ${_FULL_LOOP_HOLD_LABEL} kept; no runtime evidence was recorded" \
+		'<!-- ops:end -->' >"$body_file"
+	gh_pr_comment "$vr_pr" --repo "$repo" --body-file "$body_file" >/dev/null || rc=$?
+	rm -f "$body_file"
+	[[ "$rc" -eq 0 ]] || print_warning "Audit comment for PR #${vr_pr} was not posted; the body records the reclassification"
+	print_success "PR #${vr_pr} reclassified ${_full_loop_verifier_interactive}; ${_FULL_LOOP_HOLD_LABEL} kept"
+	printf 'VERIFY_RUNTIME_HOLD=keep\n'
+	return 0
+}
+
+# verify-runtime <PR> [REPO] --testing "<evidence>" [--repo R] [--dry-run] [--decline]
 # Exit 0 on recorded evidence (VERIFY_RUNTIME_HOLD=lifted|keep|absent on
 # stdout); 1 on refusal or failed write. Every refusal precedes every write.
 cmd_verify_runtime() {
-	local vr_pr="" vr_repo="" vr_evidence="" vr_dry_run=0
+	local vr_pr="" vr_repo="" vr_evidence="" vr_dry_run=0 vr_decline=0 vr_headless=0
 	local vr_head="" vr_new_body="" vr_previous_evidence="" vr_rewrite=0
 	local vr_from_level="" vr_final_evidence=""
 	local repo="" evidence="" login="" pr_json="" decision="" hold_action="" hold_reason="" hold_line=""
@@ -726,10 +912,7 @@ cmd_verify_runtime() {
 	local -x AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1
 
 	_verify_runtime_parse_args "$@" || return 1
-	if ! _verify_runtime_session_is_interactive; then
-		print_error "verify-runtime is restricted to interactive maintainer sessions; workers hand runtime-pending PRs off with POST_PR_HANDOFF"
-		return 1
-	fi
+	_verify_runtime_resolve_session || return 1
 	repo=$(_merge_resolve_repo "$vr_repo") || return 1
 	evidence=$(_verify_runtime_normalize_evidence "$vr_evidence") || return 1
 	#aidevops:trust-boundary GH#39639 -- authenticated write permission, never
@@ -747,6 +930,13 @@ cmd_verify_runtime() {
 		print_error "Could not read PR #${vr_pr} in ${repo}"
 		return 1
 	}
+	if [[ "$vr_headless" -eq 1 ]]; then
+		_verify_runtime_headless_pr_eligible "$pr_json" || return 1
+	fi
+	if [[ "$vr_decline" -eq 1 ]]; then
+		_verify_runtime_decline "$repo" "$pr_json" "$evidence" "$login"
+		return $?
+	fi
 	_verify_runtime_prepare "$repo" "$pr_json" "$evidence" "$login" || return 1
 
 	decision=$(_verify_runtime_hold_decision "$vr_pr" "$repo" "$pr_json") || return 1
@@ -760,6 +950,13 @@ cmd_verify_runtime() {
 		hold_line="${_FULL_LOOP_HOLD_LABEL} kept: ${hold_reason:-scope not verified}"
 		;;
 	esac
+	#aidevops:trust-boundary GH#40607 -- a headless verifier exists only to lift
+	# a liftable runtime-pending-only hold; any other decision stays with a
+	# person, and nothing is written.
+	if [[ "$vr_headless" -eq 1 && "$hold_action" != "$_VERIFY_RUNTIME_LIFT" ]]; then
+		print_error "PR #${vr_pr} hold is not liftable by a headless verifier (${hold_line}); nothing was written"
+		return 1
+	fi
 
 	if [[ "$vr_dry_run" -eq 1 ]]; then
 		print_info "Dry run for PR #${vr_pr} at head ${vr_head:0:12}, verifier @${login}"
@@ -777,7 +974,7 @@ cmd_verify_runtime() {
 	if [[ "$vr_rewrite" -eq 1 ]]; then
 		_verify_runtime_write_body "$repo" "$(printf '%s' "$pr_json" | jq -r '.body // ""')" || return 1
 	fi
-	if [[ "$hold_action" == "lift" ]]; then
+	if [[ "$hold_action" == "$_VERIFY_RUNTIME_LIFT" ]]; then
 		_verify_runtime_lift_hold "$repo" || return 1
 		hold_action="lifted"
 	fi

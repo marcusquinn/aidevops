@@ -443,6 +443,92 @@ reset_fixture; FAKE_BODY="$SELF_BODY"; MOVE_HEAD_ON_UNLABEL=1
 	[[ ",${FAKE_LABELS}," == *",hold-for-review,"* ]]
 check "legacy head race reapplies hold" $?
 
+# --- GH#40607: headless runtime-verify-high verifier and --decline ---
+HIGH_BODY=$(runtime_verifier=worker-eligible _build_pr_body "42" "Pulse route" "needs a local run" "src/pulse.sh" \
+	"<!-- aidevops:sig -->" "Resolves" "High" "runtime-pending")
+HIGH_INTERACTIVE_BODY=$(_build_pr_body "42" "Pulse route" "needs a local run" "src/pulse.sh" \
+	"<!-- aidevops:sig -->" "Resolves" "High" "runtime-pending")
+body_verifier() { printf '%s' "$FAKE_BODY" | _runtime_testing_metadata_from_body | jq -r .verifier; }
+reset_headless() {
+	reset_fixture
+	FAKE_BODY="$HIGH_BODY"
+	FAKE_LABELS="origin:worker,hold-for-review"
+	HL_KIND=runtime-verify-high HL_PR=7 HL_HEAD="$LOCAL_HEAD" HL_DISPATCH="ci-repair-abc-7-${LOCAL_HEAD:0:12}" HL_ACTIONS=""
+	return 0
+}
+headless_verify() {
+	HEADLESS=true WORKER_ISSUE_NUMBER=42 WORKER_REPO_SLUG=owner/repo GITHUB_ACTIONS="$HL_ACTIONS" \
+		AIDEVOPS_RUNTIME_VERIFY_KIND="$HL_KIND" AIDEVOPS_PR_REPAIR_NUMBER="$HL_PR" \
+		AIDEVOPS_PR_REPAIR_HEAD_SHA="$HL_HEAD" AIDEVOPS_RUNTIME_VERIFY_DISPATCH="$HL_DISPATCH" \
+		run_verify "$@"
+	return 0
+}
+headless_refuses() {
+	local name="$1"
+	shift
+	headless_verify "$@"
+	[[ "$VR_RC" -ne 0 ]] && no_writes
+	check "$name" $?
+	return 0
+}
+cond_rc=1
+[[ "$(printf '%s' "$HIGH_BODY" | _runtime_testing_metadata_from_body | jq -r .verifier)" == worker-eligible &&
+	"$(printf '%s' "$HIGH_INTERACTIVE_BODY" | _runtime_testing_metadata_from_body | jq -r .verifier)" == interactive ]] && cond_rc=0
+check "generated bodies record the explicit verifier, interactive by default" "$cond_rc"
+! runtime_verifier=worker-eligible _build_pr_body "42" "x" "y" "z" "<!-- aidevops:sig -->" "Resolves" "Critical" "runtime-pending" >/dev/null 2>&1
+check "Critical cannot be generated worker-eligible" $?
+reset_headless
+headless_verify 7 owner/repo --testing "$EVIDENCE"
+[[ "$VR_RC" -eq 0 && "$(body_level)" == runtime-verified && ",${FAKE_LABELS}," != *",hold-for-review,"* ]] &&
+	grep -q 'VERIFY_RUNTIME_HOLD=lifted' "$OUT" && [[ "$(body_evidence)" == *"runtime-verify-high dispatch ${HL_DISPATCH}; PR author @worker-bot"* ]]
+check "headless verifier records dispatch-bound evidence and lifts the hold" $?
+reset_headless; FAKE_BODY="$PENDING_BODY"
+headless_refuses "headless verifier refuses Critical" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; FAKE_BODY="$HIGH_INTERACTIVE_BODY"
+headless_refuses "headless verifier refuses an interactive classification" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; HL_KIND=""
+headless_refuses "headless caller without the dispatch kind refuses" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; HL_PR=8
+headless_refuses "headless dispatch for another PR refuses" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; HL_DISPATCH='bad id'
+headless_refuses "malformed dispatch id refuses" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; HL_ACTIONS=true
+headless_refuses "CI is never a verifier" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; HL_HEAD="$OTHER_HEAD"
+headless_refuses "PR head other than the dispatched head refuses" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; FAKE_LABELS="hold-for-review"
+headless_refuses "PR without worker origin refuses" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; FAKE_LABELS="origin:worker,hold-for-review,needs-maintainer-review"
+headless_refuses "person-owned PR refuses" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; FAKE_COMMENTS="[]"
+headless_refuses "non-liftable hold refuses with nothing written" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; WRITE_OK=0
+headless_refuses "headless caller without write permission refuses" 7 owner/repo --testing "$EVIDENCE"
+reset_headless
+headless_verify 7 owner/repo --decline --testing "Tried the suite; it needs a hardware token" --dry-run
+[[ "$VR_RC" -eq 0 ]] && no_writes
+check "decline dry run writes nothing" $?
+reset_headless
+headless_verify 7 owner/repo --decline --testing "Tried the suite; it needs a hardware token"
+[[ "$VR_RC" -eq 0 && "$(body_verifier)" == interactive && "$(body_level)" == runtime-pending ]] &&
+	[[ ",${FAKE_LABELS}," == *",hold-for-review,"* ]] && ! grep -q '^remove-label' "$WRITES" &&
+	grep -q '^comment$' "$WRITES" && grep -q 'VERIFY_RUNTIME_HOLD=keep' "$OUT"
+check "decline reclassifies interactive, keeps the hold and records the attempt" $?
+metadata=$(printf '%s' "$FAKE_BODY" | _runtime_testing_metadata_from_body)
+cond_rc=1
+[[ "$(jq -r .risk <<<"$metadata")" == High && "$(jq -r .sections <<<"$metadata")" == 1 && "$FAKE_BODY" == *"needs a hardware token"* ]] && cond_rc=0
+check "declined body keeps risk and one Runtime Testing section" "$cond_rc"
+: >"$WRITES"
+headless_refuses "a declined PR is no longer headlessly verifiable" 7 owner/repo --testing "$EVIDENCE"
+reset_headless; FAKE_BODY="$HIGH_INTERACTIVE_BODY"
+run_verify 7 owner/repo --decline --testing "Tried it locally"
+[[ "$VR_RC" -eq 0 ]] && no_writes
+check "interactive decline of an already-interactive PR writes nothing" $?
+reset_headless; EDIT_AT_READ=2
+headless_verify 7 owner/repo --decline --testing "Tried the suite; it needs a hardware token"
+[[ "$VR_RC" -ne 0 ]] && no_writes
+check "decline never overwrites a body edited after the read" $?
+
 # The leased local repair branch must regenerate the original PR, never a new
 # repair-branch PR or a force push. GitHub and transport remain controlled stubs.
 reset_fixture; FAKE_BODY="$SELF_BODY"; FAKE_LABELS='origin:worker,hold-for-review'

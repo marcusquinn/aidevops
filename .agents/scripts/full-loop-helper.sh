@@ -88,7 +88,7 @@ source "${SCRIPT_DIR}/full-loop-helper-help.sh"
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--regression-evidence <why>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--ready] [--skip-hooks] [--no-rebase] [--base <branch>]
+# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--runtime-verifier worker-eligible|interactive] [--decisions <notes>] [--regression-evidence <why>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--ready] [--skip-hooks] [--no-rebase] [--base <branch>]
 # --ready: create the PR non-draft (verified implementation intent); default interactive PRs are draft.
 # --base <branch>: stacked PR. Rebase onto origin/<branch> and open the PR against it
 #   (branch must exist on origin, differ from the current branch, and be an open PR head;
@@ -111,6 +111,8 @@ source "${SCRIPT_DIR}/full-loop-helper-help.sh"
 cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
 	local runtime_risk="" testing_level="" pr_metadata_overrides="" summary_regression=""
+	# GH#40607: caller-scoped for _build_pr_body (Verifier line of a runtime-pending body).
+	local runtime_verifier=""
 	local completion_bookkeeping=0 bookkeeping_proof_pr="" bookkeeping_task_id=""
 	local replacement_pr="" replacement_reason=""
 	local -a extra_labels=()
@@ -131,7 +133,7 @@ cmd_commit_and_pr() {
 			return 1
 		fi
 	fi
-	_validate_explicit_pr_metadata "$runtime_risk" "$testing_level" || return 1
+	_validate_explicit_pr_metadata "$runtime_risk" "$testing_level" "$runtime_verifier" || return 1
 	_validate_stack_base "$stack_base_arg" "$branch" "$repo" || return 1
 	_validate_completion_bookkeeping_request "$completion_bookkeeping" "$bookkeeping_proof_pr" \
 		"$bookkeeping_task_id" "$allow_parent_close" "$repo" \

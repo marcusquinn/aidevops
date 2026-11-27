@@ -29,6 +29,7 @@ Commands:
                                           Set the runtime testing evidence level;
                                           runtime-pending (--testing gives the reason)
                                           opens the PR under hold-for-review for a verifier
+                [--runtime-verifier worker-eligible|interactive]  Who verifies it (GH#40607)
                 [--decisions TEXT]        Record notable decisions in the PR body
                 [--regression-evidence TEXT]
                                           Add a ## Regression Evidence rationale (platform
@@ -55,12 +56,12 @@ Commands:
   runtime-pending-notice <PR> [REPO]
                                  Read-only: print JSON for a held runtime-pending PR a verifier
                                  may lift (Pulse routing, GH#39645); exit 1 otherwise.
-  verify-runtime <PR> [REPO] --testing "<evidence>" [--dry-run]
-                                 Verifier route for a runtime-pending PR (GH#39639), any
-                                 author: from a clean checkout of the exact PR head, record
-                                 runtime-verified evidence and lift hold-for-review when the
-                                 scope recorded for the current hold is runtime-pending only.
-                                 A kept hold still records the evidence. Interactive, write+.
+  verify-runtime <PR> [REPO] --testing "<evidence>" [--dry-run] [--decline]
+                                 Verifier route for a runtime-pending PR (GH#39639): from the
+                                 exact PR head, record runtime-verified evidence and lift a
+                                 runtime-pending-only hold. Interactive, write+; or a High
+                                 worker-eligible PR's runtime-verify-high dispatch (GH#40607).
+                                 --decline: record what was tried, reclassify, keep the hold.
   merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--body-file PATH]
                                  Gate-enforced merge (runs pre-merge-gate first).
                                  --admin / --auto pass through to gh pr merge
