@@ -52,7 +52,10 @@ race plain-mkdir-negative-control 1
 (
 	command -v gnumkdir >/dev/null 2>&1 || exit 0
 	command() {
-		if [[ "$*" == 'mkdir --version' ]]; then printf 'mkdir (uutils coreutils) fixture\n'; return 0; fi
+		if [[ "$*" == 'mkdir --version' ]]; then
+			printf 'mkdir (uutils coreutils) fixture\n'
+			return 0
+		fi
 		builtin command "$@"
 		return $?
 	}
@@ -66,7 +69,10 @@ race plain-mkdir-negative-control 1
 		exit 0
 	fi
 	command() {
-		if [[ "$*" == 'mkdir --version' ]]; then printf 'mkdir (uutils coreutils) fixture\n'; return 0; fi
+		if [[ "$*" == 'mkdir --version' ]]; then
+			printf 'mkdir (uutils coreutils) fixture\n'
+			return 0
+		fi
 		if [[ "$*" == '-v gnumkdir' ]]; then return 1; fi
 		builtin command "$@"
 		return $?
@@ -79,6 +85,8 @@ race plain-mkdir-negative-control 1
 	if mkdir -- "$TEST_ROOT/space and dash-" 2>/dev/null; then exit 1; fi
 	mkdir -m 700 "$TEST_ROOT/private"
 	python3 -c 'import os, stat, sys; assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o700' "$TEST_ROOT/private"
+	if mkdir -m 2770 "$TEST_ROOT/special" 2>/dev/null; then exit 1; fi
+	[[ ! -e "$TEST_ROOT/special" ]]
 	# No -p substring/operand may accidentally delegate an exclusive operation.
 	mkdir -- "$TEST_ROOT/--parents"
 	if mkdir -- "$TEST_ROOT/--parents" 2>/dev/null; then exit 1; fi

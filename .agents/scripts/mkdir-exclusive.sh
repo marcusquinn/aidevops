@@ -6,9 +6,15 @@
 [[ -n "${_AIDEVOPS_MKDIR_EXCLUSIVE_LOADED:-}" ]] && return 0
 _AIDEVOPS_MKDIR_EXCLUSIVE_LOADED=1
 
+# Named primitive lets test interceptors preserve exclusivity without recursion.
+aidevops_mkdir_exclusive() {
+	command mkdir "$@"
+	return $?
+}
+
 if [[ "$(command mkdir --version 2>/dev/null || true)" == *uutils* ]]; then
 	if command -v gnumkdir >/dev/null 2>&1; then
-		mkdir() {
+		aidevops_mkdir_exclusive() {
 			command gnumkdir "$@"
 			return $?
 		}
@@ -16,7 +22,7 @@ if [[ "$(command mkdir --version 2>/dev/null || true)" == *uutils* ]]; then
 		# Python issues mkdir(2) directly and preserves EEXIST. Do not fall back
 		# to the unsafe command if Python is missing. -p is not a mutex and can
 		# retain the native implementation. Unsupported modes fail closed.
-		mkdir() {
+		aidevops_mkdir_exclusive() {
 			python3 -c '
 import getopt, os, subprocess, sys
 try:
@@ -27,8 +33,9 @@ try:
     for key, value in options:
         if key in ("-m", "--mode"):
             mode = int(value, 8)
-            if not 0 <= mode <= 0o7777:
-                raise ValueError("invalid octal mode")
+            # mkdir(2) alone cannot faithfully apply GNU special-bit modes.
+            if not 0 <= mode <= 0o777:
+                raise ValueError("fallback requires an octal mode from 000 to 777")
         elif key in ("-v", "--verbose"):
             verbose = True
     if not paths:
@@ -52,4 +59,8 @@ sys.exit(status)
 			return $?
 		}
 	fi
+	mkdir() {
+		aidevops_mkdir_exclusive "$@"
+		return $?
+	}
 fi

@@ -223,7 +223,7 @@ both concurrent creators of the same directory (GH#40582). In the original
 GNU `gnumkdir` **0**, and uutils `ln -s` **0**. Locking scripts source
 `scripts/mkdir-exclusive.sh` (also loaded by `shared-constants.sh`): on uutils
 it selects `gnumkdir`, or Python's exclusive `os.mkdir` when GNU is absent.
-The Python fallback supports plain operands, `--`, octal `-m` and `-v`; unsupported
+The Python fallback supports plain operands, `--`, octal `-m` (000–777) and `-v`; unsupported
 options/modes fail closed and `-p` retains native behavior. GNU and macOS commands
 are unchanged. New standalone lock scripts must source this library before locking.
 
