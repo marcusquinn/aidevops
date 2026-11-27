@@ -546,7 +546,21 @@ _audit_acquire_lock() {
 
 	local started_at=""
 	started_at="$(date '+%s')" || return 1
-	while ! (umask 077 && mkdir "$lock_dir") 2>/dev/null; do
+	local election_dir="${lock_dir}.reclaim"
+	while :; do
+		# Publication and reclamation must share the same namespace fence. A
+		# delayed publisher is not an orphan, even with an orphan age of zero.
+		if _audit_elect_reclaimer "$election_dir"; then
+			if (umask 077 && mkdir "$lock_dir") 2>/dev/null; then
+				local publish_rc=0
+				_audit_publish_lock_owner "$lock_dir" || publish_rc=1
+				_audit_retire_election "$election_dir" "$_AUDIT_ELECTION_TOKEN"
+				_AUDIT_ELECTION_TOKEN=""
+				return "$publish_rc"
+			fi
+			_audit_retire_election "$election_dir" "$_AUDIT_ELECTION_TOKEN"
+			_AUDIT_ELECTION_TOKEN=""
+		fi
 		if _audit_reclaim_stale_lock "$lock_dir" "$orphan_age"; then
 			continue
 		fi
@@ -559,7 +573,12 @@ _audit_acquire_lock() {
 		fi
 		sleep 0.1
 	done
+	return 1
+}
 
+# Called only while holding the sibling transition election.
+_audit_publish_lock_owner() {
+	local lock_dir="$1"
 	local owner_pid="${BASHPID:-}"
 	if [[ -z "$owner_pid" ]]; then
 		# Bash 3.2 has no BASHPID. Run the fallback as the command-substitution
@@ -596,6 +615,30 @@ _audit_acquire_lock() {
 
 # Release the lock only when its owner metadata still matches this process.
 _audit_release_current_lock() {
+	local lock_dir="$_AUDIT_HELD_LOCK_DIR"
+	[[ -n "$lock_dir" ]] || return 0
+	local election_dir="${lock_dir}.reclaim"
+	local started_at=""
+	started_at="$(date '+%s')" || return 1
+	while ! _audit_elect_reclaimer "$election_dir"; do
+		local now=""
+		now="$(date '+%s')" || return 1
+		if [[ $((now - started_at)) -ge ${AUDIT_LOCK_TIMEOUT_SECONDS:-${AUDIT_DEFAULT_LOCK_TIMEOUT_SECONDS}} ]]; then
+			_audit_error "Could not acquire audit log release fence"
+			return 1
+		fi
+		sleep 0.1
+	done
+	local release_rc=0
+	_audit_release_current_lock_fenced || release_rc=1
+	_audit_retire_election "$election_dir" "$_AUDIT_ELECTION_TOKEN"
+	_AUDIT_ELECTION_TOKEN=""
+	return "$release_rc"
+}
+
+# The owner check and rename are one fenced transition, not two path operations
+# that can straddle a reclaimer replacing the lock directory.
+_audit_release_current_lock_fenced() {
 	local lock_dir="$_AUDIT_HELD_LOCK_DIR"
 	local expected_owner="$_AUDIT_HELD_LOCK_OWNER"
 

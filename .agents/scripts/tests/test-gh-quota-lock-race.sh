@@ -68,20 +68,6 @@ cat() {
 	return 0
 }
 
-ln() {
-	local target="$2"
-	local ln_rc=0
-	local signal_pid=""
-	command ln "$@" || ln_rc=$?
-	if [[ "$ln_rc" -eq 0 && "$target" == "${signal_lock_dir:-}/.reclaim.guard" ]]; then
-		signal_pid=$(command cat "$target" 2>/dev/null) || signal_pid=""
-		[[ "$signal_pid" =~ ^[0-9]+$ ]] || return 1
-		kill -TERM "$signal_pid"
-	fi
-	[[ "$ln_rc" -eq 0 ]] || return 1
-	return 0
-}
-
 command mkdir "$race_lock_dir"
 printf '%s\n' "${BASHPID:-$$}" >"${race_lock_dir}/pid"
 
@@ -133,11 +119,12 @@ signal_lock_dir="${TEST_ROOT}/signal-owner.lock.d"
 signal_stderr="${TEST_ROOT}/signal-owner.stderr"
 command mkdir "$signal_lock_dir"
 printf '%s\n' "${BASHPID:-$$}" >"${signal_lock_dir}/pid"
+# Model interruption after publishing a complete sibling transition claim.
+command mkdir "${signal_lock_dir}.transition" "${signal_lock_dir}.transition/claim.999999999.interrupted"
 signal_rc=0
-_ghqa_lock_reclaim "$signal_lock_dir" 0 2>"$signal_stderr" || signal_rc=$?
-unset -f ln
-assert_eq "guard-install interruption stops reclamation" "yes" "$([[ "$signal_rc" -ne 0 ]] && printf 'yes' || printf 'no')"
-assert_eq "guard-install interruption leaves complete stale evidence" "yes" "$([[ -f "${signal_lock_dir}/.reclaim.guard" ]] && printf 'yes' || printf 'no')"
+_ghqa_lock_reclaim "$signal_lock_dir" 100 2>"$signal_stderr" || signal_rc=$?
+assert_eq "dead transition recovery retries without reclaiming a live lock" "1" "$signal_rc"
+assert_eq "dead transition claim is retired" "no" "$([[ -d "${signal_lock_dir}.transition" ]] && printf 'yes' || printf 'no')"
 signal_recovery_rc=0
 _ghqa_lock_reclaim "$signal_lock_dir" 0 2>>"$signal_stderr" || signal_recovery_rc=$?
 assert_eq "retry clears an interrupted stale guard" "1" "$signal_recovery_rc"
@@ -146,6 +133,29 @@ signal_owner=""
 IFS= read -r signal_owner <"${signal_lock_dir}/pid" || signal_owner=""
 assert_eq "stale guard recovery preserves the live owner" "${BASHPID:-$$}" "$signal_owner"
 _ghqa_lock_release "$signal_lock_dir"
+
+# Pause at the exact mkdir-to-PID boundary. A contender with an already-aged
+# retry counter must not reclaim this in-progress publication.
+publication_lock_dir="${TEST_ROOT}/publication.lock.d"
+publication_marker="${TEST_ROOT}/publication-protected"
+mkdir() {
+	local target="$1"
+	command mkdir "$@" || return 1
+	if [[ "$target" == "$publication_lock_dir" ]]; then
+		if _ghqa_lock_reclaim "$target" 100; then
+			return 1
+		fi
+		[[ -d "$target" ]] || return 1
+		: >"$publication_marker"
+	fi
+	return 0
+}
+publication_rc=0
+_ghqa_lock_acquire "$publication_lock_dir" || publication_rc=$?
+unset -f mkdir
+assert_eq "ownerless reclaim cannot interrupt PID publication" "0" "$publication_rc"
+assert_eq "publication boundary was exercised under the fence" "yes" "$([[ -f "$publication_marker" ]] && printf 'yes' || printf 'no')"
+_ghqa_lock_release "$publication_lock_dir"
 
 replacement_lock_dir="${TEST_ROOT}/replacement.lock.d"
 replacement_expected_owner="${BASHPID:-$$}"

@@ -138,6 +138,38 @@ else
 fi
 assert_chain "hash chain remains intact after racing stale-lock reclaim" "$LOG_FILE"
 
+# Deterministically interleave reclamation with a publisher paused immediately
+# after mkdir, before its owner record exists. Even a zero orphan age must not
+# let a contender remove a directory whose publication fence is held.
+if (
+	export AIDEVOPS_BASH_REEXECED=1
+	# shellcheck disable=SC1090
+	source "$HELPER"
+	publication_lock="${TEST_ROOT}/publication.lock.d"
+	publication_marker="${TEST_ROOT}/publication-protected"
+	mkdir() {
+		local target="$1"
+		command mkdir "$@" || return 1
+		if [[ "$target" == "$publication_lock" ]]; then
+			if _audit_reclaim_stale_lock "$target" 0; then
+				return 1
+			fi
+			[[ -d "$target" ]] || return 1
+			: >"$publication_marker"
+		fi
+		return 0
+	}
+	AUDIT_LOCK_TIMEOUT_SECONDS=0 _audit_acquire_lock "$publication_lock" || exit 1
+	unset -f mkdir
+	[[ -f "$publication_marker" && -f "${publication_lock}/owner" ]] || exit 1
+	_audit_release_current_lock || exit 1
+	[[ ! -e "$publication_lock" && ! -e "${publication_lock}.reclaim" ]]
+); then
+	pass "ownerless reclaim cannot interrupt audit owner publication"
+else
+	fail "ownerless reclaim removed an in-progress audit publication"
+fi
+
 SIGNAL_LOCK_DIR="${TEST_ROOT}/signal.jsonl.lock.d"
 SIGNAL_READY="${TEST_ROOT}/signal.ready"
 SIGNAL_ELECTION="${TEST_ROOT}/signal.reclaim"
