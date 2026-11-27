@@ -1874,6 +1874,13 @@ _apply_blocked_by_detection() {
 	return 0
 }
 
+# Return 0 when TASK_LABELS contains auto-dispatch (or legacy auto_dispatch).
+_task_labels_request_auto_dispatch() {
+	local labels=",${TASK_LABELS},"
+	[[ "$labels" == *",auto-dispatch,"* || "$labels" == *",auto_dispatch,"* ]] && return 0
+	return 1
+}
+
 # ---------------------------------------------------------------------------
 # Dispatch-path auto-dispatch advisory (t2821 / t2920)
 #
@@ -1896,10 +1903,7 @@ _warn_dispatch_path_auto_dispatch() {
 	[[ "${AIDEVOPS_SKIP_DISPATCH_PATH_CHECK:-}" == "1" ]] && return 0
 
 	# Only fire when auto-dispatch (or auto_dispatch) is in the label set
-	if [[ ",${TASK_LABELS}," != *",auto-dispatch,"* && \
-		",${TASK_LABELS}," != *",auto_dispatch,"* ]]; then
-		return 0
-	fi
+	_task_labels_request_auto_dispatch || return 0
 
 	# Load patterns from shared conf file
 	local _conf_file="${AIDEVOPS_DISPATCH_PATH_FILES_CONF:-${SCRIPT_DIR}/../configs/self-hosting-files.conf}"
@@ -1935,6 +1939,47 @@ _warn_dispatch_path_auto_dispatch() {
 	log_info "  The pre-dispatch detector (t2819) will auto-elevate this worker to tier:thinking."
 	log_info "  No action required — proceed with auto-dispatch as normal."
 	log_info "  See: reference/auto-dispatch.md \"Dispatch-Path Default (t2821 / t2920)\""
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _warn_pulse_off_auto_dispatch (GH#40460)
+#
+# Pulse never scans a repo whose local repos.json entry has pulse != true (or
+# no entry), so an auto-dispatch issue filed there waits silently. Warn on
+# stderr while the creating session can still implement it. Never blocks:
+# repos.json is per host and another runner may pulse the repo.
+#
+# Arguments: none (reads TASK_LABELS, NO_ISSUE, REPO_PATH, REMOTE_NAME)
+# Environment:
+#   AIDEVOPS_SKIP_PULSE_OFF_CHECK=1 — disable entirely
+#   REPOS_FILE — registry path (default ~/.config/aidevops/repos.json)
+# ---------------------------------------------------------------------------
+_warn_pulse_off_auto_dispatch() {
+	[[ "${AIDEVOPS_SKIP_PULSE_OFF_CHECK:-}" == "1" ]] && return 0
+	_task_labels_request_auto_dispatch || return 0
+	[[ "$NO_ISSUE" == "false" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
+	[[ -f "$repos_file" ]] || return 0
+	local slug="" state=""
+	slug=$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME")
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 0
+	# state: on | off | unregistered
+	state=$(jq -r --arg s "$slug" '
+		[.initialized_repos[]? | select(((.slug // "") | ascii_downcase) == ($s | ascii_downcase))][0]
+		| if . == null then "unregistered" elif .pulse == true then "on" else "off" end' \
+		"$repos_file" 2>/dev/null) || return 0
+	[[ -z "$state" || "$state" == "on" ]] && return 0
+	local reason="Pulse is off for ${slug}"
+	local enable_hint="Or enable dispatch for the repo:"
+	if [[ "$state" == "unregistered" ]]; then
+		reason="${slug} is not registered in repos.json"
+		enable_hint="Or register the repo (aidevops repos add), then enable dispatch:"
+	fi
+	log_warn "${reason} on this host: unless another runner pulses it, no worker will pick up this auto-dispatch issue."
+	log_warn "  Implement it now: interactive-start-helper.sh --issue <N> --repo ${slug} --task \"...\" --auto-dispatch"
+	log_warn "  ${enable_hint} aidevops repos pulse on ${slug}"
 	return 0
 }
 
@@ -2008,6 +2053,10 @@ _main_preclaim_discovery() {
 	# references dispatch-path scripts. Non-blocking — callers can override
 	# with #dispatch-path-ok or AIDEVOPS_SKIP_DISPATCH_PATH_CHECK=1.
 	_warn_dispatch_path_auto_dispatch
+
+	# Pulse-off repos never dispatch auto-dispatch issues; say so while the
+	# creating session can still implement the task itself (GH#40460).
+	_warn_pulse_off_auto_dispatch
 
 	# Framework routing guard: warn if title looks like a framework issue
 	# but we're not in the aidevops repo (GH#5149)
