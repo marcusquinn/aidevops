@@ -2547,6 +2547,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t19414 fix: run privacy guard before task-ID allocation so blocked issue bodies cannot strand IDs #bug ref:GH#40516
 - [x] t19415 fix: todo-collision tests 5-7 hit live GitHub title check #auto-dispatch #bug ref:GH#40517 pr:#40521 completed:2026-11-26
 
+- [ ] t19417 fix(tests): surface and fix Linux-only red suites cleanup-receipt and pr-checkpoint in Shell Suite Main Health #bug ref:GH#40529
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
