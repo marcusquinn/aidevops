@@ -424,6 +424,23 @@ emit_transitions() {
 	return 0
 }
 
+# GH#40626: the protection endpoint needs admin rights, so write-access
+# sessions cannot read it. The branch endpoint exposes the same classic
+# required contexts to read access. Prints a required_status_checks object
+# ({} when the branch is unprotected); fails when the policy is not visible.
+branch_required_status_checks() {
+	local repo="$1"
+	local base_branch="$2"
+	# Non-object input, a non-boolean .protected, or hidden protection details
+	# yield an error or no output, so jq -e fails and the policy stays unknown.
+	gh api "repos/${repo}/branches/${base_branch}" 2>/dev/null | jq -ce '
+		if (.protected | type) != "boolean" then error("invalid branch")
+		elif .protected == false then {}
+		else .protection.required_status_checks | objects end
+	' 2>/dev/null
+	return $?
+}
+
 configured_required_contexts() {
 	local pr_number="$1"
 	local repo="$2"
@@ -442,7 +459,7 @@ configured_required_contexts() {
 		# absence from the protection API; any other failure stays unknown.
 		if grep -qE 'Required status checks not enabled|Branch not protected' <<<"$protection_json"; then
 			protection_json='{}'
-		else
+		elif ! protection_json=$(branch_required_status_checks "$repo" "$base_branch"); then
 			return 1
 		fi
 	fi
@@ -615,6 +632,12 @@ classify_state() {
 	fi
 	if printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg skipping "$_GCW_BUCKET_SKIPPING" \
 		'all(.[]; .bucket == $pass or .bucket == $skipping)' >/dev/null; then
+		# GH#40626: with the policy unreadable, an early read can hold only the
+		# first-registered contexts; settle before calling that set complete.
+		if [[ "$configured_rc" -ne 0 && "$elapsed" -lt "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]]; then
+			printf 'pending\n'
+			return 0
+		fi
 		printf 'success\n'
 		return 0
 	fi
