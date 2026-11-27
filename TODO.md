@@ -2559,7 +2559,15 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19422 fix(audit-log): stale-lock reclaim acts on a newer holder's lock, wedging or overlapping concurrent writers #auto-dispatch #bug ref:GH#40549 pr:#40557 completed:2026-11-27
 
-- [ ] t19423 fix(tests): explain intermittent double reservation in checkpoint test_decision_policy_races on hosted runners #bug ref:GH#40562
+- [-] t19423 fix(tests): explain intermittent double reservation in checkpoint test_decision_policy_races on hosted runners #bug ref:GH#40562 cancelled:2026-11-27 cancel-reason:superseded-by-t19425
+
+- [ ] t19425 fix(locks): mkdir-as-mutex is not exclusive under uutils coreutils (Ubuntu 26.04) — two concurrent owners #auto-dispatch #bug #priority:high ref:GH#40582
+
+- [ ] t19426 fix(ci): suite-health logs drop a flaky suite's first attempt when the rerun fills the 80-line tail #auto-dispatch #bug ref:GH#40583
+
+- [ ] t19427 fix(tests): relationship-deadline suite asserts exact per-operation wall-clock seconds #auto-dispatch #bug ref:GH#40584
+
+- [ ] t19428 fix(tests): checkout-order suite exits 141 from early-exit awk pipes (SIGPIPE) #auto-dispatch #bug ref:GH#40585
 
 ## In Progress
 
