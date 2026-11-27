@@ -386,3 +386,18 @@ records one audit entry per file (relative path, size, mtime, hashed repository
 ID).
 `maintenance-gc --apply` then runs foreground `git gc --auto`. The r922
 `gitlocks` store runs `repair-stale-locks` for every registered canonical repo.
+
+`maintenance-gc` also reports `PACK_COUNT`/`PACK_SIZE_KIB` (with a hint when the
+count exceeds `gc.autoPackLimit`, so a multi-hour repack is not mistaken for a
+hang) and handles `gc.log` (GH#40596). A daemonized gc writes its stderr there,
+and Git skips every automatic gc until the file is older than `gc.logExpiry`
+(default 1 day). When every line is `warning: reflog of '<ref>' references
+pruned commits`, the helper probes the live state with `git rev-list --no-walk
+--reflog`. `--apply`, only while no live gc holds `gc.pid`, drops just the
+entries that name missing objects
+(`git reflog expire --stale-fix --expire=never --expire-unreachable=never <refs>`),
+re-probes, and removes `gc.log`, auditing both steps. A clean probe means the log
+recorded a transient state, and only the file is removed. Empty or unknown
+content, an unsupported ref name or a failed probe keeps the file. Read-only
+`git reflog [show|list|exists]` queries are allowed in canonical checkouts;
+`expire` and `delete` stay blocked.
