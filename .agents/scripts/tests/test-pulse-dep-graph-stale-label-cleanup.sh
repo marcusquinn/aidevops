@@ -368,6 +368,10 @@ refresh_fixture() {
 	DEP_GRAPH_REFRESH_CURSOR_DIR="${TEST_ROOT}/cursor-${TESTS_RUN}"
 	DEP_GRAPH_REFRESH_MAX_CANDIDATES=1
 	DEP_GRAPH_REFRESH_BUDGET_SECS=30
+	# Virtual clock: budget maths must not depend on wall time, which drifts
+	# under parallel load (affected-tests-helper runs suites concurrently).
+	REFRESH_VIRTUAL_CLOCK=0
+	SECONDS=0
 	reset_logs
 	return 0
 }
@@ -380,7 +384,8 @@ mock_refresh_candidates() {
 		# Simulate an abrupt process exit during a later candidate, not a clean
 		# batch stop. Earlier candidates must already be on disk.
 		[[ "${INTERRUPT_REFRESH:-}" != "$issue" ]] || exit 73
-		SECONDS=$((SECONDS + ${ADVANCE_REFRESH_SECONDS:-0}))
+		REFRESH_VIRTUAL_CLOCK=$((REFRESH_VIRTUAL_CLOCK + ${ADVANCE_REFRESH_SECONDS:-0}))
+		SECONDS="$REFRESH_VIRTUAL_CLOCK"
 		return 1
 	}
 	return 0
