@@ -808,10 +808,10 @@ _pulse_maybe_run_llm_supervisor() {
 		if [[ "$pulse_rc" -eq 0 ]]; then
 			_pulse_record_llm_success "$llm_trigger_mode" || true
 			local llm_drain_bundle=""
-			if [[ "${_PULSE_DRAIN_ESCAPE:-0}" == "1" ]]; then
-				# GH#38162: the drain marker is gone after lock release, so the
-				# recycle loop's dispatch_max would break the drain contract.
-				echo "[pulse-wrapper] Skipping early-exit recycle loop: cooperative drain escape (no new dispatch from this bundle)" >>"$LOGFILE"
+			if [[ "${_PULSE_SUPERVISOR_LANE_RUN:-0}" == "1" ]]; then
+				# GH#40536: cycles keep their own cadence while the lane runs, and
+				# the lane holds no dispatch lock, so it never recycle-dispatches.
+				echo "[pulse-wrapper] Skipping early-exit recycle loop: supervisor lane (cycles dispatch on their own schedule, GH#40536)" >>"$LOGFILE"
 			elif llm_drain_bundle=$(_pulse_llm_drain_requested); then
 				echo "[pulse-wrapper] Skipping early-exit recycle loop: supervisor drain requested; activated bundle ${llm_drain_bundle} dispatches next cycle (GH#39682)" >>"$LOGFILE"
 			else
@@ -822,6 +822,186 @@ _pulse_maybe_run_llm_supervisor() {
 		fi
 		_pulse_release_llm_lock
 	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Supervisor lane (GH#40536, t19322 phase 2)
+#
+# The LLM supervisor no longer runs on the cycle tail. A full cycle (drained
+# or not) wakes a detached one-shot `pulse-wrapper.sh --supervisor-lane=<mode>`
+# after releasing the instance lock; the cycle-owned routines ticker wakes a
+# queue-trigger-only lane at most every PULSE_SUPERVISOR_LANE_TICK_SECONDS.
+# The lane takes no instance or dispatch lock: the LLM lock alone keeps one
+# session per runner, so a lane yields to any live session (including an
+# older bundle's in-cycle supervisor). _should_run_llm_supervisor still gates
+# every session. Modes: full (complete prefetch), degraded (the GH#34000 /
+# GH#38162 incomplete-prefetch rules), queue (queue-driven triggers only).
+# PULSE_SUPERVISOR_LANE=0 restores the in-cycle supervisor (rollback switch).
+# Lane skip/yield lines go to WRAPPER_LOGFILE: writes to LOGFILE count as
+# watchdog progress for a running session (t3058 self-write anti-pattern).
+# ---------------------------------------------------------------------------
+_pulse_supervisor_lane_enabled() {
+	[[ "${PULSE_SUPERVISOR_LANE:-1}" != "0" ]] || return 1
+	return 0
+}
+
+# Returns 0 when a live process other than this one holds the LLM lock.
+_pulse_supervisor_lane_llm_busy() {
+	local llm_lockdir="${LOCKDIR}.llm"
+	local lock_pid=""
+	[[ -d "$llm_lockdir" ]] || return 1
+	read -r lock_pid 2>/dev/null <"${llm_lockdir}/pid" || lock_pid=""
+	[[ "$lock_pid" =~ ^[0-9]+$ && "$lock_pid" != "$$" ]] || return 1
+	kill -0 "$lock_pid" 2>/dev/null || return 1
+	return 0
+}
+
+# Returns 0 while setup/rollback holds the runtime transition lock (GH#38627).
+_pulse_supervisor_lane_transition_active() {
+	declare -F _pulse_event_refill_runtime_transition_active >/dev/null 2>&1 || return 1
+	_pulse_event_refill_runtime_transition_active || return 1
+	return 0
+}
+
+# Print the wrapper a lane wake runs: this bundle's while it is active,
+# otherwise the activated bundle's (the worker-exit refill rebase, GH#38627),
+# so a drained earlier-bundle cycle starts no session of its own.
+# Returns: 1 when no lane-capable wrapper is available.
+_pulse_supervisor_lane_wrapper() {
+	local own_wrapper="${SCRIPT_DIR}/pulse-wrapper.sh"
+	local active_wrapper=""
+	if ! declare -F _pulse_event_refill_wrapper_is_active >/dev/null 2>&1 ||
+		_pulse_event_refill_wrapper_is_active "$own_wrapper"; then
+		printf '%s\n' "$own_wrapper"
+		return 0
+	fi
+	active_wrapper=$(_pulse_event_refill_active_wrapper) || return 1
+	# An activated bundle without the lane runs its supervisor in-cycle.
+	grep -q -- '--supervisor-lane' "$active_wrapper" 2>/dev/null || return 1
+	printf '%s\n' "$active_wrapper"
+	return 0
+}
+
+# Wake one detached supervisor lane. Never waits for the session.
+# Args: $1=mode (full|degraded|queue) $2=wake source label
+# Returns: 0 (skips are logged), 1 on an invalid mode
+_pulse_supervisor_lane_wake() {
+	local mode="$1"
+	local wake_source="${2:-cycle}"
+	local wrapper=""
+	case "$mode" in
+	full | degraded | queue) ;;
+	*) return 1 ;;
+	esac
+	case "$wake_source" in
+	"" | *[!A-Za-z0-9:_-]*) wake_source="invalid" ;;
+	esac
+	if [[ -n "${STOP_FLAG:-}" && -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Supervisor lane: wake skipped (stop flag, source=${wake_source}, GH#40536)" >>"${WRAPPER_LOGFILE:-/dev/null}"
+		return 0
+	fi
+	if _pulse_supervisor_lane_transition_active; then
+		echo "[pulse-wrapper] Supervisor lane: wake skipped (runtime transition, source=${wake_source}, GH#40536)" >>"${WRAPPER_LOGFILE:-/dev/null}"
+		return 0
+	fi
+	if _pulse_supervisor_lane_llm_busy; then
+		echo "[pulse-wrapper] Supervisor lane: wake skipped (LLM session already running, source=${wake_source}, GH#40536)" >>"${WRAPPER_LOGFILE:-/dev/null}"
+		return 0
+	fi
+	if ! wrapper=$(_pulse_supervisor_lane_wrapper); then
+		echo "[pulse-wrapper] Supervisor lane: wake skipped (no lane-capable active wrapper, source=${wake_source}, GH#40536)" >>"${WRAPPER_LOGFILE:-/dev/null}"
+		return 0
+	fi
+	local -a lane_command=(env "PULSE_SUPERVISOR_LANE_SOURCE=${wake_source}" bash "$wrapper" "--supervisor-lane=${mode}")
+	echo "[pulse-wrapper] Supervisor lane: waking mode=${mode} source=${wake_source} wrapper=${wrapper} (GH#40536)" >>"${LOGFILE:-/dev/null}"
+	# Same detachment as the GH#38696 refill wake: the session outlives this
+	# cycle's process group or service cgroup, so the cycle exits now.
+	if declare -F _dlw_systemd_user_service_available >/dev/null 2>&1 &&
+		declare -F _dlw_exec_systemd_user_service >/dev/null 2>&1 &&
+		_dlw_systemd_user_service_available; then
+		_dlw_exec_systemd_user_service "aidevops-pulse-supervisor" "/dev/null" "0" \
+			"${lane_command[@]}" >/dev/null 2>&1 && return 0
+	fi
+	if command -v setsid >/dev/null 2>&1; then
+		setsid nohup "${lane_command[@]}" </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		nohup "${lane_command[@]}" </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	fi
+	disown 2>/dev/null || true
+	return 0
+}
+
+# Routines-ticker wake: a queue-trigger lane at most once per
+# PULSE_SUPERVISOR_LANE_TICK_SECONDS (default 900; 0 disables), so blocker
+# recovery cadence does not depend on cycle length.
+_pulse_supervisor_lane_tick() {
+	local interval="${PULSE_SUPERVISOR_LANE_TICK_SECONDS:-900}"
+	local stamp="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}/supervisor_lane_tick_epoch"
+	local now_epoch="" last_epoch=""
+	_pulse_supervisor_lane_enabled || return 0
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=900
+	[[ "$interval" -gt 0 ]] || return 0
+	now_epoch=$(date +%s) || return 0
+	read -r last_epoch 2>/dev/null <"$stamp" || last_epoch=""
+	if [[ "$last_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$last_epoch" ]] &&
+		[[ $((now_epoch - last_epoch)) -lt "$interval" ]]; then
+		return 0
+	fi
+	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 0
+	_pulse_supervisor_lane_wake queue "routines-tick" || true
+	return 0
+}
+
+_pulse_setup_supervisor_lane_mode() {
+	local lane_argument=""
+	for lane_argument in "$@"; do
+		case "$lane_argument" in
+		--supervisor-lane=*) PULSE_SUPERVISOR_LANE_MODE="${lane_argument#*=}" ;;
+		esac
+	done
+	return 0
+}
+
+# Lane entry (main() entry mode). Runs one normally gated supervisor decision
+# under the LLM lock with its own pid file and EXIT cleanup.
+# Returns: 0, or 2 on an invalid mode
+_pulse_run_supervisor_lane() {
+	local mode="${PULSE_SUPERVISOR_LANE_MODE:-}"
+	local wake_source="${PULSE_SUPERVISOR_LANE_SOURCE:-manual}"
+	local supervisor_age=""
+	case "$mode" in
+	full | degraded | queue) ;;
+	*)
+		printf 'pulse-wrapper: invalid --supervisor-lane mode: %s\n' "$mode" >&2
+		return 2
+		;;
+	esac
+	if [[ -n "${STOP_FLAG:-}" && -f "$STOP_FLAG" ]] || _pulse_supervisor_lane_transition_active ||
+		_pulse_supervisor_lane_llm_busy; then
+		echo "[pulse-wrapper] Supervisor lane: mode=${mode} source=${wake_source} yielding (stop flag, runtime transition or live LLM session, GH#40536)" >>"${WRAPPER_LOGFILE:-/dev/null}"
+		return 0
+	fi
+	# Own pid file: check_dedup and is_pulse_running read PIDFILE as the cycle.
+	PIDFILE="${PULSE_SUPERVISOR_LANE_PIDFILE:-${HOME}/.aidevops/logs/pulse-supervisor-lane.pid}"
+	_LOCK_OWNED=false
+	trap '_pulse_release_llm_lock || true; aidevops_runtime_bundle_lease_release || true' EXIT
+	if declare -F _pulse_set_graphql_budget_priority >/dev/null 2>&1; then
+		_pulse_set_graphql_budget_priority || true
+	fi
+	if declare -F _pulse_set_rest_core_budget_priority >/dev/null 2>&1; then
+		_pulse_set_rest_core_budget_priority || true
+	fi
+	supervisor_age=$(_pulse_supervisor_last_attempt_age) || supervisor_age="n/a"
+	echo "[pulse-wrapper] Supervisor lane: mode=${mode} source=${wake_source} pid=$$ evaluating (GH#40536, last_attempt_age_s=${supervisor_age})" >>"$LOGFILE"
+	case "$mode" in
+	full) _PULSE_SUPERVISOR_LANE_RUN=1 _PULSE_PREFETCH_DEGRADED=0 _pulse_run_supervisor_decision "$supervisor_age" ;;
+	degraded) _PULSE_SUPERVISOR_LANE_RUN=1 _PULSE_PREFETCH_DEGRADED=1 _pulse_run_supervisor_decision "$supervisor_age" ;;
+	queue)
+		_PULSE_SUPERVISOR_LANE_RUN=1 _PULSE_SUPERVISOR_STATE_INCOMPLETE=1 _PULSE_SUPERVISOR_QUEUE_TRIGGERS_ONLY=1 \
+			_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
+		;;
+	esac
 	return 0
 }
 

@@ -61,7 +61,9 @@ _pulse_supervisor_last_attempt_age() {
 }
 
 #######################################
-# GH#38162: shared starvation test for supervisor-phase escapes.
+# GH#38162: shared starvation test for supervisor-phase escapes. Only the
+# GH#34000 degraded-prefetch escape uses it since GH#40536 retired the
+# drain escape (the supervisor lane no longer runs on the drained cycle).
 # Args: $1=threshold seconds (0 or non-numeric disables the escape)
 # Returns: 0 when no supervisor attempt/success happened within the threshold
 #######################################
@@ -83,7 +85,8 @@ _pulse_supervisor_starved_for() {
 # latest attempt/success is older than PULSE_LLM_DEGRADED_ESCAPE_SECONDS
 # (default 6h; 0 disables). The normal _should_run_llm_supervisor gates and
 # failure cooldown still apply, and the prompt marks the state file incomplete.
-# Queue-driven blocker recovery has its own escape (GH#38162).
+# Queue-driven blocker recovery runs on every degraded cycle (GH#38162) and
+# on the supervisor lane's routines-ticker wake (GH#40536).
 # Returns: 0 when a degraded-prefetch supervisor run is admitted, 1 otherwise
 #######################################
 _pulse_degraded_prefetch_supervisor_escape_due() {

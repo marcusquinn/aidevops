@@ -185,7 +185,8 @@ unset _pulse_fd_limit
 #######################################
 PULSE_JITTER_MAX="${PULSE_JITTER_MAX:-30}"
 # Phase 0 (t1963): diagnostic flags must return instantly. Skip jitter
-# when --self-check, --dry-run, --merge-only, or --refill-only appears anywhere in the
+# when --self-check, --dry-run, --merge-only, --refill-only or --supervisor-lane=* (GH#40536,
+# which must also bypass the busy-lock fast-fail below) appears anywhere in the
 # argument list (or PULSE_DRY_RUN=1 is set) so CI, post-install
 # verification, and interactive debugging aren't delayed by up to 30 s of
 # random sleep. --merge-only skips jitter because the 60s plist interval is
@@ -199,7 +200,7 @@ if [[ "${PULSE_DRY_RUN:-0}" == "1" ]]; then
 	_pulse_skip_jitter=1
 else
 	for _pulse_arg in "$@"; do
-		if [[ "$_pulse_arg" == "--self-check" || "$_pulse_arg" == "--dry-run" || "$_pulse_arg" == "--merge-only" || "$_pulse_arg" == "--refill-only" || "$_pulse_arg" == "--command" ]]; then
+		if [[ "$_pulse_arg" == "--self-check" || "$_pulse_arg" == "--dry-run" || "$_pulse_arg" == "--merge-only" || "$_pulse_arg" == "--refill-only" || "$_pulse_arg" == "--command" || "$_pulse_arg" == --supervisor-lane=* ]]; then
 			_pulse_skip_jitter=1
 			break
 		fi
@@ -1178,6 +1179,14 @@ _pulse_run_cycle_routines() {
 # Args: main()'s arguments
 # ---------------------------------------------------------------------------
 _pulse_run_entry_modes() {
+	# GH#40536: the detached supervisor lane takes no instance or dispatch lock.
+	_pulse_setup_supervisor_lane_mode "$@"
+	if [[ -n "${PULSE_SUPERVISOR_LANE_MODE:-}" ]]; then
+		_pulse_run_supervisor_lane
+		_pw_skip_rc=$?
+		_pw_skip_cycle=1
+		return 0
+	fi
 	# Event refill skips preflight/LLM but keeps the main lock and dispatch gates.
 	_pulse_setup_refill_only_mode "$@"
 	if [[ "${PULSE_REFILL_ONLY:-0}" == "1" ]]; then
@@ -1764,15 +1773,16 @@ _pulse_drain_cycle_final_refill() {
 # ---------------------------------------------------------------------------
 # _pulse_run_supervisor_phase
 #
-# Publishes the supervising state, releases the instance lock, then runs the
-# conditional LLM supervisor (_pulse_maybe_run_llm_supervisor, GH#18689).
+# Publishes the supervising state, hands off the census, releases the
+# instance lock, then wakes the detached supervisor lane (GH#40536,
+# _pulse_supervisor_lane_wake). PULSE_SUPERVISOR_LANE=0 instead runs the
+# conditional LLM supervisor in this cycle (_pulse_maybe_run_llm_supervisor).
 # ---------------------------------------------------------------------------
 _pulse_run_supervisor_phase() {
 	_pulse_cycle_state_publish supervising || true
 	# GH#37907: read a deploy drain request before lock release removes it. A
-	# drained earlier-bundle cycle skips the optional LLM supervisor and exits
-	# so the scheduler starts the activated bundle without another long phase,
-	# unless the supervisor is starved (GH#38162 drain escape below).
+	# drained earlier-bundle cycle starts no supervisor of its own and exits so
+	# the scheduler starts the activated bundle without another long phase.
 	local _pulse_drain_bundle=""
 	if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1; then
 		_pulse_drain_bundle=$(_pulse_drain_requested_bundle) || _pulse_drain_bundle=""
@@ -1797,110 +1807,25 @@ _pulse_run_supervisor_phase() {
 	# re-exec can kill it. The next cycle must not wait for maintenance to finish.
 	release_instance_lock
 	_pulse_finish_post_dispatch_housekeeping
+	# GH#40536: the GH#38210/GH#38580 drain-escape deferral marker is retired.
+	rm -f "${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}/llm_drain_escape_deferred" 2>/dev/null || true
+	local _pulse_lane_mode="full"
+	[[ "${_PULSE_PREFETCH_DEGRADED:-0}" != "1" ]] || _pulse_lane_mode="degraded"
+	if _pulse_supervisor_lane_enabled; then
+		# GH#40536: the supervisor runs in its own detached lane under the LLM
+		# lock, so neither a drained nor an undrained cycle waits for it; a
+		# drained cycle wakes the activated bundle's lane (no escape layers).
+		_pulse_supervisor_lane_wake "$_pulse_lane_mode" "cycle${_pulse_drain_bundle:+-drained}" || true
+		return 0
+	fi
 	local _pulse_supervisor_age=""
 	_pulse_supervisor_age=$(_pulse_supervisor_last_attempt_age) || _pulse_supervisor_age="unknown"
 	if [[ -n "$_pulse_drain_bundle" ]]; then
-		# GH#38162: hourly drift redeploys drain most cycles on a loaded runner,
-		# so an unconditional skip starved the supervisor (and terminal-blocker
-		# recovery) for days. Once the latest attempt/success is older than
-		# PULSE_LLM_DRAIN_ESCAPE_SECONDS (default 2h, below the 3h recovery
-		# interval; 0 disables), make one normally gated supervisor decision.
-		# The lock is already released and the census handed off, so the drain
-		# contract (no new census or dispatch from this bundle) is unchanged.
-		if ! _pulse_supervisor_starved_for "${PULSE_LLM_DRAIN_ESCAPE_SECONDS:-7200}"; then
-			_pulse_take_drain_escape_deferral >/dev/null || true
-			echo "[pulse-wrapper] Skipping LLM supervisor: cooperative drain requested; activated bundle ${_pulse_drain_bundle} starts next cycle (GH#37907, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
-			return 0
-		fi
-		# GH#38210/GH#38580: let the activated bundle's first dispatch wave go
-		# first, even across repeated drains, until the deferral backstop.
-		_pulse_defer_drain_supervisor_escape "$_pulse_drain_bundle" "$_pulse_supervisor_age" && return 0
-		echo "[pulse-wrapper] LLM supervisor: cooperative drain requested, but no supervisor attempt within ${PULSE_LLM_DRAIN_ESCAPE_SECONDS:-7200}s — evaluating supervisor before bundle ${_pulse_drain_bundle} starts (GH#38162 starvation escape, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
-		# The drain marker is removed with the lock, so flag the escape for the
-		# supervisor stage: it must not run the dispatch_max recycle loop.
-		_PULSE_DRAIN_ESCAPE=1 _pulse_run_supervisor_decision "$_pulse_supervisor_age"
+		# PULSE_SUPERVISOR_LANE=0 rollback: plain GH#37907 drain skip.
+		echo "[pulse-wrapper] Skipping LLM supervisor: cooperative drain requested; activated bundle ${_pulse_drain_bundle} starts next cycle (GH#37907, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
 		return 0
-	fi
-	if _pulse_take_drain_escape_deferral; then
-		echo "[pulse-wrapper] LLM supervisor: evaluating the deferred drain escape after this cycle's dispatch wave (GH#38210, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
 	fi
 	_pulse_run_supervisor_decision "$_pulse_supervisor_age"
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# _pulse_drain_escape_deferral_file / _pulse_take_drain_escape_deferral
-#
-# GH#38210: a pending deferral of the GH#38162 drain escape. Taking it
-# removes the marker. Returns: 0 when a deferral was pending, 1 otherwise.
-# ---------------------------------------------------------------------------
-_pulse_drain_escape_deferral_file() {
-	printf '%s/llm_drain_escape_deferred\n' "${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
-	return 0
-}
-
-_pulse_take_drain_escape_deferral() {
-	local marker=""
-	marker=$(_pulse_drain_escape_deferral_file)
-	[[ -f "$marker" ]] || return 1
-	rm -f "$marker" 2>/dev/null || true
-	return 0
-}
-
-# Stdout: the epoch at which the pending deferral was first recorded
-# Returns: 0 with an epoch, 1 when no parseable deferral is pending
-_pulse_drain_escape_deferral_epoch() {
-	local marker="" deferred_epoch=""
-	marker=$(_pulse_drain_escape_deferral_file)
-	[[ -f "$marker" ]] || return 1
-	read -r deferred_epoch _ 2>/dev/null <"$marker" || [[ -n "$deferred_epoch" ]] || return 1
-	[[ "$deferred_epoch" =~ ^[0-9]+$ ]] || return 1
-	printf '%s\n' "$deferred_epoch"
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# _pulse_defer_drain_supervisor_escape
-#
-# GH#38210: running the starved supervisor (~15 min) in the drained cycle
-# delayed the activated bundle until its census handoff had expired. Defer
-# the escape instead: the next undrained cycle (normally the activated
-# bundle's) evaluates the supervisor after its dispatch wave.
-# GH#38580: running an already-deferred escape in a second drained cycle
-# still blocked the scheduler from starting the activated bundle for the
-# whole supervisor session (up to 55 min), with every worker slot empty,
-# because the supervisor cannot dispatch (GH#36343). A drained cycle keeps
-# the deferral pending (first-deferral epoch preserved) and exits instead.
-# Backstop: once the deferral is PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS old
-# (default 4h, ~6h without a supervisor; 0 never runs it while drained), the
-# drained cycle runs the escape so persistent drains cannot starve it.
-# PULSE_LLM_DRAIN_ESCAPE_DEFER=0 runs the escape immediately, as before.
-# Args: $1=activated bundle id $2=supervisor attempt age (for the log line)
-# Returns: 0 when deferred (caller skips the supervisor), 1 to run it now
-# ---------------------------------------------------------------------------
-_pulse_defer_drain_supervisor_escape() {
-	local bundle="$1"
-	local supervisor_age="$2"
-	local marker="" now_epoch="" deferred_epoch="" deferral_age=0 max_defer=""
-	[[ "${PULSE_LLM_DRAIN_ESCAPE_DEFER:-1}" != "0" ]] || return 1
-	marker=$(_pulse_drain_escape_deferral_file)
-	now_epoch=$(date +%s) || return 1
-	if deferred_epoch=$(_pulse_drain_escape_deferral_epoch); then
-		[[ "$now_epoch" -le "$deferred_epoch" ]] || deferral_age=$((now_epoch - deferred_epoch))
-		max_defer="${PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS:-14400}"
-		[[ "$max_defer" =~ ^[0-9]+$ ]] || max_defer=14400
-		if [[ "$max_defer" -gt 0 && "$deferral_age" -ge "$max_defer" ]]; then
-			_pulse_take_drain_escape_deferral || true
-			echo "[pulse-wrapper] LLM supervisor: drain escape deferred ${deferral_age}s (backstop ${max_defer}s) across drained cycles — running it in this drained cycle (GH#38580, last_attempt_age_s=${supervisor_age})" >>"$LOGFILE"
-			return 1
-		fi
-		# Keep the first-deferral epoch so the backstop measures total delay.
-		printf '%s %s\n' "$deferred_epoch" "$bundle" >"$marker" 2>/dev/null || true
-		echo "[pulse-wrapper] LLM supervisor: cooperative drain requested again; keeping the GH#38162 escape deferred ${deferral_age}s so bundle ${bundle} starts and dispatches first (GH#38580, last_attempt_age_s=${supervisor_age})" >>"$LOGFILE"
-		return 0
-	fi
-	printf '%s %s\n' "$now_epoch" "$bundle" >"$marker" 2>/dev/null || return 1
-	echo "[pulse-wrapper] LLM supervisor: cooperative drain requested and no supervisor attempt within ${PULSE_LLM_DRAIN_ESCAPE_SECONDS:-7200}s — deferring the GH#38162 escape until after bundle ${bundle}'s first dispatch wave (GH#38210, last_attempt_age_s=${supervisor_age})" >>"$LOGFILE"
 	return 0
 }
 
