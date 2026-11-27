@@ -1055,9 +1055,10 @@ _cmd_update_in_repo() {
 		return 1
 	fi
 
-	# Generate new stats section
+	# Generate new stats section. The published README lets cmd_generate keep
+	# its model usage tables when observability could not be read (t19429).
 	local new_stats
-	new_stats=$(cmd_generate)
+	new_stats=$(PROFILE_PREVIOUS_README="$readme_path" cmd_generate)
 
 	# Daily contributions piggyback on the hourly stats job once per UTC day.
 	_profile_refresh_daily_contributions "$readme_path" "$dry_run"

@@ -267,6 +267,36 @@ EOF
 	return 0
 }
 
+# --- Re-emit the published model usage sections when the source is incomplete ---
+# Usage: _render_preserved_model_usage_sections <previous_readme_path>
+# Copies every "## AI Model Usage" section inside the STATS markers verbatim,
+# in the same shape _render_model_usage_table emits. Without a previous
+# README it states that usage is still being indexed instead of rendering an
+# unrelated fallback population (t19429).
+_render_preserved_model_usage_sections() {
+	local previous_readme="${1:-}"
+	local sections=""
+	if [[ -n "$previous_readme" && -f "$previous_readme" ]]; then
+		sections=$(awk '
+			/<!-- STATS-START -->/ { in_stats = 1; next }
+			/<!-- STATS-END -->/ { in_stats = 0; keep = 0; next }
+			/^## / { keep = in_stats && ($0 ~ /^## AI Model Usage/) }
+			keep { print }
+		' "$previous_readme")
+	fi
+	if [[ -n "$sections" ]]; then
+		printf '\n%s\n' "$sections"
+		return 0
+	fi
+	cat <<'EOF'
+
+## AI Model Usage
+
+_Model usage is still being indexed from local observability data and will appear after a later update._
+EOF
+	return 0
+}
+
 # =============================================================================
 # Generate — Section Generators and cmd_generate Entry Point
 # =============================================================================
@@ -600,8 +630,9 @@ cmd_generate() {
 	month_json=$(_profile_period_json "$session_periods" "28d")
 	year_json=$(_profile_period_json "$session_periods" "year")
 
-	local model_usage_bundle model_json_30d model_json_all
+	local model_usage_bundle model_json_30d model_json_all model_usage_status
 	model_usage_bundle=$(_get_profile_model_usage_bundle)
+	model_usage_status=$(printf '%s' "$model_usage_bundle" | jq -r '.status // "ok"')
 	model_json_30d=$(printf '%s' "$model_usage_bundle" | jq -c '.recent // []')
 	model_json_all=$(printf '%s' "$model_usage_bundle" | jq -c '.all // []')
 
@@ -614,6 +645,7 @@ cmd_generate() {
 	local has_session_time has_model_usage has_screen_time
 	has_session_time=$(echo "$month_json" | jq -r '((.total_human_hours + .total_machine_hours) // 0) > 0')
 	has_model_usage=$(echo "$model_json_all" | jq -r '((if type == "array" then length else 0 end) // 0) > 0')
+	[[ "$model_usage_status" != "incomplete" ]] || has_model_usage="$PROFILE_BOOLEAN_TRUE"
 	has_screen_time=$(echo "$screen_json" | jq -r '(.month_hours // 0) > 0')
 
 	if [[ "$has_session_time" == "$PROFILE_BOOLEAN_TRUE" ]] ||
@@ -632,8 +664,12 @@ EOF
 	fi
 
 	_generate_work_with_ai_table "$screen_json" "$day_json" "$week_json" "$month_json" "$year_json" "$input_json"
-	_render_model_usage_table "AI Model Usage (last 30 days)" "$model_json_30d" "$token_totals_30d"
-	_render_model_usage_table "AI Model Usage (all time)" "$model_json_all" "$token_totals_all"
+	if [[ "$model_usage_status" == "incomplete" ]]; then
+		_render_preserved_model_usage_sections "${PROFILE_PREVIOUS_README:-}"
+	else
+		_render_model_usage_table "AI Model Usage (last 30 days)" "$model_json_30d" "$token_totals_30d"
+		_render_model_usage_table "AI Model Usage (all time)" "$model_json_all" "$token_totals_all"
+	fi
 	_generate_top_apps_section
 
 	return 0

@@ -1832,6 +1832,80 @@ test_profile_model_bundle_scans_each_population_once() {
 	return 0
 }
 
+test_incomplete_observability_keeps_published_model_usage() {
+	local test_name="incomplete observability keeps published model usage instead of fallback populations"
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
+	local calls_file="${TEST_DIR}/model-source-calls" readme="${TEST_DIR}/README.md"
+	cat >"$readme" <<'EOF'
+<!-- STATS-START -->
+## Work with AI
+
+| Metric | Yesterday |
+
+## AI Model Usage (last 30 days)
+
+| model-a | 7 |
+
+_7 total tokens processed. 50% cache hit rate._
+
+## AI Model Usage (all time)
+
+| model-a | 9 |
+
+_9 total tokens processed. 50% cache hit rate._
+<!-- STATS-END -->
+
+## AI Model Usage notes outside the stats markers
+EOF
+	local result
+	result=$(
+		# t19429: a timed-out or still-indexing observability source must not be
+		# replaced by the legacy JSONL or OpenCode populations.
+		_get_model_usage_from_obs_db() {
+			printf '%s\n' obs >>"$calls_file"
+			return "$PROFILE_SOURCE_INCOMPLETE"
+		}
+		_get_model_usage_from_opencode() {
+			printf '%s\n' opencode >>"$calls_file"
+			printf '%s\n' '[{"model":"opencode","requests":1}]'
+			return 0
+		}
+		_get_model_usage_from_jsonl() {
+			printf '%s\n' jsonl >>"$calls_file"
+			printf '%s\n' '[{"model":"jsonl","requests":12}]'
+			return 0
+		}
+		# shellcheck source=../profile-readme-render-lib.sh
+		source "$SOURCE_RENDER_LIB"
+		[[ "$(_get_profile_model_usage_bundle | jq -r '.status')" == "incomplete" ]] || {
+			printf '%s\n' bundle-not-incomplete
+			return 0
+		}
+		if grep -Eq '^(opencode|jsonl)$' "$calls_file"; then
+			printf '%s\n' fallback-population-read
+			return 0
+		fi
+		local preserved
+		preserved=$(_render_preserved_model_usage_sections "$readme")
+		if [[ "$preserved" != *"## AI Model Usage (last 30 days)"*"| model-a | 7 |"*"## AI Model Usage (all time)"*"| model-a | 9 |"* ]] ||
+			[[ "$preserved" == *"Work with AI"* || "$preserved" == *"outside the stats markers"* ]]; then
+			printf 'sections-not-preserved:%s\n' "$preserved"
+			return 0
+		fi
+		[[ "$(_render_preserved_model_usage_sections "${TEST_DIR}/missing.md")" == *"still being indexed"* ]] || {
+			printf '%s\n' no-placeholder
+			return 0
+		}
+		printf '%s\n' preserved
+	)
+	if [[ "$result" != "preserved" ]]; then
+		print_result "$test_name" 1 "unexpected result: ${result}"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
 test_archive_capture_python39_zip_compatibility() {
 	local test_name="publication archive capture supports Python 3.9 zip and rejects incomplete records"
 	TEST_DIR=$(make_canonical_temp_dir) || return 1
@@ -1956,6 +2030,8 @@ main() {
 	test_token_totals_from_selected_model_population_are_equivalent
 	teardown
 	test_profile_model_bundle_scans_each_population_once
+	teardown
+	test_incomplete_observability_keeps_published_model_usage
 	teardown
 
 	echo ""
