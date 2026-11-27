@@ -674,7 +674,9 @@ cmd_generate() {
 		has_data="$PROFILE_BOOLEAN_TRUE"
 	fi
 
-	if [[ "$has_data" != "$PROFILE_BOOLEAN_TRUE" ]]; then
+	local session_incomplete preserved_work=""
+	session_incomplete=$(printf '%s' "$session_periods" | jq -r --arg s "$PROFILE_STATUS_INCOMPLETE" 'any(.[]?; .status? == $s)' 2>/dev/null || printf 'false')
+	if [[ "$has_data" != "$PROFILE_BOOLEAN_TRUE" && "$session_incomplete" != "$PROFILE_BOOLEAN_TRUE" ]]; then
 		cat <<'EOF'
 ## Work with AI
 
@@ -683,8 +685,6 @@ EOF
 		return 0
 	fi
 
-	local session_incomplete preserved_work=""
-	session_incomplete=$(printf '%s' "$session_periods" | jq -r --arg s "$PROFILE_STATUS_INCOMPLETE" 'any(.[]?; .status? == $s)' 2>/dev/null || printf 'false')
 	if [[ "$session_incomplete" == "$PROFILE_BOOLEAN_TRUE" ]] &&
 		preserved_work=$(_render_preserved_work_with_ai_section "${PROFILE_PREVIOUS_README:-}"); then
 		printf '%s\n' "$preserved_work"

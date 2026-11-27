@@ -69,13 +69,13 @@ def advance_session_chunk(connection, entry, top, scan):
     low = entry["rowid"]
     high = min(top, low + SESSION_CHUNK_ROWS)
     rows = [tuple(item) for item in connection.execute(INC_SESSION_QUERY, (low, high, scan.since))]
-    boundary = high if high < top else settled_boundary(rows, high, scan.now)
+    boundary = settled_boundary(rows, high, scan.now)
     for record in rows:
         if record[-1] <= boundary:
             entry["skipped"] += consume_session_record(entry["sessions"], record[:7], "")
     entry["rowid"] = max(low, boundary)
     scan.checkpoint()
-    return [record for record in rows if record[-1] > boundary], boundary <= low
+    return [record for record in rows if record[-1] > boundary], high == top
 
 
 def with_pending(entry, pending):
@@ -90,7 +90,7 @@ def with_pending(entry, pending):
 
 
 def scan_session_source(db_path, entry, scan):
-    """Advance one source entry; return (public rows, ok, complete)."""
+    """Return (public rows, ok, complete scan, fully persisted)."""
     note_scan(db_path)
     pending = []
     try:
@@ -100,13 +100,13 @@ def scan_session_source(db_path, entry, scan):
                 entry.update(rowid=0, sessions={}, skipped=0)
             while entry["rowid"] < top:
                 if scan.expired():
-                    return public_rows(entry["sessions"]), True, False
-                pending, stalled = advance_session_chunk(connection, entry, top, scan)
-                if pending or stalled:
-                    break
+                    return public_rows(entry["sessions"]), True, False, False
+                pending, reached_top = advance_session_chunk(connection, entry, top, scan)
+                if pending:
+                    return with_pending(entry, pending), True, reached_top, False
     except (OSError, sqlite3.Error):
-        return [], False, False
-    return with_pending(entry, pending), True, True
+        return [], False, False, False
+    return public_rows(entry["sessions"]), True, True, True
 
 
 def session_entry(state, path, scan):
@@ -124,8 +124,8 @@ def source_rows(path, entry, archive, scan):
     identity = file_identity(path) if archive else None
     if archive and entry.get("complete") and entry.get("identity") == identity:
         return public_rows(entry["sessions"]), True, True
-    rows, ok, done = scan_session_source(path, entry, scan)
-    if archive and ok and done:
+    rows, ok, done, persisted = scan_session_source(path, entry, scan)
+    if archive and ok and done and persisted:
         entry["complete"], entry["identity"] = True, identity
     return rows, ok, done
 
@@ -139,7 +139,7 @@ def collect_sessions_incremental(home, explicit, state, scan):
         entry, archive = session_entry(state, path, scan)
         rows, source_ok, source_done = source_rows(path, entry, archive, scan)
         ok = ok or source_ok
-        complete = complete and (source_done or not source_ok)
+        complete = complete and source_done
         skipped += entry["skipped"]
         for row in rows:
             if row["session_id"] not in seen:
@@ -159,8 +159,8 @@ def collect_incremental(home, db_path, state_file, since, now):
     def checkpoint():
         try:
             save_state(state_file, state)
-        except OSError:
-            pass
+        except OSError as error:
+            raise RuntimeError(f"session-time: failed to save checkpoint {state_file}: {error}") from error
 
     scan = Scan(since, now, time.monotonic() + max(1.0, budget), checkpoint)
     rows, session_ok, sessions_done, skipped = collect_sessions_incremental(home, db_path, state, scan)
