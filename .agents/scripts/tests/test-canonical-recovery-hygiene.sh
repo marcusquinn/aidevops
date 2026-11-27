@@ -231,11 +231,13 @@ printf 'warning: previous gc\n' >"$LR_GCLOG"
 printf 'partial pack\n' >"$LR_PACK"
 printf '999999 %s' "$(hostname)" >"${LR_COMMON}/gc.pid"
 touch -t "$OLD_STAMP" "$LR_PACK" "${LR_COMMON}/gc.pid"
+# Process name and argv[0] must both be git-repack. A bash symlink provides
+# that; copying coreutils sleep fails on multicall builds (unknown program).
 mkdir -p "${ROOT}/fakebin"
-cp "$(command -v sleep)" "${ROOT}/fakebin/git-repack"
+ln -s "$(command -v bash)" "${ROOT}/fakebin/git-repack"
 (
 	cd "${ROOT}/lr-linked" || exit 1
-	exec "${ROOT}/fakebin/git-repack" 120
+	exec "${ROOT}/fakebin/git-repack" -c 'for _ in $(seq 1 120); do sleep 1; done'
 ) &
 REPACK_PID=$!
 sleep 1
