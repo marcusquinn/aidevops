@@ -549,10 +549,20 @@ test_sandbox_passthrough_scopes_provider_env() {
 			OPENCODE_PROCESS_ROLE='tui' \
 			OPENCODE='1' \
 			OPENCODE_SERVER_PASSWORD='session-password' \
+			NPM_CONFIG_GLOBALCONFIG='/etc/npmrc' \
+			DOCKER_HOST='unix:///run/user/1000/docker.sock' \
+			NPM_CONFIG_PREFIX='/tmp/npm-prefix' \
+			NPM_CONFIG__AUTH='npm-auth-fixture' \
 			build_sandbox_passthrough_csv "openai"
 	)
 
+	# GH#40566: exact npm global config and Docker socket names reach workers;
+	# other NPM_CONFIG_* names (prefix, credentials) never do.
 	if [[ ",$csv," == *",OPENAI_API_KEY,"* ]] &&
+		[[ ",$csv," == *",NPM_CONFIG_GLOBALCONFIG,"* ]] &&
+		[[ ",$csv," == *",DOCKER_HOST,"* ]] &&
+		[[ ",$csv," != *",NPM_CONFIG_PREFIX,"* ]] &&
+		[[ ",$csv," != *",NPM_CONFIG__AUTH,"* ]] &&
 		[[ ",$csv," != *",ANTHROPIC_API_KEY,"* ]] &&
 		[[ ",$csv," != *",GOOGLE_API_KEY,"* ]] &&
 		[[ ",$csv," == *",OPENCODE_BIN,"* ]] &&
@@ -640,10 +650,31 @@ test_triage_sandbox_passthrough_excludes_github_and_worker_authority() {
 			OPENCODE_DISABLE_EXTERNAL_SKILLS=1 \
 			OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 \
 			OTEL_EXPORTER_OTLP_ENDPOINT='https://telemetry.example.invalid' \
+			NPM_CONFIG_GLOBALCONFIG='/etc/npmrc' \
+			DOCKER_HOST='unix:///run/user/1000/docker.sock' \
+			NPM_CONFIG_PREFIX='/tmp/npm-prefix' \
+			NPM_CONFIG__AUTH='npm-auth-fixture' \
 			build_sandbox_passthrough_csv "openai" "triage" 1
 	)
 	local env_auth_csv=""
 	env_auth_csv=$(OPENAI_API_KEY='openai-test' build_sandbox_passthrough_csv "openai" "triage" 0)
+	# GH#40566: worker-only host npm/Docker paths never reach triage or model-replay.
+	local replay_csv=""
+	replay_csv=$(
+		NPM_CONFIG_GLOBALCONFIG='/etc/npmrc' \
+			DOCKER_HOST='unix:///run/user/1000/docker.sock' \
+			NPM_CONFIG_PREFIX='/tmp/npm-prefix' \
+			NPM_CONFIG__AUTH='npm-auth-fixture' \
+			build_sandbox_passthrough_csv "openai" "model-replay" 1
+	)
+	local host_path_name=""
+	for host_path_name in NPM_CONFIG_GLOBALCONFIG DOCKER_HOST NPM_CONFIG_PREFIX NPM_CONFIG__AUTH; do
+		if [[ ",$csv,$replay_csv," == *",${host_path_name},"* ]]; then
+			print_result "triage sandbox passthrough excludes GitHub and worker authority" 1 \
+				"Unexpected ${host_path_name} in triage=${csv} model-replay=${replay_csv}"
+			return 0
+		fi
+	done
 
 	if [[ ",$csv," != *",OPENAI_API_KEY,"* && ",$env_auth_csv," == *",OPENAI_API_KEY,"* &&
 		",$csv," != *",OPENAI_ADMIN_KEY,"* &&
@@ -760,6 +791,10 @@ test_private_sandbox_passthrough_excludes_parent_credentials() {
 			XDG_CONFIG_HOME='/tmp/private-config' \
 			XDG_DATA_HOME='/tmp/private-data' \
 			XDG_STATE_HOME='/tmp/private-state' \
+			NPM_CONFIG_GLOBALCONFIG='/etc/npmrc' \
+			DOCKER_HOST='unix:///run/user/1000/docker.sock' \
+			NPM_CONFIG_PREFIX='/tmp/npm-prefix' \
+			NPM_CONFIG__AUTH='npm-auth-fixture' \
 			build_sandbox_passthrough_csv "openai"
 	)
 	local item_count=0
