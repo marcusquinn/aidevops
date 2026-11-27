@@ -947,6 +947,7 @@ test_credentials_read_unescapes_special_chars() {
 		'"$(printf never-execute)"'
 		'"placeholder-value"  '
 		$'\'placeholder-value\'\t\r'
+		"\"'abcdef'\""
 	)
 	# shellcheck disable=SC2016
 	local -a expected=(
@@ -955,6 +956,7 @@ test_credentials_read_unescapes_special_chars() {
 		' literal space ' ' literal space '
 		'"literal-quotes"' '"literal-quotes"'
 		'$(printf never-execute)' 'placeholder-value' 'placeholder-value'
+		"'abcdef'"
 	)
 	local i=0 readback="" output="" rc=0
 	for ((i = 0; i < ${#stored[@]}; i++)); do
@@ -969,6 +971,13 @@ test_credentials_read_unescapes_special_chars() {
 			bash -c '[[ "$ROUND_TRIP_KEY" == "$EXPECTED_VALUE" ]] || exit 1; printf "%s" "$ROUND_TRIP_KEY"' 2>&1) || rc=$?
 		[[ "$rc" -eq 0 && "$output" == '[REDACTED]' ]] && rc=0 || rc=1
 		print_result "credential quoting case $i: injection and redaction" "$rc" "value or redaction mismatch"
+		rc=0
+		HOME="$TEST_DIR/home" EXPECTED_VALUE="${expected[i]}" bash -c '
+source "$1" help >/dev/null 2>&1
+collected=""
+IFS= read -r -d "" collected < <(collect_secret_values)
+[[ "$collected" == "$EXPECTED_VALUE" ]]' _ "$HELPER" || rc=$?
+		print_result "credential quoting case $i: fallback redaction collection" "$rc" "value mismatch"
 	done
 	return 0
 }

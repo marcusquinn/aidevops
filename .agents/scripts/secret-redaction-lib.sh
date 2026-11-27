@@ -77,8 +77,6 @@ collect_secret_values() {
 			if [[ "$line" =~ ^export[[:space:]]+[A-Z_][A-Z0-9_]*= ]]; then
 				local val=""
 				val=$(decode_credential_value "${line#*=}")
-				val="${val#\'}"
-				val="${val%\'}"
 				local name="${line%%=*}"
 				name="${name##* }"
 				if redaction_value_usable "$val"; then
