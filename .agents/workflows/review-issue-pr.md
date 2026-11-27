@@ -107,6 +107,7 @@ Verify the issue's cited symptoms actually match the codebase's behaviour. A rev
 - **"A locks/unlocks repeatedly"** → grep for the specific events — the observed "churn" may be a different mechanism entirely (e.g., the user may mean "cycles repeatedly" but frame it as "lock/unlock").
 - **Producer/consumer mismatch** → when one helper writes state and another validates it, test the full chain. A validator-only fixture can pass while the writer still emits data the validator rejects (e.g., `sync-workflows` output later flagged by `check-workflows`).
 - **Security/setup advisory suppression** → identify the actual credential path and require positive-path evidence before approving suppression. For issue-sync protected publication, inspect both branch protection and `actions/permissions/workflow`: enabled Actions PR creation makes the job token sufficient, while a disabled setting requires the bounded `SYNC_PAT` PR API fallback. Never infer that the PAT should bypass protection.
+- **Designed behaviour reported as a bug** → find the change that introduced the behaviour (`git log -S`, its linked issue) and the docs that describe it. If it is deliberate, the request is a workflow-strategy change: apply `reference/workflow-strategy.md` (GH#40581).
 
 If the framing doesn't match reality, the review documents the mismatch before proposing changes. "The cited symptom doesn't reproduce, but here's what's actually happening" is more useful than reviewing a fix for a non-existent problem.
 
@@ -120,7 +121,7 @@ If the framing doesn't match reality, the review documents the mismatch before p
 | **Version confirmed** | Occurs on latest? | Check reporter's version vs current |
 | **Not a pre-existing duplicate** | Already reported (open or closed)? | `gh issue list --search "<keywords>" --state all` |
 | **Not superseded by recent work** | Solved or addressed since this was posted? | `git log --since="<issue date>"` + `gh pr list --state merged --search "<keywords>"` |
-| **Actual bug** | Bug or expected behavior? | Check docs, design decisions |
+| **Actual bug** | Bug or expected behavior? | Check docs, design decisions; designed behaviour → `reference/workflow-strategy.md` |
 | **In scope** | Within project scope? | Check project goals, roadmap |
 
 ### 2. Root Cause Analysis
@@ -134,7 +135,7 @@ If the framing doesn't match reality, the review documents the mismatch before p
 
 The reviewer owns the technical decision. Trace the root cause far enough to select one canonical fix, then state the exact files, pattern, tests, and disposition. Do not use contributor questions as a substitute for code/history inspection, reproduction, or architectural judgment.
 
-- **Correct and actionable issue**: judge free-form and externally authored reports on their technical merits, and recommend approval even when a linked PR needs repair or the report is not worker-ready. Never require reporters to supply aidevops brief-schema, file, tier, acceptance, verification, or dispatch metadata before recommending approval; make the project/maintainer responsible for adding files, implementation pattern, verification, tier, and dispatch metadata. Issue validity, PR readiness, and dispatch readiness are separate decisions: validators may block automated dispatch, but readiness failure alone must not rewrite an otherwise valid issue verdict to hold, decline, or request more information.
+- **Correct and actionable issue**: judge free-form and externally authored reports on their technical merits, and recommend approval even when a linked PR needs repair or the report is not worker-ready. Never require reporters to supply aidevops brief-schema, file, tier, acceptance, verification, or dispatch metadata before recommending approval; make the project/maintainer responsible for adding files, implementation pattern, verification, tier, and dispatch metadata. Issue validity, PR readiness, and dispatch readiness are separate decisions: validators may block automated dispatch, but readiness failure alone must not rewrite an otherwise valid issue verdict to hold, decline, or request more information. This does not cover workflow-strategy changes: without maintainer direction, recommend Decline and name the existing control (`reference/workflow-strategy.md`); never turn one into a narrower new hold, flag or guidance route.
 - **Salvageable PR in a managed repo**: choose the exact repair and route it to the active maintainer/worker path; when the interactive session is authorised to implement, repair and verify it in the same session instead of waiting on the contributor.
 - **Wrong-direction or high-churn PR**: recommend a replacement implementation against the root cause and close the old PR as superseded after the replacement lands. Do not keep both paths open.
 - **External repo or unwritable branch**: provide a complete patch plan in one review. Request changes only when repository authority prevents direct repair, and never end with “would you” or an open design question.
@@ -306,7 +307,7 @@ accept one exact `APPROVE`; never mix repositories or include non-Approve target
 
 | Dimension | Finding |
 |-----------|---------|
-| Architectural intent | [Aligned / Contradicts / Unclear — cite recent commits if relevant] |
+| Architectural intent | [Aligned / Contradicts / Unclear — cite the decision it keeps or changes; a workflow-strategy change needs maintainer direction] |
 | Safety gates touched | [list gates from Section 6.2, or "None"] |
 | Symptom vs root cause | [Root cause / Symptom patch — justify; if symptom, link or propose a root-cause issue] |
 | Ripple effects | [enumerated list of downstream impacts; "None identified" requires explicit justification] |
@@ -403,6 +404,7 @@ The review comment is the only output. Pulse detects it next cycle; maintainer r
 After investigation, this is expected behavior:
 - [Why this is by design]
 - [Link to docs]
+- [Existing control that already gives the requested behaviour, e.g. `hold-for-review`, `no-takeover`]
 
 To request different behavior, open a feature request. Closing as "not a bug" — reopen with additional context if needed.
 ```
@@ -461,6 +463,8 @@ The proposed change conflicts with #{recent_decision_pr} ({title}), which intent
 
 **Disposition: REPLACE** — close this implementation path and produce a fix that preserves the invariant from #{recent_decision_pr}. Reopen the design decision separately only when current evidence falsifies its rationale.
 ```
+
+Use this only when the issue reports a real defect. When the issue's goal is to change the decision itself, use "Issue is Not a Bug" and recommend Decline.
 
 ## CLI Commands
 

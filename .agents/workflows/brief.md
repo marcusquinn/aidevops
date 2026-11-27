@@ -136,6 +136,10 @@ are impractical. Labels take precedence when both are present. Never include
 secret values; names in either form remain visible to issue readers. A runner
 without every named secret silently yields before claiming.
 
+### 7. Workflow-strategy check (GH#40581)
+
+If the brief changes when work moves, what stops it, what a label means, or who owns it, apply `reference/workflow-strategy.md` first. Behaviour that matches a documented decision is not a bug, and a strategy change needs maintainer direction before `auto-dispatch`.
+
 ## Dispatch Readiness Contract (brief schema v2)
 
 New briefs intended for auto-dispatch use `<!-- aidevops:brief-schema=v2 -->`
