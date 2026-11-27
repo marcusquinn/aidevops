@@ -6194,4 +6194,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t19346 fix(pulse): break early in stats quarantine scan and prune the backlog #bug ref:GH#40197 pr:#40265 completed:2026-11-25
 
-- [ ] t19404 feat(claim-task-id): warn when an auto-dispatch issue is filed in a pulse-off repo #auto-dispatch #enhancement ref:GH#40460
+- [x] t19404 feat(claim-task-id): warn when an auto-dispatch issue is filed in a pulse-off repo #auto-dispatch #enhancement ref:GH#40460 pr:#40531 completed:2026-11-27
