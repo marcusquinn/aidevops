@@ -237,7 +237,7 @@ mkdir -p "${ROOT}/fakebin"
 ln -s "$(command -v bash)" "${ROOT}/fakebin/git-repack"
 (
 	cd "${ROOT}/lr-linked" || exit 1
-	exec "${ROOT}/fakebin/git-repack" -c 'for _ in $(seq 1 120); do sleep 1; done'
+	exec "${ROOT}/fakebin/git-repack" -c 'for ((i = 0; i < 120; i++)); do sleep 1; done'
 ) &
 REPACK_PID=$!
 sleep 1
