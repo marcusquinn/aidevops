@@ -574,4 +574,3 @@ _dispatch_record_and_cache_block() {
 	_dispatch_cache_confirmed_block "$candidate" "$issue" "$repo"
 	return 1
 }
-
