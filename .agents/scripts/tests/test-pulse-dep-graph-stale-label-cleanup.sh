@@ -371,6 +371,9 @@ refresh_fixture() {
 	# Virtual clock: budget maths must not depend on wall time, which drifts
 	# under parallel load (affected-tests-helper runs suites concurrently).
 	REFRESH_VIRTUAL_CLOCK=0
+	# Unset so SECONDS loses its live-counter behaviour; assignments then
+	# store exact virtual values (fixtures run in subshells).
+	unset SECONDS
 	SECONDS=0
 	reset_logs
 	return 0
