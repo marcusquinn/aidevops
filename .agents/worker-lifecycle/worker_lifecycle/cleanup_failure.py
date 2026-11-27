@@ -7,14 +7,18 @@ import re
 import subprocess  # nosec B404 # classify exceptions, never execute error argv
 
 from .filesystem import FilesystemValidationError, filesystem_error_details
+from .interrupted_removal import UnresumableHalfState
 from .protected_proc import ProcessCensusUnavailable
 from .refusal import failure_category
 
 
 def failure_details(error: Exception) -> dict:
     """Report stable diagnostics, never raw argv, stdout or stderr."""
-    if isinstance(error, FilesystemValidationError):
-        details: dict = filesystem_error_details(error)
+    if isinstance(error, UnresumableHalfState):
+        # A structural half-removal is terminal, never a retryable guard refusal.
+        details: dict = {"reason": error.code, "classification": "terminal"}
+    elif isinstance(error, FilesystemValidationError):
+        details = filesystem_error_details(error)
     else:
         details = {"reason": type(error).__name__}
     if isinstance(error, ValueError) and re.fullmatch(r"[a-z][a-z0-9:_-]{0,159}", str(error)):

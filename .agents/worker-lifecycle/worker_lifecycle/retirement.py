@@ -265,7 +265,6 @@ def _finish(
     }
     if _event(store, _event_id(generation, "retired")) is not None:
         return result  # Never inspect/remove a replacement at the public name.
-    _validate_owner_evidence(store, generation)
     container = Path(plan["container"])
     if (container.parent != path.parent
             or not container.name.startswith(".lifecycle-retire-")
@@ -277,6 +276,12 @@ def _finish(
     admin = Path(plan["git_directory"])
     removing = _event(store, _event_id(generation, "removing"))
     if not os.path.lexists(target) and removing is None:
+        # Owner evidence gates relocation only, where `prepare_cleanup` proves the
+        # runs ended. Once the private tree is relocated, a run row that can never
+        # reach `ended` (a killed owner's unfinished teardown) must not strand it
+        # (GH#40569). The inode, marker, idle and deletion-only checks in
+        # `_remove_private` still gate the removal itself.
+        _validate_owner_evidence(store, generation)
         _relocate_source(store, path, plan, receipt)
     if os.path.lexists(target):
         _remove_private(store, path, plan, receipt)

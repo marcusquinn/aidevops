@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import time
 
 from .storage import StoreConflict
@@ -28,6 +29,71 @@ REMOVAL_TIMEOUT = 300
 BOUNDARY = "validation_boundary_ns"
 # Coarse filesystem clocks (one kernel tick) can stamp a later change early.
 CLOCK_SLACK_NS = 1_000_000_000
+
+GIT_ADMINISTRATION_ABSENT = "git-administration-absent"
+GIT_ADMINISTRATION_UNREADABLE = "git-administration-unreadable"
+
+
+class UnresumableHalfState(Exception):
+    """A present tree whose Git administration is gone and whose journal cannot resume it.
+
+    This is a structural half-removal, not a transient guard refusal. Reporting it
+    in the same shape as a guard refusal is what let half-removed worktrees retry
+    forever instead of escalating (GH#40569); callers report `code` under a
+    terminal status and never treat it as removal authority.
+    """
+
+    def __init__(self, code: str = GIT_ADMINISTRATION_ABSENT) -> None:
+        """Carry only the stable classification code."""
+        super().__init__(code)
+        self.code = code
+
+
+def half_removed(path: Path) -> str | None:
+    """Return the half-removal code for a present tree with no usable administration.
+
+    Only structural shapes are detected: the `.git` link is absent, or the linked
+    worktree's `.git` file names an administration target that is gone or not a
+    directory. A main
+    checkout's administration directory, a verbatim file and every absent path
+    return `None`, so all other classes keep their existing guards and resumes.
+    """
+    if not os.path.lexists(path):
+        return None
+    code, admin = _link_state(path / ".git")
+    if admin is None:
+        return code
+    if not os.path.lexists(admin):
+        return GIT_ADMINISTRATION_ABSENT
+    return None if admin.is_dir() else GIT_ADMINISTRATION_UNREADABLE
+
+
+def _read_link(link: Path) -> str | None:
+    """Return a regular `.git` file's text; `None` for a directory or a link."""
+    if not stat.S_ISREG(link.lstat().st_mode):
+        return None  # A directory (main checkout) or a link is not this class.
+    with open(link, "rb") as stream:
+        return stream.read(4096).decode("utf-8").strip()
+
+
+def _link_state(link: Path) -> tuple[str | None, Path | None]:
+    """Return `(code, None)` or `(None, administration directory)`."""
+    if not os.path.lexists(link):
+        return GIT_ADMINISTRATION_ABSENT, None
+    try:
+        line = _read_link(link)
+    except (OSError, UnicodeDecodeError):
+        line = ""
+    if line is None:
+        return None, None
+    if not line.startswith("gitdir:"):
+        return GIT_ADMINISTRATION_UNREADABLE, None
+    pathname = line.removeprefix("gitdir:").strip()
+    if not pathname:
+        return GIT_ADMINISTRATION_UNREADABLE, None
+    admin = Path(pathname)
+    # Git resolves a relative pathname against the directory of the `.git` file.
+    return None, admin if admin.is_absolute() else link.parent / admin
 
 
 def native_timeout(arguments: tuple[str, ...]) -> int | None:

@@ -39,6 +39,32 @@ def _directories(root: Path) -> list[str]:
 _CONTAINERS = (".lifecycle-retire-", ".legacy-retire-")
 
 
+def managed_root() -> Path:
+    """Return the canonical managed worktree base selected by the operator."""
+    default_root = Path.home() / "Git" / "_worktrees"
+    root = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR", default_root)).expanduser()
+    if not root.is_absolute() or root.resolve() != root:
+        raise ValueError("noncanonical-worktree-root")
+    return root
+
+
+def containers(root: Path) -> list[str]:
+    """Return private retirement containers under the base, from the filesystem.
+
+    Enumeration is unconditional and independent of the generation rotation, so a
+    staging tree whose generation left the rotation is still discovered (GH#40569).
+    """
+    if not root.is_absolute() or root.resolve() != root:
+        raise ValueError("noncanonical-worktree-root")
+    try:
+        entries = list(root.iterdir())
+    except FileNotFoundError:
+        return []
+    return sorted(str(path) for path in entries
+                  if path.is_dir() and not path.is_symlink()
+                  and path.name.startswith(_CONTAINERS))
+
+
 def _retirement_container(path: str) -> bool:
     """True for a private retirement container or the tree inside it.
 
@@ -58,8 +84,7 @@ def discover(items, repositories):
     """
     paths = {item["path"]: item for item in items}
     errors = []
-    default_root = Path.home() / "Git" / "_worktrees"
-    root = Path(os.environ.get("AIDEVOPS_WORKTREE_BASE_DIR", default_root)).expanduser()
+    root = managed_root()
     sources = [(str(root), partial(_directories, root))]
     sources.extend((common, partial(_registered, common))
                    for common in sorted(repositories))

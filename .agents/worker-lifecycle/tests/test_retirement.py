@@ -702,7 +702,8 @@ class RetirementContract(unittest.TestCase):
         self.assertEqual((private / "work.txt").read_text(), "unfinished result")
         self.assertEqual((self.target / "replacement").read_text(), "keep")
 
-    def test_resume_rechecks_generation_and_owner_evidence(self):
+    def test_resume_rechecks_private_identity_not_unobtainable_owner_evidence(self):
+        """GH#40569: a relocated tree completes; its private identity still gates."""
         self.create()
         self.interrupt_after_move()
         plan = retirement._event(
@@ -716,14 +717,14 @@ class RetirementContract(unittest.TestCase):
         with self.assertRaisesRegex(StoreConflict, "private-worktree-changed"):
             self.retire()
         marker.write_bytes(original)
+        # Owner evidence gated relocation only, where it was already proven. A run
+        # row that can never reach `ended` must not strand the relocated tree.
         run = str(uuid4())
         identity = adapter_for(self.store.installation_id()).capture(os.getpid())
         self.store.register(str(uuid4()), run, identity)
         self.store.bind(str(uuid4()), run, self.generation, str(self.target))
-        with self.assertRaisesRegex(StoreConflict, "retirement-owner-evidence-changed"):
-            self.retire()
-        private = Path(plan["container"]) / "tree"
-        self.assertEqual((private / "work.txt").read_text(), "unfinished result")
+        self.assertEqual(self.retire()["status"], "retired")
+        self.assertFalse(Path(plan["container"]).exists())
 
     def interrupt_removal(self, late=None):
         """Delete part of the private tree, then fail as a timed-out native removal."""
@@ -771,6 +772,19 @@ class RetirementContract(unittest.TestCase):
         report = cleanup_pass(self.store, self.cleanup_config(), self.output)
         self.assertEqual((report["retired"], report["failed"]), (1, 0), report)
         self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+
+    def test_relocated_retirement_completes_with_unended_run_row(self):
+        """GH#40569 mode B: an interrupted teardown cannot strand a staged tree."""
+        self.create()
+        self.interrupt_after_move()
+        run = str(uuid4())
+        identity = adapter_for(self.store.installation_id()).capture(os.getpid())
+        self.store.register(str(uuid4()), run, identity)
+        self.store.bind(str(uuid4()), run, self.generation, str(self.target))
+        report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        self.assertEqual((report["retired"], report["failed"]), (1, 0), report)
+        self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+        self.assertNotIn(".lifecycle-retire-", self.git("worktree", "list", "--porcelain"))
 
     def test_partial_remove_keeps_data_written_before_removal_was_journaled(self):
         self.create()

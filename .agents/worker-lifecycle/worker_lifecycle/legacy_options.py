@@ -1,5 +1,7 @@
 """Selection and limits for the temporary legacy cleanup operation."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 import json
 import math
@@ -9,13 +11,17 @@ import tempfile
 
 from .cleanup_failure import failure_details
 from .filesystem import validate_private_path as _private
+from .interrupted_removal import UnresumableHalfState
 from .process import ObservationUnavailable
 from .pull_requests import PassPullRequests
 
+# Terminal status for a half-removed tree that no journal can resume (GH#40569).
+HALF_STATE_STATUS = "needs-resume"
 
-def queue(store, items):
+
+def queue(store, items, name="legacy-cleanup-position"):
     """A private cursor gives bounded passes fair progress; it grants no authority."""
-    cursor = store.directory / "legacy-cleanup-position"
+    cursor = store.directory / name
     position = ""
     if os.path.lexists(cursor):
         _private(cursor)
@@ -29,7 +35,7 @@ def queue(store, items):
             + [item for item in ordered if item["path"] <= position])
 
 
-def advance(store, path):
+def advance(store, path, name="legacy-cleanup-position"):
     """Atomically advance the persisted cleanup position."""
     temporary = None
     try:
@@ -39,10 +45,18 @@ def advance(store, path):
             json.dump(path, stream)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, store.directory / "legacy-cleanup-position")
+        os.replace(temporary, store.directory / name)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def preservation_name(path: str | Path) -> bool:
+    """True when the operator marked the name as preserved; it is never a candidate."""
+    patterns = ["preserved", "readonly", "recovery", "review"]
+    patterns.extend(filter(None, os.environ.get(
+        "AIDEVOPS_WORKTREE_PRESERVE_PATTERNS", "").lower().split(",")))
+    return any(pattern in Path(path).name.lower() for pattern in patterns)
 
 
 def reconstructible_path(item, managed=False):
@@ -59,10 +73,7 @@ def reconstructible_path(item, managed=False):
     if (path.resolve(strict=True) != path or not path.is_relative_to(base)
             or path == base):
         raise ValueError("outside-managed-worktree-base")
-    patterns = ["preserved", "readonly", "recovery", "review"]
-    patterns.extend(filter(None, os.environ.get(
-        "AIDEVOPS_WORKTREE_PRESERVE_PATTERNS", "").lower().split(",")))
-    if any(pattern in path.name.lower() for pattern in patterns):
+    if preservation_name(path):
         raise ValueError("preservation-name")
     if (item["modern"] and not managed) or path.stat().st_uid != os.geteuid():
         raise ValueError("managed-or-foreign-worktree")
@@ -75,12 +86,30 @@ def require_managed_takeover(check, *arguments, **keywords):
 
 
 def retained_outcome(item, error):
-    """Report fields for a retained item: the concrete guard reason plus ownership."""
+    """Report fields for a retained item: the concrete guard reason plus ownership.
+
+    A structural half-removal is a terminal classification, never a retryable guard
+    refusal, so it is reported under its own status for escalation (GH#40569).
+    """
+    if isinstance(error, UnresumableHalfState):
+        return half_state_outcome(item, error.code)
     fields = dict(status="retained", **failure_details(error))
+    if (isinstance(error, FileNotFoundError) and os.path.lexists(item["path"])
+            and not preservation_name(item["path"])
+            and not os.path.lexists(Path(item["path"]) / ".git")):
+        fields.update(status=HALF_STATE_STATUS, classification="terminal")
     if item["modern"]:
         fields["ownership"] = "managed-by-current-cleanup"
     if isinstance(error, ObservationUnavailable):
         fields["reason"] = str(error)
+    return fields
+
+
+def half_state_outcome(item, code, status=HALF_STATE_STATUS):
+    """Report a structural half-removal as terminal work, never as a retry (GH#40569)."""
+    fields = {"status": status, "reason": code, "classification": "terminal"}
+    if item["modern"]:
+        fields["ownership"] = "managed-by-current-cleanup"
     return fields
 
 

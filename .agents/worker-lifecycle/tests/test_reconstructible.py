@@ -15,11 +15,13 @@ from uuid import uuid4
 from tests import test_retirement as fixtures
 from worker_lifecycle import legacy_cleanup as cleanup
 from worker_lifecycle import legacy_inventory as inventory
+from worker_lifecycle import legacy_lookup
 from worker_lifecycle import legacy_probe as probe
 from worker_lifecycle import legacy_proc
 from worker_lifecycle import legacy_resume
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id, prepare_cleanup
+from worker_lifecycle.enrollment import _git_directory
 from worker_lifecycle.legacy_options import CleanupOptions
 from worker_lifecycle.runtime import adapter_for
 
@@ -52,7 +54,7 @@ class ReconstructibleContract(unittest.TestCase):
                               side_effect=lambda path: self.real_census(path, self.proc))
         census.start()
         self.addCleanup(census.stop)
-        prs = patch.object(cleanup, "open_pull_requests", return_value=[])
+        prs = patch.object(legacy_lookup, "open_pull_requests", return_value=[])
         self.prs = prs.start()
         self.addCleanup(prs.stop)
 
@@ -232,6 +234,89 @@ class ReconstructibleContract(unittest.TestCase):
         result, eligible, attempted = self.retire()
         self.assertEqual(result["status"], "already-absent", result)
         self.assertEqual((eligible, attempted), (0, 0))
+
+    def test_half_removed_tree_without_git_is_terminal_not_retried(self):
+        """GH#40569 mode A: a present tree whose `.git` is gone is never `retained`."""
+        self.reserve_managed()
+        (self.target / ".git").unlink()
+        self.options = CleanupOptions(self.output, apply=False, min_age=0)
+        preview, _, _ = self.retire()
+        self.assertEqual(preview["status"], "needs-resume", preview)
+        self.assertEqual(preview["reason"], "git-administration-absent", preview)
+        self.options = CleanupOptions(self.output, apply=True, min_age=0)
+        first, eligible, attempted = self.retire()
+        self.assertEqual(first["status"], "needs-resume", first)
+        self.assertEqual(first["reason"], "git-administration-absent", first)
+        self.assertEqual(first["classification"], "terminal", first)
+        self.assertEqual(first["ownership"], "managed-by-current-cleanup", first)
+        self.assertEqual((eligible, attempted), (0, 0), first)
+        # The escalation is durable: the same structure is not re-decided as a
+        # fresh guard refusal on every later pass.
+        second, _, _ = self.retire()
+        self.assertEqual(second["status"], "already-escalated", second)
+        self.assertEqual(second["reason"], "git-administration-absent", second)
+        self.assertTrue(self.target.exists())
+
+    def test_unbound_half_removed_tree_is_terminal_too(self):
+        """Mode A residue also appears with no registry row: still escalated."""
+        (self.target / ".git").unlink()
+        result, eligible, attempted = self.retire()
+        self.assertEqual(result["status"], "needs-resume", result)
+        self.assertEqual(result["reason"], "git-administration-absent", result)
+        self.assertNotIn("ownership", result)
+        self.assertEqual((eligible, attempted), (0, 0), result)
+
+    def test_half_removed_link_without_administration_is_terminal(self):
+        """The linked-worktree `.git` file naming a gone administration is the class."""
+        link = self.target / ".git"
+        link.write_text(f"gitdir: {self.base / 'absent-administration'}\n")
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "needs-resume", result)
+        self.assertEqual(result["reason"], "git-administration-absent", result)
+
+    def test_unreadable_git_link_is_terminal(self):
+        (self.target / ".git").write_text("not an administration line\n")
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "needs-resume", result)
+        self.assertEqual(result["reason"], "git-administration-unreadable", result)
+
+    def test_empty_git_administration_path_is_terminal(self):
+        (self.target / ".git").write_text("gitdir: \n")
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "needs-resume", result)
+        self.assertEqual(result["reason"], "git-administration-unreadable", result)
+
+    def test_non_directory_git_administration_is_escalated_once(self):
+        admin = self.base / "administration-file"
+        admin.write_text("keep administration residue\n")
+        (self.target / ".git").write_text(f"gitdir: {admin}\n")
+        first, eligible, attempted = self.retire()
+        self.assertEqual(first["status"], "needs-resume", first)
+        self.assertEqual(first["reason"], "git-administration-unreadable", first)
+        self.assertEqual(first["classification"], "terminal", first)
+        self.assertEqual((eligible, attempted), (0, 0))
+        second, _, _ = self.retire()
+        self.assertEqual(second["status"], "already-escalated", second)
+        self.assertEqual(second["reason"], "git-administration-unreadable", second)
+        self.assertTrue(self.target.exists())
+        self.assertEqual(admin.read_text(), "keep administration residue\n")
+
+    def test_relative_git_administration_uses_link_directory(self):
+        from worker_lifecycle.interrupted_removal import half_removed
+
+        link = self.target / ".git"
+        admin = _git_directory(self.target)
+        link.write_text(f"gitdir: {os.path.relpath(admin, self.target)}\n")
+        self.assertNotEqual(Path.cwd(), self.target)
+        self.assertIsNone(half_removed(self.target))
+
+    def test_preserved_name_without_git_keeps_its_exclusion(self):
+        """Operator-preserved names are never escalated as half-removals."""
+        preserved = self.base / "repository-preserved"
+        preserved.mkdir()
+        self.item = dict(self.item, path=str(preserved))
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retained", result)
 
     def test_preview_is_read_only(self):
         self.options = CleanupOptions(self.output, apply=False, min_age=0)
