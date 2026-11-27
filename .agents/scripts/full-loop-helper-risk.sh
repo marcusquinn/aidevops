@@ -318,8 +318,9 @@ _runtime_context_has_critical_pattern() {
 _runtime_prose_has_critical_pattern() {
 	local prose="$1"
 	_runtime_context_has_non_session_critical_pattern "$prose" && return 0
-	if [[ "$prose" =~ (^|[^[:alnum:]_])(create|destroy|delete|revoke|rotate|validate|refresh|expire|invalidate|set|clear)[[:space:]_/-]*session([^[:alnum:]_]|$) ]] ||
-		[[ "$prose" =~ (^|[^[:alnum:]_])session[[:space:]_/-]*(create|destroy|delete|revoke|rotate|validate|refresh|expire|invalidate|set|clear|store|manager|handler|service)([^[:alnum:]_]|$) ]]; then
+	# Operand must be "session" itself; cookie/token/store prose stays neutral.
+	if [[ "$prose" =~ (^|[^[:alnum:]_])(create|destroy|delete|revoke|rotate|validate|refresh|expire|invalidate|set|clear)[[:space:]_/-]*sessions?([^[:alnum:]_]|$) ]] ||
+		[[ "$prose" =~ (^|[^[:alnum:]_])sessions?[[:space:]_/-]*(create|destroy|delete|revoke|rotate|validate|refresh|expire|invalidate|set|clear|store|manager|handler|service)([^[:alnum:]_]|$) ]]; then
 		return 0
 	fi
 	return 1

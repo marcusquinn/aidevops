@@ -286,10 +286,12 @@ for prose in "Set store version to 1.2" "Refresh token examples" "Clear cookie e
 	prose_risk=$(_derive_runtime_risk "" "package.json" "$prose")
 	assert_contains "non-session operation prose stays Medium: $prose" "<$prose_risk>" "<Medium>"
 done
-for prose in "Refresh session" "Update session manager" "Clear session" "Update session store"; do
+for prose in "Refresh session" "Update session manager" "Clear session" "Update session store" "Refresh sessions" "Update sessions manager"; do
 	prose_risk=$(_derive_runtime_risk "" "package.json" "$prose")
 	assert_contains "session operation prose stays Critical: $prose" "<$prose_risk>" "<Critical>"
 done
+noun_store_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Set store version to 1.2")
+assert_contains "GH#40564 non-session operand prose is not Critical" "<$noun_store_risk>" "<Medium>"
 registry_runtime_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,src/auth.sh" "Registry and auth change")
 assert_contains "registry beside runtime code still derives Critical" "$registry_runtime_risk" "Critical"
 
