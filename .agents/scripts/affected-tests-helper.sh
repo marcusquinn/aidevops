@@ -298,7 +298,15 @@ def execute(item):
             if remaining <= 0:
                 return None
             timeout = min(timeout, remaining)
-        sink = open(scratch_path(suite), "wb") if capture else subprocess.DEVNULL
+        sink = subprocess.DEVNULL
+        if capture:
+            # GH#40529: a rerun appends, so a flaky first attempt's failure lines
+            # survive into the excerpt instead of being replaced by the passing rerun.
+            rerun = os.path.exists(scratch_path(suite))
+            sink = open(scratch_path(suite), "ab")
+            if rerun:
+                sink.write(b"--- rerun attempt ---\n")
+                sink.flush()
         try:
             proc = subprocess.Popen(["bash", suite], cwd=directory, stdout=sink,
                                     stderr=subprocess.STDOUT if capture else subprocess.DEVNULL,
