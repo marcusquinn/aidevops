@@ -532,6 +532,24 @@ test_unlabeled_worker_branch_merge_gate() {
 	else
 		fail "proven worker branch is relabelled and deferred" "rc=${rc}"
 	fi
+	# GH#40524: -sN continuation heads prove against the stem's claim.
+	local info_s2='{"headRefName":"feature/auto-20261108-155943-gh501-s2","body":"For #501"}'
+	claim_case runner1 "$good"
+	rc=0
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "tier:standard" "$info_s2" || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		assert_status_call "origin 900 ${SLUG} worker --pr" "proven -s2 continuation branch is relabelled"
+	else
+		fail "proven -s2 continuation branch is relabelled" "rc=${rc}"
+	fi
+	claim_case runner1 "${good//runner1/runner2}"
+	rc=0
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "tier:standard" "$info_s2" || rc=$?
+	if [[ "$rc" -eq 1 && ! -s "$STATUS_LOG" ]]; then
+		pass "unprovable -s2 continuation branch is still skipped"
+	else
+		fail "unprovable -s2 continuation branch is still skipped" "rc=${rc}"
+	fi
 	reset_case
 	rc=0
 	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "origin:worker" "$info" || rc=$?
