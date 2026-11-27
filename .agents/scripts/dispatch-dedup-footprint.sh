@@ -296,16 +296,65 @@ _footprint_defer_candidate_body() {
 }
 
 #######################################
+# Resolve the footprint paths one active issue reserves. Single per-issue rule
+# shared by _footprint_refresh_inflight_cache and the durable defer wake rule
+# (GH#40634): parent-task reserves nothing; a claimed issue needs
+# implementation evidence (GH#36817); an in-review, non-claimed issue with a
+# linked open PR reserves that PR's files (GH#40406). Call in the current
+# shell (never command substitution) so the GH#38055 open-PR memo survives.
+# Args: $1 repo, $2 number, $3 is_parent, $4 is_claimed, $5 is_in_review,
+#       $6 body (base64), $7 result var name (paths, empty when none)
+#######################################
+_footprint_issue_live_paths() {
+	local repo_slug="$1" num="$2" is_parent_task="$3" is_claimed="$4"
+	local is_in_review="$5" body_b64="$6" result_var="$7"
+	# Locals use an _flp_ prefix so they never shadow the caller's result_var.
+	local _flp_body="" _flp_paths="" _flp_scoped="" _flp_prs=""
+	printf -v "$result_var" '%s' ""
+	[[ "$is_parent_task" == "true" ]] && return 0
+	if [[ "$is_claimed" == "true" ]] &&
+		! _footprint_claimed_coordinator_has_evidence "$repo_slug" "$num"; then
+		_footprint_coordinator_log "event=footprint_stale_coordinator issue=#${num} repo=${repo_slug}"
+		return 0
+	fi
+	[[ -n "$body_b64" ]] || return 0
+	_flp_body=$(printf '%s' "$body_b64" | base64 -d 2>/dev/null) || _flp_body=""
+	[[ -n "$_flp_body" ]] || return 0
+	_flp_paths=$(_footprint_extract_paths "$_flp_body")
+	# An in-review issue with a linked open PR reserves the files that PR
+	# changes; any uncertainty keeps the declared brief paths.
+	if [[ "$is_in_review" == true && "$is_claimed" != true ]]; then
+		_footprint_load_open_prs "$repo_slug"
+		_flp_scoped=$(_footprint_pr_scoped_paths "$num")
+		if [[ -n "$_flp_scoped" ]]; then
+			_flp_prs=$(printf '%s\n' "$_flp_scoped" | sed -n '1p')
+			_flp_paths=$(printf '%s\n' "$_flp_scoped" | sed '1d')
+			if [[ -n "$_flp_paths" ]]; then
+				_footprint_coordinator_log "event=footprint_pr_scoped issue=#${num} repo=${repo_slug} pr=#${_flp_prs//,/,#} files=$(printf '%s\n' "$_flp_paths" | grep -c .)"
+			else
+				_flp_paths=$(_footprint_extract_paths "$_flp_body")
+			fi
+		fi
+	fi
+	printf -v "$result_var" '%s' "$_flp_paths"
+	return 0
+}
+
+#######################################
 # Print the wake reason for a refreshed blocker, or nothing while it still
-# holds the recorded footprint. Mirrors _footprint_refresh_inflight_cache:
-# parent-task and claimed no-auto-dispatch coordinators may not hold an
-# in-flight footprint there, so they hand the decision back to the live check.
+# holds the recorded footprint. Uses the same per-issue rule as
+# _footprint_refresh_inflight_cache (_footprint_issue_live_paths): a blocker
+# that no longer reserves a footprint (parent-task, or claimed without
+# implementation evidence) wakes with blocker_coordinator_released; a changed
+# footprint hash wakes with blocker_footprint_changed; an unchanged one stays
+# suppressed (GH#40634).
 # Args: $1 = blocker issue JSON, $2 = defer state JSON
 #######################################
 _footprint_defer_blocker_wake_reason() {
 	local blocker_json="$1"
 	local state_json="$2"
-	local blocker_files="" blocker_hash=""
+	local blocker_paths="" blocker_hash="" flags="" repo_slug="" num=""
+	local is_parent="" is_claimed="" is_in_review="" body_b64=""
 	if ! printf '%s' "$blocker_json" | jq -e '
 		[(.labels // [])[]? | if type == "object" then .name else . end] as $names
 		| (((.state // "") | ascii_upcase) == "OPEN")
@@ -313,15 +362,23 @@ _footprint_defer_blocker_wake_reason() {
 		printf 'blocker_lifecycle_changed\n'
 		return 0
 	fi
-	if printf '%s' "$blocker_json" | jq -e '
+	local status_prefix="status:"
+	local review_label="${status_prefix}in-review"
+	flags=$(printf '%s' "$blocker_json" | jq -r --arg review_label "$review_label" '
 		[(.labels // [])[]? | if type == "object" then .name else . end] as $names
-		| (($names | index("parent-task")) != null)
-		or ((($names | index("no-auto-dispatch")) != null) and (($names | index("status:claimed")) != null))' >/dev/null 2>&1; then
-		printf 'blocker_coordinator_recheck\n'
+		| [((($names | index("parent-task")) != null) | tostring),
+			((($names | index("status:claimed")) != null) | tostring),
+			((($names | index($review_label)) != null) | tostring),
+			((.body // "") | tostring | @base64)] | @tsv' 2>/dev/null) || flags=""
+	IFS=$'\t' read -r is_parent is_claimed is_in_review body_b64 <<<"$flags"
+	repo_slug=$(printf '%s' "$state_json" | jq -r '.repo_slug // ""')
+	num=$(printf '%s' "$state_json" | jq -r '.blocking_issue // ""')
+	_footprint_issue_live_paths "$repo_slug" "$num" "$is_parent" "$is_claimed" "$is_in_review" "$body_b64" blocker_paths
+	if [[ -z "$blocker_paths" ]]; then
+		printf 'blocker_coordinator_released\n'
 		return 0
 	fi
-	blocker_files=$(_footprint_extract_paths "$(printf '%s' "$blocker_json" | jq -r '.body // ""')")
-	blocker_hash=$(_footprint_hash_text "$blocker_files") || blocker_hash=""
+	blocker_hash=$(_footprint_hash_text "$(printf '%s\n' "$blocker_paths" | sort -u)") || blocker_hash=""
 	if [[ -z "$blocker_hash" ]] || ! printf '%s' "$state_json" | jq -e --arg hash "$blocker_hash" '.blocker_hash == $hash' >/dev/null 2>&1; then
 		printf 'blocker_footprint_changed\n'
 	fi
@@ -1063,45 +1120,13 @@ _footprint_refresh_inflight_cache() {
 		| @tsv' 2>/dev/null) || issue_rows=""
 
 	local cache_data=""
-	local num="" is_parent_task="" is_claimed="" is_in_review="" body_b64="" body="" paths="" p=""
-	local scoped="" scoped_prs=""
+	local num="" is_parent_task="" is_claimed="" is_in_review="" body_b64="" paths="" p=""
 	_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=1
 	_FOOTPRINT_OPEN_PRS_REPO=""
 	_FOOTPRINT_OPEN_PRS_JSON=""
 	while IFS=$'\t' read -r num is_parent_task is_claimed is_in_review body_b64; do
 		[[ -n "$num" ]] || continue
-		[[ "$is_parent_task" == "true" ]] && continue
-
-		# GH#36817: any claimed issue only
-		# holds its footprint when there is evidence of active
-		# implementation; otherwise it is skipped like parent-task.
-		if [[ "$is_claimed" == "true" ]] &&
-			! _footprint_claimed_coordinator_has_evidence "$repo_slug" "$num"; then
-			_footprint_coordinator_log "event=footprint_stale_coordinator issue=#${num} repo=${repo_slug}"
-			continue
-		fi
-
-		[[ -n "$body_b64" ]] || continue
-		body=$(printf '%s' "$body_b64" | base64 -d 2>/dev/null) || body=""
-		[[ -n "$body" ]] || continue
-		paths=$(_footprint_extract_paths "$body")
-
-		# An in-review issue with a linked open PR reserves the files that PR
-		# changes; any uncertainty keeps the declared brief paths. Other
-		# statuses are unchanged: a worker may edit beyond its PR's diff.
-		if [[ "$is_in_review" == true && "$is_claimed" != true ]]; then
-			_footprint_load_open_prs "$repo_slug"
-			scoped=$(_footprint_pr_scoped_paths "$num")
-			if [[ -n "$scoped" ]]; then
-				scoped_prs=$(printf '%s\n' "$scoped" | sed -n '1p')
-				paths=$(printf '%s\n' "$scoped" | sed '1d')
-				if [[ -n "$paths" ]]; then
-					_footprint_coordinator_log "event=footprint_pr_scoped issue=#${num} repo=${repo_slug} pr=#${scoped_prs//,/,#} files=$(printf '%s\n' "$paths" | grep -c .)"
-				else
-					paths=$(_footprint_extract_paths "$body")
-				fi
-			fi
-		fi
+		_footprint_issue_live_paths "$repo_slug" "$num" "$is_parent_task" "$is_claimed" "$is_in_review" "$body_b64" paths
 		if [[ -n "$paths" ]]; then
 			while IFS= read -r p; do
 				[[ -n "$p" ]] || continue
