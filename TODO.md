@@ -2549,6 +2549,14 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19417 fix(tests): surface and fix Linux-only red suites cleanup-receipt and pr-checkpoint in Shell Suite Main Health #bug ref:GH#40529
 
+- [ ] t19418 perf(pulse): make the split dispatch lock the default (PULSE_DISPATCH_LOCK_SPLIT=0 opts out) #auto-dispatch #feat #framework #pulse ref:GH#40535
+
+- [ ] t19419 refactor(pulse): run the LLM supervisor on its own schedule and remove the drain-escape layers #auto-dispatch #framework #pulse #refactor ref:GH#40536
+
+- [ ] t19420 refactor(pulse): remove shared-lock refill workarounds after the split dispatch lock soak #auto-dispatch #framework #pulse #refactor blocked-by:t19418,t19419 ref:GH#40537
+
+- [ ] t19421 perf(pulse): make the cross-cycle negative cache hit so repeatedly refused candidates skip the dedup ceremony #auto-dispatch #feat #framework #pulse ref:GH#40538
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
