@@ -35,6 +35,14 @@ PASS=0
 FAIL=0
 ERRORS=""
 
+# claim-task-id runs the public-write privacy guard before allocation. Pin the
+# fixture target's visibility (private → guard allows) so these label cases do
+# not depend on the runner's ambient privacy cache or a live visibility probe.
+PRIVACY_FIXTURE_DIR=$(mktemp -d) || exit 1
+trap 'rm -rf "$PRIVACY_FIXTURE_DIR"' EXIT
+export PRIVACY_CACHE_FILE="${PRIVACY_FIXTURE_DIR}/repo-privacy.json"
+printf '{"marcusquinn/aidevops":{"private":true,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+
 # ---------------------------------------------------------------------------
 # Test framework helpers
 # ---------------------------------------------------------------------------
