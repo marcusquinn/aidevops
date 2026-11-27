@@ -299,6 +299,10 @@ cat >"${TEST_BIN}/gh" <<'MOCK_GH'
 [[ -z "${MOCK_GH_CALL_LOG:-}" ]] || printf '%s\n' "$*" >>"$MOCK_GH_CALL_LOG"
 # t18668: any issue other than blocker #401 is a candidate whose body is read
 # because production candidate snapshots carry none.
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" && -n "${MOCK_DEFER_PRS:-}" ]]; then
+	printf '%s\n' "$MOCK_DEFER_PRS"
+	exit 0
+fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "view" && "${3:-}" != "401" ]]; then
 	[[ "${MOCK_CANDIDATE_FAIL:-0}" == "1" ]] && exit 1
 	printf '{"body":"## Files to Modify\\n- `EDIT: %s:100-120`"}\n' \
@@ -799,13 +803,75 @@ MOCK_BLOCKER_EXTRA_LABEL=parent-task
 export MOCK_BLOCKER_EXTRA_LABEL
 if _footprint_defer_should_suppress "508" "test/repo" "$snapshot_json"; then
 	print_result "durable defer: coordinator blocker wakes live check" 1 "(still suppressed)"
-elif [[ "$(_footprint_defer_status_json "508" "test/repo" | jq -r '.wake_reason')" == "blocker_coordinator_recheck" ]]; then
+elif [[ "$(_footprint_defer_status_json "508" "test/repo" | jq -r '.wake_reason')" == "blocker_coordinator_released" ]]; then
 	print_result "durable defer: coordinator blocker wakes live check" 0
 else
 	print_result "durable defer: coordinator blocker wakes live check" 1 \
 		"(state=$(_footprint_defer_status_json "508" "test/repo"))"
 fi
 unset MOCK_BLOCKER_EXTRA_LABEL
+
+# =============================================================================
+# Test 23b-e (GH#40634) — the defer wake rule shares the live per-issue rule:
+# claimed blockers stay suppressed with evidence and wake without it; an
+# in-review blocker scoped to its PR files stays suppressed.
+# =============================================================================
+export AIDEVOPS_DISPATCH_LEDGER_DIR="${TEST_ROOT}/defer-ledger"
+mkdir -p "$AIDEVOPS_DISPATCH_LEDGER_DIR"
+defer_cand_files="$(_footprint_extract_paths "$candidate_body")"
+_defer_wake_of() {
+	_footprint_defer_status_json "$1" "test/repo" | jq -r '.wake_reason'
+	return 0
+}
+
+# (a) claimed + no-auto-dispatch with a linked open PR stays suppressed twice.
+MOCK_BLOCKER_LABEL=status:claimed
+MOCK_BLOCKER_EXTRA_LABEL=no-auto-dispatch
+export MOCK_DEFER_PRS='[{"number":900,"headRefName":"feature/x","body":"Resolves #401","files":[{"path":".agents/scripts/pulse-wrapper.sh"}]}]'
+export MOCK_BLOCKER_LABEL MOCK_BLOCKER_EXTRA_LABEL
+_footprint_defer_record_overlap "510" "test/repo" "$defer_cand_files" \
+	".agents/scripts/pulse-wrapper.sh|401" "401" ".agents/scripts/pulse-wrapper.sh"
+_footprint_defer_should_suppress "510" "test/repo" "$snapshot_json" && _footprint_defer_should_suppress "510" "test/repo" "$snapshot_json" && defer_rc=0 || defer_rc=1
+if [[ "$defer_rc" -eq 0 && "$(_footprint_defer_status_json "510" "test/repo" | jq -r '.suppressed_count')" == "2" ]]; then
+	print_result "durable defer: claimed blocker with evidence stays suppressed" 0
+else
+	print_result "durable defer: claimed blocker with evidence stays suppressed" 1 "(rc=${defer_rc} state=$(_footprint_defer_status_json "510" "test/repo"))"
+fi
+
+# (b) same blocker, no PR/ledger/stamp: wakes as released.
+MOCK_DEFER_PRS='[]'
+export MOCK_DEFER_PRS
+_footprint_defer_record_overlap "511" "test/repo" "$defer_cand_files" \
+	".agents/scripts/pulse-wrapper.sh|401" "401" ".agents/scripts/pulse-wrapper.sh"
+if ! _footprint_defer_should_suppress "511" "test/repo" "$snapshot_json" && [[ "$(_defer_wake_of 511)" == "blocker_coordinator_released" ]]; then
+	print_result "durable defer: claimed blocker without evidence wakes released" 0
+else
+	print_result "durable defer: claimed blocker without evidence wakes released" 1 "(state=$(_footprint_defer_status_json "511" "test/repo"))"
+fi
+
+# (c) claimed without no-auto-dispatch and no evidence also wakes.
+unset MOCK_BLOCKER_EXTRA_LABEL
+_footprint_defer_record_overlap "512" "test/repo" "$defer_cand_files" \
+	".agents/scripts/pulse-wrapper.sh|401" "401" ".agents/scripts/pulse-wrapper.sh"
+if ! _footprint_defer_should_suppress "512" "test/repo" "$snapshot_json" && [[ "$(_defer_wake_of 512)" == "blocker_coordinator_released" ]]; then
+	print_result "durable defer: plain claimed blocker without evidence wakes released" 0
+else
+	print_result "durable defer: plain claimed blocker without evidence wakes released" 1 "(state=$(_footprint_defer_status_json "512" "test/repo"))"
+fi
+
+# (d) in-review blocker recorded with PR-scoped files stays suppressed.
+MOCK_BLOCKER_LABEL=status:in-review
+export MOCK_DEFER_PRS='[{"number":901,"headRefName":"feature/y","body":"Resolves #401","files":[{"path":".agents/scripts/other-scoped.sh"}]}]'
+export MOCK_BLOCKER_LABEL
+_footprint_defer_record_overlap "513" "test/repo" "$defer_cand_files" \
+	".agents/scripts/other-scoped.sh|401" "401" ".agents/scripts/other-scoped.sh"
+if _footprint_defer_should_suppress "513" "test/repo" "$snapshot_json"; then
+	print_result "durable defer: PR-scoped in-review blocker stays suppressed" 0
+else
+	print_result "durable defer: PR-scoped in-review blocker stays suppressed" 1 "(state=$(_footprint_defer_status_json "513" "test/repo"))"
+fi
+unset MOCK_BLOCKER_LABEL MOCK_BLOCKER_EXTRA_LABEL MOCK_DEFER_PRS AIDEVOPS_DISPATCH_LEDGER_DIR
+PATH="$OLD_PATH"
 
 # =============================================================================
 # Test 24 — an expired defer wakes before any GitHub read
