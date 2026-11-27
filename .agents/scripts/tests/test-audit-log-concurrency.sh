@@ -149,7 +149,7 @@ if (
 	publication_marker="${TEST_ROOT}/publication-protected"
 	mkdir() {
 		local target="$1"
-		command mkdir "$@" || return 1
+		aidevops_mkdir_exclusive "$@" || return 1
 		if [[ "$target" == "$publication_lock" ]]; then
 			if _audit_reclaim_stale_lock "$target" 0; then
 				return 1

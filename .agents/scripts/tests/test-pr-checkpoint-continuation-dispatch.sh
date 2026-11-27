@@ -4,6 +4,11 @@
 # Sourced by test-pr-checkpoint-continuation-helper.sh; relies on its fixtures.
 # shellcheck disable=SC2154  # fixtures and variables are defined by sibling modules
 
+# The parent suite sources checkpoint libraries, not shared-constants.sh.
+# Its fake gh ref/label reservations must use the production primitive too.
+# shellcheck source=../mkdir-exclusive.sh
+source "${TEST_SCRIPT_DIR}/../mkdir-exclusive.sh"
+
 # Decision-policy fixtures exercise the actual inference parser and publication
 # tail. External GitHub/model operations are replaced, never the trust checks.
 decision_fixture() {

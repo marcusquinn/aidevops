@@ -667,7 +667,7 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 		return $?
 	}
 	local real_mkdir
-	real_mkdir=$(command -v mkdir)
+	real_mkdir=$(type -P mkdir)
 	local real_cat
 	real_cat=$(command -v cat)
 	mkdir() {

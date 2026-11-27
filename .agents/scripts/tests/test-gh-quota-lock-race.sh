@@ -71,7 +71,7 @@ cat() {
 # It is active only for the later publication-boundary fixture.
 mkdir() {
 	local target="$1"
-	command mkdir "$@" || return 1
+	aidevops_mkdir_exclusive "$@" || return 1
 	if [[ "$target" == "${publication_lock_dir:-}" ]]; then
 		if _ghqa_lock_reclaim "$target" 100; then
 			return 1

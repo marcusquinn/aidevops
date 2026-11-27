@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# shellcheck source=mkdir-exclusive.sh
+source "${BASH_SOURCE[0]%/*}/mkdir-exclusive.sh"
+
 #
 # canonical-recovery-lock.sh - owner-aware mkdir lock for the shared
 # <common_dir>/aidevops-canonical-recovery.lock directory (GH#38643).

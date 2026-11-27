@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 
+# shellcheck source=mkdir-exclusive.sh
+source "${BASH_SOURCE[0]%/*}/mkdir-exclusive.sh"
+
 # Bootstrap-time repair for a deployed Pulse bundle that is behind a clean,
 # exact canonical main checkout. This file is sourced before Pulse acquires its
 # runtime lease, allowing setup's atomic bundle transition to proceed safely.

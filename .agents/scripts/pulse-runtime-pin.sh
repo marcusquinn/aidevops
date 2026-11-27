@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
+# shellcheck source=mkdir-exclusive.sh
+source "${BASH_SOURCE[0]%/*}/mkdir-exclusive.sh"
+
 # Resolve and manage an expiring operator pin for the Pulse runtime only.
 # Normal aidevops activation continues while Pulse remains on one validated
 # immutable bundle for controlled observations and other bounded diagnostics.

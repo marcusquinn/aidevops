@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# shellcheck source=../../mkdir-exclusive.sh
+source "${BASH_SOURCE[0]%/*}/../../mkdir-exclusive.sh"
+
 # Runtime agent deployment: convert and copy agents to each runtime's native directory.
 # Strips aidevops-only frontmatter (mode, subagents); keeps standard fields
 # (name, description, tools, model, permissionMode, hooks, mcpServers, etc.).
@@ -196,8 +199,12 @@ _convert_agent_frontmatter() {
 _is_agent_definition() {
 	local file="$1"
 	# Check first 30 lines for name: in YAML frontmatter (fast path)
-	head -30 "$file" 2>/dev/null | grep -q '^name:' 2>/dev/null
-	return $?
+	local line count=0
+	while IFS= read -r line && ((count < 30)); do
+		count=$((count + 1))
+		[[ "$line" == name:* ]] && return 0
+	done <"$file" 2>/dev/null
+	return 1
 }
 
 # _agent_source_dirs: list directories under agents_source that contain subagents.
