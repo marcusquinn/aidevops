@@ -282,6 +282,8 @@ other_conf_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.co
 assert_contains "other agent configs still derive Critical" "$other_conf_risk" "Critical"
 noun_session_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Bump version for this session's PRs")
 assert_contains "GH#40564 session noun in prose is not Critical" "<$noun_session_risk>" "<Medium>"
+noun_store_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Set store version to 1.2")
+assert_contains "GH#40564 non-session operand prose is not Critical" "<$noun_store_risk>" "<Medium>"
 registry_runtime_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,src/auth.sh" "Registry and auth change")
 assert_contains "registry beside runtime code still derives Critical" "$registry_runtime_risk" "Critical"
 
