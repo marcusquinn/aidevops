@@ -29,6 +29,8 @@ usage() {
 # Refuse a PR comment that would stale a verified signed PR approval (any
 # non-bot comment changes the exact snapshot). Fails open: only an exact
 # VERIFIED blocks; parse gaps and verification errors post as before.
+# STALE_APPROVAL and NO_APPROVAL are expected non-error outcomes (nothing can go
+# stale), so they must not warn; anything else is a real verification problem.
 _pr_comment_guarded() {
 	local allow=0 arg="" target="" repo="" skip_value=0 prev="" n=""
 	local -a rest=()
@@ -69,8 +71,18 @@ _pr_comment_guarded() {
 			if [[ "$rc" == 0 && "$last" == "VERIFIED" ]]; then
 				printf 'PR #%s has a verified signed approval; a new PR comment would stale it. Post on the linked issue, or pass --allow-approval-stale.\n' "$n" >&2
 				return 2
-			elif [[ "$rc" != 0 && "$last" != "STALE_APPROVAL" && "$last" != "UNSIGNED" ]]; then
-				printf '[aidevops][gh-write-helper][WARN] approval verification errored (exit %s); posting without approval guard\n' "$rc" >&2
+			elif [[ "$rc" != 0 ]]; then
+				# approval-helper.sh verify vocabulary: NO_APPROVAL (exit 1) means no
+				# marker exists and STALE_APPROVAL (exit 4) means an approval exists
+				# but is already stale. Neither can be staled by this comment, so
+				# they are expected and must stay quiet. API_ERROR, NO_KEY, unknown
+				# or empty output are genuine problems worth surfacing.
+				case "$last" in
+				NO_APPROVAL | STALE_APPROVAL) ;;
+				*)
+					printf '[aidevops][gh-write-helper][WARN] approval verification errored (exit %s); posting without approval guard\n' "$rc" >&2
+					;;
+				esac
 			fi
 		fi
 	fi
