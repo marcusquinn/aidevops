@@ -313,6 +313,19 @@ _runtime_context_has_critical_pattern() {
 	return 1
 }
 
+# Free-text PR prose (summary/title): the bare noun "session" is not a risk
+# signal (GH#40564); count it only beside an executable session operation.
+_runtime_prose_has_critical_pattern() {
+	local prose="$1"
+	_runtime_context_has_non_session_critical_pattern "$prose" && return 0
+	# Operand must be "session" itself; cookie/token/store prose stays neutral.
+	if [[ "$prose" =~ (^|[^[:alnum:]_])(create|destroy|delete|revoke|rotate|validate|refresh|expire|invalidate|set|clear)[[:space:]_/-]*sessions?([^[:alnum:]_]|$) ]] ||
+		[[ "$prose" =~ (^|[^[:alnum:]_])sessions?[[:space:]_/-]*(create|destroy|delete|revoke|rotate|validate|refresh|expire|invalidate|set|clear|store|manager|handler|service)([^[:alnum:]_]|$) ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # Remove complete single-line string and regular-expression literals. If a
 # literal is incomplete or ambiguous, return the original line so classification
 # remains fail-closed. Regex literals are recognized only after an expression
@@ -473,8 +486,12 @@ _derive_runtime_risk() {
 		fi
 		runtime_context=$(printf '%s' "$runtime_context" | tr '[:upper:]' '[:lower:]')
 		diff_context=$(printf '%s' "$diff_context" | tr '[:upper:]' '[:lower:]')
+		local prose_lc="" paths_lc=""
+		prose_lc=$(printf '%s' "$summary_what" | tr '[:upper:]' '[:lower:]')
+		paths_lc=$(printf '%s' "$runtime_paths" | tr '[:upper:]' '[:lower:]')
 		context="${runtime_context} ${diff_context}"
-		if _runtime_context_has_critical_pattern "$runtime_context" ||
+		if _runtime_prose_has_critical_pattern "$prose_lc" ||
+			_runtime_context_has_critical_pattern "$paths_lc" ||
 			_runtime_diff_has_critical_pattern "$diff_context"; then
 			detected_risk="Critical"
 		elif _runtime_context_has_high_pattern "$context"; then

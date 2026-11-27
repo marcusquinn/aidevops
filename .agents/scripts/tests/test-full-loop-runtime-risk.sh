@@ -278,8 +278,20 @@ assert_contains "runtime file beside todo data still derives Critical" "$todo_ru
 # The prompt-hook candidate registry is display-only metadata (GH#37972 follow-up).
 registry_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,.agents/reference/release-scope-sweep.md" "Add candidate: sessions share one account")
 assert_contains "prompt-hook candidate registry derives Low despite policy terms" "<$registry_risk>" "<Low>"
-other_conf_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Update session list")
+other_conf_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Update session manager list")
 assert_contains "other agent configs still derive Critical" "$other_conf_risk" "Critical"
+noun_session_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Bump version for this session's PRs")
+assert_contains "GH#40564 session noun in prose is not Critical" "<$noun_session_risk>" "<Medium>"
+for prose in "Set store version to 1.2" "Refresh token examples" "Clear cookie examples" "Update token manager examples"; do
+	prose_risk=$(_derive_runtime_risk "" "package.json" "$prose")
+	assert_contains "non-session operation prose stays Medium: $prose" "<$prose_risk>" "<Medium>"
+done
+for prose in "Refresh session" "Update session manager" "Clear session" "Update session store" "Refresh sessions" "Update sessions manager"; do
+	prose_risk=$(_derive_runtime_risk "" "package.json" "$prose")
+	assert_contains "session operation prose stays Critical: $prose" "<$prose_risk>" "<Critical>"
+done
+noun_store_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Set store version to 1.2")
+assert_contains "GH#40564 non-session operand prose is not Critical" "<$noun_store_risk>" "<Medium>"
 registry_runtime_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,src/auth.sh" "Registry and auth change")
 assert_contains "registry beside runtime code still derives Critical" "$registry_runtime_risk" "Critical"
 
@@ -359,7 +371,7 @@ assert_contains "product staging matches pending risk paths" "<$runtime_state_st
 printf 'export const session = createSession();\n' >"${RUNTIME_STATE_REPO}/.agents/loop-state-product.js"
 runtime_neighbor_files=$(cd "$RUNTIME_STATE_REPO" && _pending_runtime_files_changed HEAD)
 assert_contains "similarly named product path remains in pending files" "$runtime_neighbor_files" ".agents/loop-state-product.js"
-runtime_neighbor_risk=$(_derive_runtime_risk "" "$runtime_neighbor_files" "Update session handling")
+runtime_neighbor_risk=$(_derive_runtime_risk "" "$runtime_neighbor_files" "Update session handler")
 assert_contains "runtime exclusions do not downgrade adjacent product code" "$runtime_neighbor_risk" "Critical"
 "$TEST_NATIVE_GIT" -C "$RUNTIME_STATE_REPO" add .agents/.full-loop-cleanup-deferred
 stage_in_runtime_state_repo() {
