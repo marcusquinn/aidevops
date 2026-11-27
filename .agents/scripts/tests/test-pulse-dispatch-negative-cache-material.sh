@@ -197,13 +197,25 @@ check "record falls back to metadata material when the read fails" prefixed "$(m
 			check "$reason round $round rejects actionable comment" misses "$changed"
 		done
 	done
-	# Assigned draft skips are a distinct, intentional live/stale-owner boundary,
-	# not evidence that it is safe to omit that ownership check.
+	# GH#40551: a claimed-owner draft block is recorded with the owner snapshot as
+	# its boundary and survives the ceremony's own ops-only revision bump. An
+	# assignee without an active claim label has no ownership evidence: uncached.
 	_dispatch_negative_pr_fingerprint() { printf 'draft-head\n'; return 0; }
 	for round in 1 2 3 4 5 6; do
 		rm -f "$CACHE_FILE"
-		_dispatch_negative_cache_record "$before" worker_draft_checkpoint_blocked 123
-		check "assigned draft round $round remains uncached" test ! -f "$CACHE_FILE"
+		_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+		ISSUE_JSON=$(jq -c '.assignees=[{login:"owner"}] | .labels=[{name:"status:in-progress"}]' <<<"$(issue_at "$OLD")")
+		COMMENTS_JSON="[]"
+		captured=$(_dispatch_negative_cache_capture_candidate "$before")
+		ISSUE_JSON=$(jq -c --arg new "$NEW" '.updated_at=$new' <<<"$ISSUE_JSON")
+		COMMENTS_JSON="$OPS_COMMENTS"
+		_dispatch_negative_cache_record "$captured" worker_draft_checkpoint_blocked 123
+		check "claimed-owner draft round $round keeps body material" prefixed "$(material_field)" body:
+		after=$(jq -c --arg new "$NEW" '.updatedAt=$new' <<<"$before")
+		check "claimed-owner draft round $round reuses ops-only bump" equals "$(_dispatch_negative_cache_reason "$after")" worker_draft_checkpoint_blocked
+		rm -f "$CACHE_FILE"
+		_dispatch_negative_cache_record "$(jq -c '.labels=["bug"]' <<<"$captured")" worker_draft_checkpoint_blocked 123
+		check "unclaimed-assignee draft round $round remains uncached" test ! -f "$CACHE_FILE"
 	done
 	# Capture failure never blesses a new revision or mismatched ownership.
 	_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
