@@ -899,24 +899,7 @@ cmd_kill_runaways() {
 				fi
 			fi
 			local rss_mb=$((rss / 1024))
-			local process_class killed_at cgroup_path
-			process_class='other'
-			case "$cmd_base" in
-			shellcheck) process_class='lint' ;;
-			node)
-				if [[ $cmd_full == *playwright* && $cmd_full == *--list* ]]; then
-					process_class='playwright-list'
-				else
-					process_class='node'
-				fi
-				;;
-			opencode | opencode-ai | claude | claude-ai) process_class='ai-runtime' ;;
-			esac
-			killed_at=$(_process_guard_timestamp)
-			cgroup_path=$(_get_process_cgroup_path "$pid")
-			echo "Killing PID $pid ($cmd_base) — $violation"
-			printf '[process-guard] %s action=kill pid=%s ppid=%s class=%s cmd=%s rss_mb=%s age_seconds=%s runtime_limit_seconds=%s cgroup=%s reason=%s\n' \
-				"$killed_at" "$pid" "$ppid" "$process_class" "$cmd_base" "$rss_mb" "$age_seconds" "$runtime_limit" "$cgroup_path" "$violation" >>"$LOGFILE"
+			_log_runaway_kill "$pid" "$ppid" "$cmd_base" "$cmd_full" "$rss_mb" "$age_seconds" "$runtime_limit" "$violation"
 			if [[ "$stale_supervisor" -eq 1 ]]; then
 				# Pre-GH#40209 deadlocks cannot run the SIGTERM handler.
 				kill -9 "$pid" 2>/dev/null || continue
@@ -934,6 +917,30 @@ cmd_kill_runaways() {
 	else
 		echo "No runaway processes found"
 	fi
+	return 0
+}
+
+# Keep process attribution and audit formatting separate from reap policy.
+_log_runaway_kill() {
+	local pid="$1" ppid="$2" cmd_base="$3" cmd_full="$4"
+	local rss_mb="$5" age_seconds="$6" runtime_limit="$7" violation="$8"
+	local process_class='other' killed_at="" cgroup_path=""
+	case "$cmd_base" in
+	shellcheck) process_class='lint' ;;
+	node)
+		if [[ $cmd_full == *playwright* && $cmd_full == *--list* ]]; then
+			process_class='playwright-list'
+		else
+			process_class='node'
+		fi
+		;;
+	opencode | opencode-ai | claude | claude-ai) process_class='ai-runtime' ;;
+	esac
+	killed_at=$(_process_guard_timestamp)
+	cgroup_path=$(_get_process_cgroup_path "$pid")
+	echo "Killing PID $pid ($cmd_base) — $violation"
+	printf '[process-guard] %s action=kill pid=%s ppid=%s class=%s cmd=%s rss_mb=%s age_seconds=%s runtime_limit_seconds=%s cgroup=%s reason=%s\n' \
+		"$killed_at" "$pid" "$ppid" "$process_class" "$cmd_base" "$rss_mb" "$age_seconds" "$runtime_limit" "$cgroup_path" "$violation" >>"$LOGFILE"
 	return 0
 }
 
