@@ -188,17 +188,25 @@ statement line is already imported untagged.
 
 - **9998 Suspense Account** holds every untagged bank line; **2997 Balance Sheet
   Suspense** holds lines someone tagged "unknown", plus "Pending bank transfer" legs
-  that should net to zero. Both must be cleared before a filing.
+  that should net to zero. Clear both before a filing, except a transfer genuinely in
+  transit at the cutoff (left one account before period end, arrived after). Reconcile
+  that against both statements and report it, rather than adjusting it away.
 - `GET /ledgers?nominal_code=&date_from=&date_to=&limit=&offset=` returns
   `{NetValue, total, transactions:[…]}`, not a bare list. Page with `offset`. A
   negative amount is a debit. `NetValue` for a date range is the quickest way to
   verify a reclassification.
 - `POST /journals` posts balanced multi-line journals. Prefer one journal per period
   that names its reason and covers a whole class of reclassification over many
-  silent line edits, and dry-run it from live ledger lines first.
+  silent line edits, and dry-run it from live ledger lines first. Journals don't feed
+  the VAT return (QuickFile builds it from invoices and purchases). Correct
+  VAT-bearing items on the invoice or purchase itself, or with the proper VAT
+  adjustment.
 - Retagging a bank line, dividend vouchers, nominal creation and bank tagging rules
   have no REST operation. In the UI:
-  - **Retag a line:** Banking → account → Tagged → Detag, then Tag Me.
+  - **Retag a line:** Banking → account → Tagged → Detag, then Tag Me. This applies only
+    to lines tagged straight to a nominal. If the line pays an invoice or purchase,
+    change the category on that document instead. Detagging leaves the document unpaid,
+    and re-tagging as a new purchase duplicates the cost.
   - **Dividend:** "Salary, dividend or other drawings" → Dividends → "Create
     dividend voucher". This also creates the board minute.
   - **New nominal:** Chart of Accounts → Create New Account → Enter specific code.
