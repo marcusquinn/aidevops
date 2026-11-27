@@ -2540,7 +2540,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19408 CodeFactor failure guidance: read check-run annotations, not the client-rendered details page #auto-dispatch #bug ref:GH#40495 pr:#40496 completed:2026-11-26
 
-- [ ] t19410 fix: brand guideline swatches ignore DESIGN.md token colours #bug ref:GH#40508
+- [x] t19410 fix: brand guideline swatches ignore DESIGN.md token colours #bug ref:GH#40508 pr:#40509 completed:2026-11-27
 - [x] t19411 fix: generated _reports artifacts misclassified as Critical runtime risk #bug ref:GH#40511 pr:#40512 completed:2026-11-26
 
 - [x] t19413 fix: keywords issue sweep refiles not-planned closures on undefined-product repos #bug ref:GH#40513 pr:#40514 completed:2026-11-26
@@ -2555,7 +2555,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19420 refactor(pulse): remove shared-lock refill workarounds after the split dispatch lock soak #auto-dispatch #framework #pulse #refactor blocked-by:t19418,t19419 ref:GH#40537
 
-- [ ] t19421 perf(pulse): make the cross-cycle negative cache hit so repeatedly refused candidates skip the dedup ceremony #auto-dispatch #feat #framework #pulse ref:GH#40538
+- [-] t19421 perf(pulse): make the cross-cycle negative cache hit so repeatedly refused candidates skip the dedup ceremony #auto-dispatch #feat #framework #pulse ref:GH#40538 declined:2026-11-27
 
 - [x] t19422 fix(audit-log): stale-lock reclaim acts on a newer holder's lock, wedging or overlapping concurrent writers #auto-dispatch #bug ref:GH#40549 pr:#40557 completed:2026-11-27
 
