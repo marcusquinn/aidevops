@@ -1024,6 +1024,7 @@ _dispatch_pr_repair_by_kind() {
 		conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || dispatch_rc=$? ;;
 		ci) _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || dispatch_rc=$? ;;
 		runtime-pending-legacy) _dispatch_runtime_pending_completion_worker "$pr_number" "$repo_slug" "$linked_issue" || dispatch_rc=$? ;;
+		runtime-verify-high) _dispatch_runtime_verify_high_worker "$pr_number" "$repo_slug" "$linked_issue" || dispatch_rc=$? ;;
 	esac
 	return "$dispatch_rc"
 }
@@ -1331,7 +1332,7 @@ _route_pr_guard_and_dispatch_with_retry() {
 #   $1 = pr_number
 #   $2 = repo_slug
 #   $3 = linked_issue (empty string → no routing possible)
-#   $4 = kind          (review | conflict | ci)
+#   $4 = kind          (review | conflict | ci | runtime-pending-legacy | runtime-verify-high)
 #   $5 = pr_labels     (optional — comma-separated; fetched if empty)
 #   $6 = pr_title      (optional — passed to conflict dispatch)
 #   $7 = updated_at    (optional — passed to staleness check)
@@ -1362,9 +1363,8 @@ _route_pr_to_fix_worker() {
 	local checks_json="${9:-}"
 	local issue_labels=""
 	local issue_has_worker_origin=0
-	local label_list=""
+	local label_list="" has_routed_label=0
 	local takeover_pattern="$_PMP_ORIGIN_TAKEOVER_PATTERN"
-	local has_routed_label=0
 
 	linked_issue=$(_route_pr_resolve_work_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind") || return 1
 
@@ -1385,6 +1385,7 @@ _route_pr_to_fix_worker() {
 		conflict) routed_label="conflict-feedback-routed" ;;
 		ci)       routed_label="ci-feedback-routed" ;;
 		runtime-pending-legacy) routed_label="runtime-pending-legacy-routed" ;;
+		runtime-verify-high) routed_label="runtime-verify-high-routed" ;;
 		*)
 			echo "[pulse-wrapper] _route_pr_to_fix_worker: unknown kind '${kind}'" >>"$LOGFILE"
 			return 1

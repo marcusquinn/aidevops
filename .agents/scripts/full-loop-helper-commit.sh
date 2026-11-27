@@ -104,7 +104,7 @@ source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-commit-continuation.sh"
 # Parse commit-and-pr arguments into caller-scoped variables.
 # Expects the caller to have declared: issue_number, commit_message, pr_title,
 # summary_what, summary_testing, summary_decisions, summary_regression,
-# runtime_risk, testing_level, completion_bookkeeping, bookkeeping_proof_pr, bookkeeping_task_id,
+# runtime_risk, testing_level, runtime_verifier, completion_bookkeeping, bookkeeping_proof_pr, bookkeeping_task_id,
 # skip_rebase, extra_labels (array).
 # Returns 1 on unknown argument.
 _parse_commit_and_pr_args() {
@@ -116,7 +116,7 @@ _parse_commit_and_pr_args() {
 		arg="${args[$index]}"
 		pr_metadata_overrides="${pr_metadata_overrides:-} ${arg#--}"
 		case "$arg" in
-		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --regression-evidence | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason | --base)
+		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --runtime-verifier | --decisions | --regression-evidence | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason | --base)
 			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
 				print_error "${arg} requires a value"
 				return 1
@@ -154,6 +154,7 @@ _parse_commit_and_pr_args() {
 			testing_level="$value"
 			index=$((index + 2))
 			;;
+		--runtime-verifier) runtime_verifier="$value"; index=$((index + 2)) ;; # GH#40607
 		--decisions)
 			summary_decisions="$value"
 			index=$((index + 2))
@@ -163,14 +164,8 @@ _parse_commit_and_pr_args() {
 			extra_labels+=("$value")
 			index=$((index + 2))
 			;;
-		--proof-pr)
-			bookkeeping_proof_pr="$value"
-			index=$((index + 2))
-			;;
-		--task-id)
-			bookkeeping_task_id="$value"
-			index=$((index + 2))
-			;;
+		--proof-pr) bookkeeping_proof_pr="$value"; index=$((index + 2)) ;;
+		--task-id) bookkeeping_task_id="$value"; index=$((index + 2)) ;;
 		--replace-pr) replacement_pr="$value"; index=$((index + 2)) ;;
 		--replacement-reason) replacement_reason="$value"; index=$((index + 2)) ;;
 		--base) stack_base_arg="$value"; index=$((index + 2)) ;; # stacked PR base
@@ -945,6 +940,7 @@ _build_pr_body() {
 	local regression_evidence="${12:-}"
 	local runtime_risk=""
 	local testing_level=""
+	local verifier_line=""
 	local related="" related_numbers=" "
 	local field="" text="" reference="" reference_number="" prefix=""
 	local reference_pattern='(^|[^[:alnum:]_])([Ff][Oo][Rr]|[Rr][Ee][Ff])[:[:space:]]+#([0-9]+)'
@@ -971,6 +967,8 @@ _build_pr_body() {
 		"$replacement_note" "$decisions" "$regression_evidence" || return 1
 	runtime_risk=$(_derive_runtime_risk "$requested_risk" "$files_changed" "$summary_what" "$base_ref") || return 1
 	testing_level=$(_resolve_runtime_testing_level "$runtime_risk" "$requested_testing_level" "$summary_testing") || return 1
+	# GH#40607: runtime_verifier is the caller-scoped --runtime-verifier value.
+	verifier_line=$(_runtime_verifier_line "$runtime_risk" "$testing_level" "${runtime_verifier:-}") || return 1
 	# GH#39558: the Runtime Testing parser ends evidence at a "- **" bullet, so
 	# render bold-label bullets inside accepted evidence as plain bullets; the
 	# merge recheck and continued PRs then read the evidence that was accepted.
@@ -1000,7 +998,8 @@ ${decisions}
 
 - **Risk level:** ${runtime_risk}
 - **Verification:** ${testing_level} — ${summary_testing:-no additional evidence supplied}
-
+${verifier_line:+${verifier_line}
+}
 ${regression_evidence:+## Regression Evidence
 
 ${regression_evidence}
@@ -1571,6 +1570,8 @@ _inherit_pr_runtime_metadata() {
 	[[ "$override_flags" == *" risk-level "* ]] || runtime_risk=$(printf '%s' "$metadata" | jq -r '.risk')
 	[[ "$override_flags" == *" testing-level "* ]] || testing_level=$(printf '%s' "$metadata" | jq -r '.level')
 	[[ "$override_flags" == *" testing "* ]] || summary_testing=$(printf '%s' "$metadata" | jq -r '.evidence')
+	# GH#40607: an unreadable or absent classification inherits as interactive.
+	[[ "$override_flags" == *" runtime-verifier "* ]] || runtime_verifier=$(printf '%s' "$metadata" | jq -r '.verifier // ""')
 	return 0
 }
 
@@ -1617,6 +1618,16 @@ if old and new:
         replacement = re.search(pattern, new[0], re.M | re.S)
         if overrides & flags and replacement:
             text = re.sub(pattern, lambda _: replacement[0], text, flags=re.M | re.S)
+    # GH#40607: the Verifier line follows any metadata override, so a level or
+    # classification change never leaves a stale worker-eligible line behind.
+    if overrides & {'runtime-verifier', 'testing-level', 'risk-level'}:
+        line = r'^- \*\*Verifier:\*\* [^\n]*\n?'
+        replacement = re.search(line, new[0], re.M)
+        text = re.sub(line, '', text, flags=re.M)
+        anchor = re.search(r'^- \*\*Verification:\*\* .*?(?=^- \*\*|\Z)', text, re.M | re.S)
+        if replacement and anchor:
+            end = anchor.start() + len(anchor[0].rstrip('\n'))
+            text = text[:end] + '\n' + replacement[0].rstrip('\n') + text[end:]
     current = current[:old.start()] + text + current[old.end():]
 elif new:
     current = insert_section(current, new[0])

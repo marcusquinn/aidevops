@@ -23,8 +23,12 @@
 #      pass skip the PR before its own CI repair stage, so without this a red
 #      runtime-pending PR waits for a human;
 #   5. routes legacy Low/Medium pending work to a completion worker, or asks
-#      the helper to lift its runtime-only hold after the body is merge-ready.
-# High/Critical runtime verification remains interactive.
+#      the helper to lift its runtime-only hold after the body is merge-ready;
+#   6. routes a High-risk PR whose author declared it worker-eligible
+#      (`--runtime-verifier`, GH#40607) to a fresh verifier worker that runs
+#      `verify-runtime` or `verify-runtime --decline` at the exact head.
+# Critical, interactive and unclassified High runtime verification remains
+# interactive; so does a High PR whose verifier route cannot proceed.
 
 [[ -n "${_PULSE_MERGE_RUNTIME_PENDING_NOTICE_LOADED:-}" ]] && return 0
 _PULSE_MERGE_RUNTIME_PENDING_NOTICE_LOADED=1
@@ -177,6 +181,34 @@ _pmrp_route_held_ci_repair() {
 	return 0
 }
 
+# GH#40607: route a green, held High-risk runtime-pending PR whose author
+# declared it worker-eligible to a fresh verifier worker. Returns 0 when a
+# verifier was dispatched or one is already active, so no interactive notice is
+# sent; 1 otherwise, so the PR falls back to the interactive notice or
+# ATTENTION (Critical, interactive or unclassified PRs, person-owned labels, an
+# exhausted lease, or a verifier that declined and reclassified it).
+# Arguments: $1 PR number, $2 repo slug, $3 linked issue, $4 live PR labels,
+#            $5 head SHA, $6 helper notice JSON
+_pmrp_route_runtime_verify_high() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local labels="$4"
+	local head="$5"
+	local notice="$6"
+	local route_rc=0
+	# #aidevops:trust-boundary — explicit worker-eligible classification at
+	# High risk, worker or takeover origin only; a missing gate fails closed.
+	printf '%s' "$notice" | jq -e '.level == "runtime-pending" and (.verifier // "") == "worker-eligible"' >/dev/null 2>&1 || return 1
+	declare -F _feedback_route_labels_allow_worker_route >/dev/null 2>&1 || return 1
+	declare -F _route_pr_to_fix_worker >/dev/null 2>&1 || return 1
+	_feedback_route_labels_allow_worker_route "$labels" 1 || return 1
+	_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" runtime-verify-high "$labels" "" "" "$head" || route_rc=$?
+	echo "[pulse-merge] held High-risk worker-eligible runtime-pending PR ${repo_slug}#${pr_number}@${head:0:12}: verifier worker route rc=${route_rc}; hold-for-review kept until verify-runtime lifts it (GH#40607)" >>"$LOGFILE"
+	[[ "$route_rc" -eq 0 ]] || return 1
+	return 0
+}
+
 # Route one held PR. Never fails the merge pass. The caller only passes
 # non-draft PRs carrying hold-for-review.
 # Arguments: $1 PR number, $2 repo slug, $3 linked issue (optional),
@@ -235,6 +267,10 @@ _pmrp_route_held_pr() {
 			"$_PMRP_FULL_LOOP_HELPER" runtime-pending-notice "$pr_number" "$repo_slug" --lift-completed >>"$LOGFILE" 2>&1 || true
 		fi
 		return 0
+		;;
+	high)
+		# GH#40607: the author declared this High-risk plan worker-eligible.
+		_pmrp_route_runtime_verify_high "$pr_number" "$repo_slug" "$linked_issue" "$labels" "$head" "$notice" && return 0
 		;;
 	esac
 
