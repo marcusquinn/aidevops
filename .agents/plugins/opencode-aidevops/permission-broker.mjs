@@ -162,8 +162,7 @@ function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath,
     permission,
     patterns,
     tool,
-    concrete_device_targets: permission === "external_directory" && patterns.some((pattern) => pattern.startsWith("/dev/"))
-      ? recordedDeviceTargets(toolContext) : [],
+    concrete_device_targets: recordedDeviceTargets(toolContext),
     intent: sanitizePermissionText(toolContext.intent || raw?.metadata?.description || raw?.title || "", { ...options, maxLength: MAX_INTENT_LENGTH }),
     risk: classifyRisk(permission, patterns, tool, resolvedRiskTargets(raw, toolContext.target)),
     opencode: {

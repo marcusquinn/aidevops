@@ -24,41 +24,62 @@ export function recordedDeviceTargets(call) {
 // redirects and pipelines/AND/OR lists only. No expansion, quoting, grouping,
 // arbitrary paths or unsupported redirect operators. Bash authorization remains
 // independent; this only resolves the device directory ask.
-export function runtimeRedirectionTargets(command) {
-  if (typeof command !== "string" || command.length > 10000 || /[^\x20-\x7e\t]/.test(command)) return [];
+function runtimeCommandTokens(command) {
+  if (typeof command !== "string" || command.length > 10000 || /[^\x20-\x7e\t]/.test(command)) return null;
   const token = /[ \t]+|[0-9]*>&[0-9]+(?=$|[ \t<>|&])|[0-9]*(?:>>|>|<)|\|\||&&|\||(?:\/dev\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+)(?=$|[ \t<>|&])/gy;
   const tokens = [];
   let offset = 0;
   while (offset < command.length) {
     token.lastIndex = offset;
     const match = token.exec(command);
-    if (!match) return [];
+    if (!match) return null;
     offset = token.lastIndex;
     if (!/^[ \t]+$/.test(match[0])) tokens.push(match[0]);
   }
+  return tokens;
+}
+
+function safeDeviceRedirect(operator, target) {
+  return RUNTIME_DEVICE.test(target || "") && (operator.endsWith("<") || target === "/dev/null");
+}
+
+function safeDeviceOperand(executable, target) {
+  return ["cat", "head", "tail", "od"].includes(executable) && RUNTIME_DEVICE.test(target);
+}
+
+function runtimeCommandTargets(tokens) {
   const targets = [];
   let executable = "";
-  for (let i = 0; i < tokens.length; i++) {
+  let valid = true;
+  for (let i = 0; i < tokens.length && valid; i++) {
     const value = tokens[i];
-    if (["|", "&&", "||"].includes(value)) {
-      if (!executable) return [];
-      executable = "";
-    } else if (/^[0-9]*>&[0-9]+$/.test(value)) {
+    if (/^[0-9]*>&[0-9]+$/.test(value)) {
       // Descriptor duplication opens no path.
     } else if (/^[0-9]*(?:>>|>|<)$/.test(value)) {
       const target = tokens[++i];
-      if (!RUNTIME_DEVICE.test(target || "")) return [];
-      if (!value.endsWith("<") && target !== "/dev/null") return [];
+      valid = safeDeviceRedirect(value, target);
       targets.push(target);
     } else if (value.startsWith("/dev/")) {
       // Only known read-only utilities may take a device as a file operand.
-      if (!["cat", "head", "tail", "od"].includes(executable) || !RUNTIME_DEVICE.test(value)) return [];
+      valid = safeDeviceOperand(executable, value);
       targets.push(value);
     } else if (!executable) {
       executable = value;
     }
   }
-  return executable ? [...new Set(targets)] : [];
+  return valid && executable ? targets : null;
+}
+
+export function runtimeRedirectionTargets(command) {
+  const tokens = runtimeCommandTokens(command);
+  if (!tokens?.length) return [];
+  const segments = [[]];
+  for (const value of tokens) {
+    if (["|", "&&", "||"].includes(value)) segments.push([]);
+    else segments.at(-1).push(value);
+  }
+  const targets = segments.map(runtimeCommandTargets);
+  return targets.every(Boolean) ? [...new Set(targets.flat())] : [];
 }
 
 function isManagedTempRead(context, target, forbidden) {
