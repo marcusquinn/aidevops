@@ -394,7 +394,7 @@ _pulse_event_refill_cleanup() {
 # t19324 (GH#40112): with PULSE_DISPATCH_LOCK_SPLIT=1 a refill-only run takes
 # only the dispatch lock (pulse-instance-lock.sh), so it can launch while the
 # cycle holds the instance lock through maintenance. Dispatch rounds still
-# never overlap. Flag off: the instance lock, exactly as before.
+# never overlap. Opt-out (PULSE_DISPATCH_LOCK_SPLIT=0): the instance lock, exactly as before.
 #######################################
 _pulse_event_refill_split_lock() {
 	declare -F pulse_dispatch_lock_split_enabled >/dev/null 2>&1 || return 1
