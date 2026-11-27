@@ -668,7 +668,12 @@ cmd_generate() {
 	[[ "$model_usage_status" != "$PROFILE_STATUS_INCOMPLETE" ]] || has_model_usage="$PROFILE_BOOLEAN_TRUE"
 	has_screen_time=$(echo "$screen_json" | jq -r '(.month_hours // 0) > 0')
 
-	if [[ "$has_session_time" == "$PROFILE_BOOLEAN_TRUE" ]] ||
+	# Incomplete session collection must reach preservation, not the placeholder.
+	local session_incomplete preserved_work=""
+	session_incomplete=$(printf '%s' "$session_periods" | jq -r --arg s "$PROFILE_STATUS_INCOMPLETE" 'any(.[]?; .status? == $s)' 2>/dev/null || printf 'false')
+
+	if [[ "$session_incomplete" == "$PROFILE_BOOLEAN_TRUE" ]] ||
+		[[ "$has_session_time" == "$PROFILE_BOOLEAN_TRUE" ]] ||
 		[[ "$has_model_usage" == "$PROFILE_BOOLEAN_TRUE" ]] ||
 		[[ "$has_screen_time" == "$PROFILE_BOOLEAN_TRUE" ]]; then
 		has_data="$PROFILE_BOOLEAN_TRUE"
@@ -683,8 +688,6 @@ EOF
 		return 0
 	fi
 
-	local session_incomplete preserved_work=""
-	session_incomplete=$(printf '%s' "$session_periods" | jq -r --arg s "$PROFILE_STATUS_INCOMPLETE" 'any(.[]?; .status? == $s)' 2>/dev/null || printf 'false')
 	if [[ "$session_incomplete" == "$PROFILE_BOOLEAN_TRUE" ]] &&
 		preserved_work=$(_render_preserved_work_with_ai_section "${PROFILE_PREVIOUS_README:-}"); then
 		printf '%s\n' "$preserved_work"
