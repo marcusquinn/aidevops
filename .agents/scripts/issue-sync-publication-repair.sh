@@ -88,6 +88,39 @@ orphan_backup_within_grace() {
 	return 1
 }
 
+# GH#40580: an open PR may already add the TODO row for an issue (planning PR
+# from the session that filed it). Seeding the same row on the default branch
+# makes the PR's merge fail the duplicate-TODO-mapping guard. Added lines of
+# TODO.md from open PRs are cached once per pull; lookup failures fail open
+# (return 1) because the seeded row is only a backup.
+_ORPHAN_OPEN_PR_TODO_ADDED=""
+_ORPHAN_OPEN_PR_TODO_LOADED=0
+
+_orphan_open_pr_todo_load() {
+	local repo="$1" limit="${AIDEVOPS_ORPHAN_OPEN_PR_SCAN_LIMIT:-30}" nums="" n="" added=""
+	_ORPHAN_OPEN_PR_TODO_LOADED=1
+	[[ "$limit" =~ ^[1-9][0-9]*$ ]] || limit=30
+	nums=$(gh api -X GET "repos/${repo}/pulls" -f state=open -f per_page="$limit" --jq '.[].number' 2>/dev/null) || return 0
+	while IFS= read -r n; do
+		[[ "$n" =~ ^[1-9][0-9]*$ ]] || continue
+		added=$(gh api -X GET "repos/${repo}/pulls/${n}/files" -f per_page=100 \
+			--jq '.[] | select(.filename == "TODO.md") | .patch // empty' 2>/dev/null | grep '^+' || true)
+		[[ -n "$added" ]] && _ORPHAN_OPEN_PR_TODO_ADDED+="${added}"$'\n'
+	done <<<"$nums"
+	return 0
+}
+
+# Returns 0 when an open PR's TODO.md diff adds the task ID or ref:GH#<num>.
+orphan_todo_in_open_pr() {
+	local repo="$1" num="$2" tid="$3"
+	[[ "${AIDEVOPS_ORPHAN_OPEN_PR_CHECK:-1}" != "0" ]] || return 1
+	[[ "$_ORPHAN_OPEN_PR_TODO_LOADED" == "1" ]] || _orphan_open_pr_todo_load "$repo"
+	[[ -n "$_ORPHAN_OPEN_PR_TODO_ADDED" ]] || return 1
+	grep -qE "ref:GH#${num}([^0-9]|$)" <<<"$_ORPHAN_OPEN_PR_TODO_ADDED" && return 0
+	grep -qE "^\\+- \\[.\\] ${tid}( |$)" <<<"$_ORPHAN_OPEN_PR_TODO_ADDED" && return 0
+	return 1
+}
+
 # Labels that express a deliberate hold or live ownership. Repair never adds
 # auto-dispatch over them; reconciliation preserves them after publication.
 _publication_repair_has_hold() {
