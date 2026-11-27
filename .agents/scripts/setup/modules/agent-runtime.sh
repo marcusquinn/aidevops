@@ -199,8 +199,12 @@ _convert_agent_frontmatter() {
 _is_agent_definition() {
 	local file="$1"
 	# Check first 30 lines for name: in YAML frontmatter (fast path)
-	head -30 "$file" 2>/dev/null | grep -q '^name:' 2>/dev/null
-	return $?
+	local line count=0
+	while IFS= read -r line && ((count < 30)); do
+		count=$((count + 1))
+		[[ "$line" == name:* ]] && return 0
+	done <"$file" 2>/dev/null
+	return 1
 }
 
 # _agent_source_dirs: list directories under agents_source that contain subagents.

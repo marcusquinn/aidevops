@@ -89,14 +89,10 @@ _is_wrapper_copy() {
 	# Real shellcheck is a compiled binary — first bytes are ELF magic (\x7fELF)
 	# or Mach-O magic. Shell scripts start with "#!" (shebang).
 	# A 2-byte read is sufficient to distinguish.
-	local header
-	header="$(head -c 2 "$candidate" 2>/dev/null)" || return 1
+	local header=""
+	IFS= read -r -N 2 header <"$candidate" 2>/dev/null || [[ -n "$header" ]] || return 1
 	if [[ "$header" == "#!" ]]; then
-		# It's a script — check if it's specifically our wrapper
-		if head -5 "$candidate" 2>/dev/null | grep -q "shellcheck-wrapper" 2>/dev/null; then
-			return 0 # yes, it's a wrapper copy
-		fi
-		# Some other shell script named shellcheck — still not the real binary
+		# Our wrapper or any other shell script named shellcheck — not the real binary
 		return 0
 	fi
 	return 1 # not a script, likely the real binary
