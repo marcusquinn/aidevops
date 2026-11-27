@@ -667,11 +667,11 @@ _dispatch_process_candidate() {
 	# t3022 per-model + GH#33137 per-class concurrency caps (retried next cycle).
 	_dispatch_concurrency_caps_allow "$issue_number" "$repo_slug" "$repo_path" "$labels_csv" "$model_override" || return 1
 
-	# t2433/GH#20071: Refresh the repo before the large-file gate (inside
-	# dispatch_with_dedup → _dispatch_dedup_check_layers → _issue_targets_large_files)
-	# measures file sizes. Sentinel prevents multiple pulls for the same repo
-	# within a single dispatch_max subshell execution.
+	# GH#20071: refresh once per repo before the ceremony's large-file gate.
 	_pulse_refresh_repo "$repo_path"
+
+	# GH#40551: preserve pre-ceremony cache material; all launch gates still run.
+	candidate_json=$(_dispatch_negative_cache_capture_candidate "$candidate_json")
 
 	# GH#18804 + t2989: isolated dispatch with per-candidate timeout (see _dispatch_with_timeout).
 	echo "[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #${issue_number} (${repo_slug})" >>"$LOGFILE"
