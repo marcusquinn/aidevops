@@ -162,7 +162,7 @@ spotlight_search() {
 		# Mail privacy indexing). Fall back to a bounded .emlx scan (GH#40617).
 		if mail_store_has_emlx; then
 			emlx_scan_search "$query" "$limit" "spotlight_zero_results_live_emlx_present"
-			return 0
+			return $?
 		fi
 		echo "[]"
 		return 0
@@ -204,7 +204,7 @@ mail_store_has_emlx() {
 # JSON-escape a string (backslash, quote; tabs/CRs become spaces)
 json_escape() {
 	local value="$1"
-	printf '%s' "$value" | tr '\t\r' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+	printf '%s' "$value" | tr '\t\r' '  ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g'
 	return 0
 }
 
@@ -240,8 +240,8 @@ emlx_scan_search() {
 	local max_candidates="${MAILBOX_EMLX_MAX_CANDIDATES:-2000}"
 
 	if ! command -v rg >/dev/null 2>&1; then
-		echo "[]"
-		return 0
+		print_error "ripgrep (rg) not found; cannot run the .emlx fallback scan. Install with: brew install ripgrep"
+		return 1
 	fi
 
 	local dirs=()
@@ -260,17 +260,24 @@ emlx_scan_search() {
 	local draft_re='/(Drafts|Outbox|SendLater)[^/]*\.mbox/'
 	# Empty sentinels keep array expansion safe under Bash 3.2 nounset.
 	local preferred=("") low=("")
-	local candidates=0 path
+	local candidates=0 path rg_rc scan_incomplete=0 truncated=0
 	while IFS= read -r -d '' path; do
 		candidates=$((candidates + 1))
-		if rg -q -i -F -e "$query" -- "$path" 2>/dev/null; then
+		rg_rc=0
+		rg -q -i -F -e "$query" -- "$path" 2>/dev/null || rg_rc=$?
+		if [[ "$rg_rc" -eq 0 ]]; then
 			if [[ "$path" =~ $draft_re ]]; then
 				low+=("$path")
 			else
 				preferred+=("$path")
 			fi
+		elif [[ "$rg_rc" -ne 1 ]]; then
+			scan_incomplete=1
 		fi
-		[[ "$candidates" -ge "$max_candidates" ]] && break
+		if [[ "$candidates" -ge "$max_candidates" ]]; then
+			truncated=1
+			break
+		fi
 	done < <(rg --files -0 --glob '*.emlx' -- "${dirs[@]}" 2>/dev/null)
 
 	# Order: regular mailboxes first, autosave/draft locations last
@@ -299,6 +306,13 @@ emlx_scan_search() {
 			"$(json_escape "$date_str")" "$(json_escape "$reason")" "$(json_escape "$msgid")"
 	done
 	printf ']'
+	if [[ "$scan_incomplete" -eq 1 ]]; then
+		print_error "emlx scan incomplete: one or more message files could not be read (check Full Disk Access)"
+		return 1
+	fi
+	if [[ "$truncated" -eq 1 ]]; then
+		print_warning "emlx scan stopped after ${max_candidates} files; results may be incomplete. Raise MAILBOX_EMLX_MAX_CANDIDATES to scan more."
+	fi
 	return 0
 }
 
@@ -426,13 +440,24 @@ spotlight_index_status() {
 
 	# Live Mail.app store (~/Library/Mail/V*) indexed count, reported separately.
 	# Spotlight may index archived stores but not the live one (GH#40617).
-	local live_count live_present="false" warning=""
-	live_count=$(mdfind -onlyin "$(mail_store_root)" -count "kMDItemContentType == '${SPOTLIGHT_EMAIL_KIND}'" 2>/dev/null | tr -d ' ')
-	[[ "$live_count" =~ ^[0-9]+$ ]] || live_count=0
+	local live_count=0 live_present="false" warning="" live_count_failed=0
+	local live_dir live_dir_count
+	while IFS= read -r live_dir; do
+		[[ -z "$live_dir" ]] && continue
+		live_dir_count=$(mdfind -onlyin "$live_dir" -count "kMDItemContentType == '${SPOTLIGHT_EMAIL_KIND}'" 2>/dev/null | tr -d ' ') || live_dir_count=""
+		if [[ "$live_dir_count" =~ ^[0-9]+$ ]]; then
+			live_count=$((live_count + live_dir_count))
+		else
+			live_count_failed=1
+		fi
+	done < <(mail_store_dirs)
 	if mail_store_has_emlx; then
 		live_present="true"
-		if [[ "$live_count" -eq 0 ]]; then
-			warning="Spotlight has 0 indexed messages for the live Mail.app store but .emlx files exist on disk; search falls back to a direct .emlx scan. Check Full Disk Access and Spotlight Mail privacy settings."
+		if [[ "$live_count_failed" -eq 1 ]]; then
+			warning="Could not determine the Spotlight indexed count for the live Mail.app store (mdfind failed)."
+			echo "WARNING: $warning" >&2
+		elif [[ "$live_count" -eq 0 ]]; then
+			warning="Spotlight has 0 indexed messages for the live Mail.app store but .emlx files exist on disk; search falls back to a direct .emlx scan when rg is installed. Check Full Disk Access and Spotlight Mail privacy settings."
 			echo "WARNING: $warning" >&2
 		fi
 	fi
@@ -777,7 +802,7 @@ cmd_search() {
 
 	case "$resolved_backend" in
 	spotlight)
-		spotlight_search "$query" "$limit"
+		spotlight_search "$query" "$limit" || return $?
 		;;
 	notmuch)
 		notmuch_search "$query" "$limit" "$maildir"
