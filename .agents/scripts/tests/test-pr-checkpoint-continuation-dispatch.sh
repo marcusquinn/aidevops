@@ -72,7 +72,8 @@ DECISION_WRITE
 		esac
 		local rc=$?
 		# GH#40529: per-process ref trace for the concurrent-decision diagnostic.
-		[[ -z "$ref" ]] || printf '%s t=%s root=%s %s rc=%s\n' "$BASHPID" "${EPOCHREALTIME:-}" "$root" "${args%% -f sha=*}" "$rc" >>"${DECISION_ROOT}/gh.log"
+		# BASHPID is Bash 4+; on 3.2 the fallback records the parent PID.
+		[[ -z "$ref" ]] || printf '%s t=%s root=%s %s rc=%s\n' "${BASHPID:-$$}" "${EPOCHREALTIME:-}" "$root" "${args%% -f sha=*}" "$rc" >>"${DECISION_ROOT}/gh.log"
 		return "$rc"
 	}
 	_pcc_issue_comments() { jq . "${root}/comments.json"; return 0; }
