@@ -14,7 +14,14 @@ from pathlib import Path
 from session_time_aggregate import aggregate
 from session_time_common import DAY_MS, WINDOWS, completed_day_window
 from session_time_db import db_paths
-from session_time_db_roots import query_observability_roots, query_session_db_roots
+from session_time_db_roots import (
+    collect_observability_incremental,
+    collect_sessions_incremental,
+    load_state,
+    query_observability_roots,
+    query_session_db_roots,
+    save_state,
+)
 
 
 def parser():
@@ -44,6 +51,30 @@ def collect_sessions(home, explicit, roots, since):
                     sessions[root].append(row)
                     seen[root].add(row["session_id"])
     return sessions, source_ok, skipped_rows
+
+
+def collect_incremental(home, args, state_file, since):
+    """Watermarked collection for --all-dirs --period profile (t19433)."""
+    try:
+        budget = float(os.environ.get("AIDEVOPS_SESSION_TIME_BUDGET_S", "240"))
+    except ValueError:
+        budget = 240.0
+    deadline = time.monotonic() + max(1.0, budget)
+    state = load_state(state_file)
+
+    def checkpoint():
+        try:
+            save_state(state_file, state)
+        except OSError:
+            pass
+
+    rows, session_ok, sessions_done, skipped = collect_sessions_incremental(
+        home, args.db_path, state, since, args.now_ms, deadline, checkpoint)
+    obs_rows, obs_ok, obs_done, obs_skipped = collect_observability_incremental(
+        home, state, since, args.now_ms, deadline, checkpoint)
+    checkpoint()
+    return ({"": rows}, {"": session_ok}, {"": skipped},
+            {"": obs_rows}, obs_ok, {"": obs_skipped}, sessions_done and obs_done)
 
 
 def requested_periods(period):
@@ -109,8 +140,14 @@ def main():
     roots = list(dict.fromkeys(roots))
     home = Path.home()
     maximum_since = args.now_ms - WINDOWS["year"] - 2 * DAY_MS
-    sessions, session_ok, skipped = collect_sessions(home, args.db_path, roots, maximum_since)
-    obs_rows, obs_ok, obs_skipped = query_observability_roots(home, roots, maximum_since, args.now_ms)
+    state_file = os.environ.get("AIDEVOPS_SESSION_TIME_STATE_FILE", "")
+    complete = True
+    if state_file and args.period == "profile" and roots == [""]:
+        sessions, session_ok, skipped, obs_rows, obs_ok, obs_skipped, complete = collect_incremental(
+            home, args, state_file, maximum_since)
+    else:
+        sessions, session_ok, skipped = collect_sessions(home, args.db_path, roots, maximum_since)
+        obs_rows, obs_ok, obs_skipped = query_observability_roots(home, roots, maximum_since, args.now_ms)
     periods = requested_periods(args.period)
     payloads = {}
     for root in roots:
@@ -122,6 +159,10 @@ def main():
             "skipped": skipped[root] + obs_skipped[root],
         }
         result = aggregate_periods(periods, context, args.period == "profile")
+        if not complete:
+            # Partial first build: report it so callers keep published data.
+            for payload in result.values():
+                payload["status"] = "incomplete"
         payloads[root] = result if len(periods) > 1 else result[periods[0]]
     if args.period != "profile":
         cache_payloads = {

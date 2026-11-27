@@ -1906,6 +1906,48 @@ EOF
 	return 0
 }
 
+test_incomplete_session_time_keeps_published_work_section() {
+	local test_name="incomplete session-time keeps the published Work with AI section"
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
+	local readme="${TEST_DIR}/README.md"
+	cat >"$readme" <<'EOF'
+<!-- STATS-START -->
+## Work with AI
+
+| Interactive human attention | 3.5h |
+
+## AI Model Usage (all time)
+
+| model-a | 9 |
+<!-- STATS-END -->
+EOF
+	local result
+	result=$(
+		# shellcheck source=../profile-readme-render-lib.sh
+		source "$SOURCE_RENDER_LIB"
+		local kept
+		kept=$(_render_preserved_work_with_ai_section "$readme") || {
+			printf '%s\n' no-section
+			return 0
+		}
+		if [[ "$kept" != *"| Interactive human attention | 3.5h |"* || "$kept" == *"model-a"* ]]; then
+			printf 'wrong-section:%s\n' "$kept"
+			return 0
+		fi
+		if _render_preserved_work_with_ai_section "${TEST_DIR}/missing.md" >/dev/null; then
+			printf '%s\n' missing-readme-rendered
+			return 0
+		fi
+		printf '%s\n' preserved
+	)
+	if [[ "$result" != "preserved" ]]; then
+		print_result "$test_name" 1 "unexpected result: ${result}"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
 test_archive_capture_python39_zip_compatibility() {
 	local test_name="publication archive capture supports Python 3.9 zip and rejects incomplete records"
 	TEST_DIR=$(make_canonical_temp_dir) || return 1
@@ -2032,6 +2074,7 @@ main() {
 	test_profile_model_bundle_scans_each_population_once
 	teardown
 	test_incomplete_observability_keeps_published_model_usage
+	test_incomplete_session_time_keeps_published_work_section
 	teardown
 
 	echo ""
