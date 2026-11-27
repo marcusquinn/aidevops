@@ -51,6 +51,17 @@ _planning_publish_log_retryable_conflict() {
 	return 0
 }
 
+_planning_publish_log_conflict_detail() {
+	local repo_path="$1"
+	local parent_sha="$2"
+	local path="$3"
+	local behind=""
+	behind=$(_planning_git -C "$repo_path" rev-list --count "HEAD..${parent_sha}" 2>/dev/null) || behind="unknown"
+	_planning_publish_log error \
+		"Merge conflict in ${path}: local edits overlap remote changes made since this checkout's HEAD (HEAD is ${behind} commit(s) behind the remote branch). Fast-forward, or run 'git reset -q <remote>/<default-branch>' (mixed; keeps the working tree) in this checkout, then retry."
+	return 0
+}
+
 _planning_publish_valid_blob_ref() {
 	local blob="$1"
 	[[ "$blob" == "$PLANNING_ABSENT_BLOB" || "$blob" =~ ^[0-9a-fA-F]{40,64}$ ]]
@@ -534,6 +545,7 @@ _planning_publish_build_index() {
 			elif [[ "$parent_blob" == "$blob_sha" ]]; then
 				merged_sha="$blob_sha"
 			elif [[ "$origin_sha" == "-" ]] || [[ "$blob_sha" == "-" ]] || [[ "$parent_blob" == "-" ]]; then
+				_planning_publish_log_conflict_detail "$repo_path" "$parent_sha" "$path"
 				_planning_publish_log_retryable_conflict "$PLANNING_PUBLICATION_ID"
 				return 2
 			else
@@ -544,6 +556,7 @@ _planning_publish_build_index() {
 				_planning_git -C "$repo_path" merge-file -p --diff3 "$ours_file" "$base_file" "$theirs_file" >"$merged_file" || merge_rc=$?
 				if [[ "$merge_rc" -ne 0 ]]; then
 					[[ "$merge_rc" -eq 1 ]] || return 1
+					_planning_publish_log_conflict_detail "$repo_path" "$parent_sha" "$path"
 					_planning_publish_log_retryable_conflict "$PLANNING_PUBLICATION_ID"
 					return 2
 				fi
