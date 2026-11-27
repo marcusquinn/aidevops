@@ -1874,13 +1874,6 @@ _apply_blocked_by_detection() {
 	return 0
 }
 
-# Return 0 when TASK_LABELS contains auto-dispatch (or legacy auto_dispatch).
-_task_labels_request_auto_dispatch() {
-	local labels=",${TASK_LABELS},"
-	[[ "$labels" == *",auto-dispatch,"* || "$labels" == *",auto_dispatch,"* ]] && return 0
-	return 1
-}
-
 # ---------------------------------------------------------------------------
 # Dispatch-path auto-dispatch advisory (t2821 / t2920)
 #
@@ -1903,7 +1896,10 @@ _warn_dispatch_path_auto_dispatch() {
 	[[ "${AIDEVOPS_SKIP_DISPATCH_PATH_CHECK:-}" == "1" ]] && return 0
 
 	# Only fire when auto-dispatch (or auto_dispatch) is in the label set
-	_task_labels_request_auto_dispatch || return 0
+	if [[ ",${TASK_LABELS}," != *",auto-dispatch,"* && \
+		",${TASK_LABELS}," != *",auto_dispatch,"* ]]; then
+		return 0
+	fi
 
 	# Load patterns from shared conf file
 	local _conf_file="${AIDEVOPS_DISPATCH_PATH_FILES_CONF:-${SCRIPT_DIR}/../configs/self-hosting-files.conf}"
@@ -1957,7 +1953,10 @@ _warn_dispatch_path_auto_dispatch() {
 # ---------------------------------------------------------------------------
 _warn_pulse_off_auto_dispatch() {
 	[[ "${AIDEVOPS_SKIP_PULSE_OFF_CHECK:-}" == "1" ]] && return 0
-	_task_labels_request_auto_dispatch || return 0
+	case ",$TASK_LABELS," in
+	*,auto-dispatch,* | *,auto_dispatch,*) ;;
+	*) return 0 ;;
+	esac
 	[[ "$NO_ISSUE" == "false" ]] || return 0
 	command -v jq >/dev/null 2>&1 || return 0
 	local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
