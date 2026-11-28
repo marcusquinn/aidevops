@@ -118,15 +118,18 @@ _full_loop_release_place_verifier_tree() {
 _full_loop_release_select_verifier() {
 	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
 	local tree_path="" main_commit="" checkout_commit=""
+	local refresh_path="${_FULL_LOOP_RELEASE_PATH:-}"
 
 	_FULL_LOOP_RELEASE_VERIFIER=""
 	_FULL_LOOP_RELEASE_VERIFIER_TREE=""
 	# The release-control name lets the existing stale-control reaper retire a
 	# tree that lifecycle ownership kept past this process.
 	tree_path="${worktree_base}/aidevops-release-control-verifier-$$"
-	if [[ -n "${REPO_ROOT:-}" && -d "$worktree_base" ]] &&
-		git -C "$REPO_ROOT" fetch origin '+refs/heads/main:refs/remotes/origin/main' --quiet 2>/dev/null &&
-		main_commit=$(git -C "$REPO_ROOT" rev-parse --verify "refs/remotes/origin/main^{commit}" 2>/dev/null) &&
+	# The caller prepares a linked tag checkout first. Refresh through it, never
+	# through REPO_ROOT, which may be the read-only canonical checkout on status.
+	if [[ -n "$refresh_path" && -f "$refresh_path/.git" && -d "$worktree_base" ]] &&
+		git -C "$refresh_path" fetch origin '+refs/heads/main:refs/remotes/origin/main' --quiet 2>/dev/null &&
+		main_commit=$(git -C "$refresh_path" rev-parse --verify "refs/remotes/origin/main^{commit}" 2>/dev/null) &&
 		[[ "$main_commit" =~ $_FULL_LOOP_RELEASE_SHA_REGEX ]] &&
 		_full_loop_release_place_verifier_tree "$tree_path" "$main_commit"; then
 		checkout_commit=$(git -C "$tree_path" rev-parse HEAD 2>/dev/null || true)
@@ -536,19 +539,24 @@ _full_loop_release_find_tag_for_pr() {
 	_FULL_LOOP_RELEASE_FOUND_TAG=""
 	discovery_started=$(_full_loop_release_timing_start release-tag-discovery)
 	phase_started=$(_full_loop_release_timing_start release-tag-fetch)
-	if ! git -C "$REPO_ROOT" fetch origin --tags --quiet; then
+	if [[ "${_FULL_LOOP_RELEASE_READ_ONLY:-0}" == "1" ]]; then
+		# Read-only status never mutates REPO_ROOT (canonical Git guard).
+		printf 'RELEASE_TAG_FETCH=skipped (read-only status; run aidevops release reconcile %s to refresh tags)\n' "$requested_pr" >&2
+		_full_loop_release_timing_finish release-tag-fetch "$phase_started" skipped
+	elif ! git -C "$REPO_ROOT" fetch origin --tags --quiet; then
 		_full_loop_release_timing_finish release-tag-fetch "$phase_started" failed
 		_full_loop_release_timing_finish release-tag-discovery "$discovery_started" failed
 		return 1
+	else
+		_full_loop_release_timing_finish release-tag-fetch "$phase_started" ok
 	fi
-	_full_loop_release_timing_finish release-tag-fetch "$phase_started" ok
 	phase_started=$(_full_loop_release_timing_start release-tag-candidate-index)
 	if ! candidate_tags=$(_full_loop_release_candidate_tags_for_pr "$requested_pr"); then
 		_full_loop_release_timing_finish release-tag-candidate-index "$phase_started" failed
 		_full_loop_release_timing_finish release-tag-discovery "$discovery_started" failed
 		return 1
 	fi
-	if [[ -z "$candidate_tags" ]]; then
+	if [[ -z "$candidate_tags" && "${_FULL_LOOP_RELEASE_READ_ONLY:-0}" != "1" ]]; then
 		candidate_tags=$(_full_loop_release_recover_lane_tag "$repo" "$requested_pr") || return 1
 	fi
 	while IFS= read -r candidate_tag; do
@@ -1939,6 +1947,24 @@ _full_loop_release_local_adoption_required() {
 	return 0
 }
 
+# Tag discovery for status/reconcile. Only reconcile may fetch or write refs;
+# status stays read-only so it never mutates a canonical checkout.
+_full_loop_release_find_tag_for_mode() {
+	local mode="$1"
+	local repo="$2"
+	local requested_pr="$3"
+	local find_rc=0
+
+	if [[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]]; then
+		_FULL_LOOP_RELEASE_READ_ONLY=0
+	else
+		_FULL_LOOP_RELEASE_READ_ONLY=1
+	fi
+	_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || find_rc=$?
+	_FULL_LOOP_RELEASE_READ_ONLY=0
+	return "$find_rc"
+}
+
 _full_loop_release_existing_command() {
 	local mode="$1"
 	local requested_pr="$2"
@@ -1968,7 +1994,7 @@ _full_loop_release_existing_command() {
 		_full_loop_release_not_requested_status "$repo" "$requested_pr"
 		return $?
 	fi
-	_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || return $?
+	_full_loop_release_find_tag_for_mode "$mode" "$repo" "$requested_pr" || return $?
 	tag_name="$_FULL_LOOP_RELEASE_FOUND_TAG"
 	if [[ "$receipt_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]]; then
 		source_json=$(_full_loop_release_source_json_from_tag "$tag_name") || return 1
