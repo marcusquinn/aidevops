@@ -11,7 +11,9 @@ import { resolveReal } from "./permission-broker-read-only-root.mjs";
 export function registerWorkerRuntimePermissions(config, env = process.env, home = homedir()) {
   if (!env.WORKER_WORKTREE_PATH || !env.WORKER_ISSUE_NUMBER) return 0;
   const tempRoot = join(home, ".aidevops", ".agent-workspace", "tmp");
-  const patterns = ["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/*"];
+  // external_directory grants cannot distinguish reads from writes. Everything
+  // except the null sink is classified from the recorded operation by the broker.
+  const patterns = ["/dev/null"];
   if (resolveReal(tempRoot) === join(resolveReal(home), ".aidevops", ".agent-workspace", "tmp")) {
     patterns.push(tempRoot, `${tempRoot}/**`);
   }

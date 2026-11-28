@@ -18,15 +18,17 @@ test("worker runtime plumbing is narrow, per-agent and independent of signed gra
   const config = { permission: "ask", agent: { build: { permission: "ask" } } };
   assert.equal(registerWorkerRuntimePermissions(config, {}, home), 0);
   const env = { WORKER_WORKTREE_PATH: "/work/project", WORKER_ISSUE_NUMBER: "123" };
-  assert.equal(registerWorkerRuntimePermissions(config, env, home), 14);
+  assert.equal(registerWorkerRuntimePermissions(config, env, home), 6);
   for (const target of [config, config.agent.build]) {
     const rules = target.permission.external_directory;
     assert.equal(rules["*"], "ask");
-    for (const path of ["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/*",
+    for (const path of ["/dev/null",
       `${home}/.aidevops/.agent-workspace/tmp`, `${home}/.aidevops/.agent-workspace/tmp/**`]) {
       assert.equal(rules[path], "allow");
     }
-    for (const path of ["/dev/*", "/proc/*", "~/*", `${home}/*`, `${home}/.aidevops-private/tmp/**`]) {
+    for (const path of ["/dev/*", "/dev/tty", "/dev/sda", "/dev/random", "/dev/urandom",
+      "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/*",
+      "/proc/*", "~/*", `${home}/*`, `${home}/.aidevops-private/tmp/**`]) {
       assert.equal(rules[path], undefined);
     }
   }
