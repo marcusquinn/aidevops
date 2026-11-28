@@ -619,14 +619,16 @@ printf 'PASS textual and reconstructed provenance disagreement remains fail clos
 	git init -q -b main "$vp_source"
 	git -C "$vp_source" config user.name Test
 	git -C "$vp_source" config user.email test@example.invalid
-	mkdir -p "$vp_source/.agents/scripts" "$vp_deployed" "$vp_tagtree" "${TEST_ROOT}/verifier-wt"
+	mkdir -p "$vp_source/.agents/scripts" "$vp_deployed" "${TEST_ROOT}/verifier-wt"
 	printf '#!/usr/bin/env bash\nprintf "origin-main\\n" >"%s/used"\nexit 0\n' "$TEST_ROOT" \
 		>"$vp_source/.agents/scripts/release-provenance-helper.sh"
 	chmod +x "$vp_source/.agents/scripts/release-provenance-helper.sh"
 	git -C "$vp_source" add .
 	git -C "$vp_source" -c commit.gpgsign=false commit -q -m verifier
+	git -C "$vp_source" -c tag.gpgsign=false tag -a v1.2.3 -m 'Aidevops-Source-PR: 89'
 	# The fixture clone's origin/main is the reviewed control revision.
 	git clone -q "$vp_source" "$vp_clone"
+	git -C "$vp_clone" worktree add -q --detach "$vp_tagtree" v1.2.3
 	printf '#!/usr/bin/env bash\nprintf "deployed\\n" >"%s/used"\nexit 1\n' "$TEST_ROOT" \
 		>"$vp_deployed/release-provenance-helper.sh"
 	chmod +x "$vp_deployed/release-provenance-helper.sh"
@@ -654,6 +656,29 @@ printf 'PASS textual and reconstructed provenance disagreement remains fail clos
 	rm -f "${TEST_ROOT}/used"
 	_full_loop_release_verify_tag_provenance test/repo v1.2.3 2>/dev/null || { echo 'FAIL repeat verification rejected' >&2; exit 1; }
 	[[ "$(<"${TEST_ROOT}/used")" == origin-main ]] || { echo 'FAIL repeat used deployed verifier' >&2; exit 1; }
+
+	# Status must traverse real candidate verification without a canonical fetch.
+	# Keep only source reconstruction stubbed; remote identity, verifier selection
+	# and execution remain real, with the deployed fallback deliberately failing.
+	_full_loop_release_source_json_from_tag() {
+		printf '%s\n' '{"source_pr":89,"aggregated_sources":[]}'
+		return 0
+	}
+	git() {
+		local args="$*"
+		if [[ "$args" == "-C $REPO_ROOT fetch "* ]]; then
+			printf '%s\n' "$args" >>"${TEST_ROOT}/canonical-fetch-attempts"
+			return 1
+		fi
+		command git "$@"
+		return $?
+	}
+	rm -f "${TEST_ROOT}/used"
+	git -C "$vp_source" -c commit.gpgsign=false commit -q --allow-empty -m status-advance
+	_full_loop_release_find_tag_for_mode status test/repo 89 2>/dev/null || exit 1
+	[[ "$_FULL_LOOP_RELEASE_FOUND_TAG" == v1.2.3 && "$(<"${TEST_ROOT}/used")" == origin-main ]] || exit 1
+	[[ ! -e "${TEST_ROOT}/canonical-fetch-attempts" ]] || exit 1
+	[[ "$(git -C "$vp_clone" rev-parse refs/remotes/origin/main)" == "$(git -C "$vp_source" rev-parse HEAD)" ]] || exit 1
 
 	# Without a reachable origin the deployed copy is the logged fallback.
 	rm -f "${TEST_ROOT}/used"

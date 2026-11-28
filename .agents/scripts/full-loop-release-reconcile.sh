@@ -118,15 +118,18 @@ _full_loop_release_place_verifier_tree() {
 _full_loop_release_select_verifier() {
 	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
 	local tree_path="" main_commit="" checkout_commit=""
+	local refresh_path="${_FULL_LOOP_RELEASE_PATH:-}"
 
 	_FULL_LOOP_RELEASE_VERIFIER=""
 	_FULL_LOOP_RELEASE_VERIFIER_TREE=""
 	# The release-control name lets the existing stale-control reaper retire a
 	# tree that lifecycle ownership kept past this process.
 	tree_path="${worktree_base}/aidevops-release-control-verifier-$$"
-	if [[ -n "${REPO_ROOT:-}" && -d "$worktree_base" ]] &&
-		git -C "$REPO_ROOT" fetch origin '+refs/heads/main:refs/remotes/origin/main' --quiet 2>/dev/null &&
-		main_commit=$(git -C "$REPO_ROOT" rev-parse --verify "refs/remotes/origin/main^{commit}" 2>/dev/null) &&
+	# The caller prepares a linked tag checkout first. Refresh through it, never
+	# through REPO_ROOT, which may be the read-only canonical checkout on status.
+	if [[ -n "$refresh_path" && -f "$refresh_path/.git" && -d "$worktree_base" ]] &&
+		git -C "$refresh_path" fetch origin '+refs/heads/main:refs/remotes/origin/main' --quiet 2>/dev/null &&
+		main_commit=$(git -C "$refresh_path" rev-parse --verify "refs/remotes/origin/main^{commit}" 2>/dev/null) &&
 		[[ "$main_commit" =~ $_FULL_LOOP_RELEASE_SHA_REGEX ]] &&
 		_full_loop_release_place_verifier_tree "$tree_path" "$main_commit"; then
 		checkout_commit=$(git -C "$tree_path" rev-parse HEAD 2>/dev/null || true)
