@@ -512,10 +512,105 @@ _backblaze_surface() {
     return 0
 }
 
+# Read-only, macOS only. RSS is KiB; use the largest daemon if pgrep finds
+# multiple processes. Invalid/missing telemetry must never look healthy.
+FSEVENTSD_UNKNOWN="unknown"
+_fseventsd_health() {
+    local pids sample
+    [[ "$(uname -s)" == "Darwin" ]] || { printf '%s\n' "$FSEVENTSD_UNKNOWN"; return 0; }
+    pids="$(pgrep -x fseventsd 2>/dev/null | paste -sd, - || true)"
+    [[ -n "$pids" ]] || { printf '%s\n' "$FSEVENTSD_UNKNOWN"; return 0; }
+    sample="$(LC_ALL=C ps -o rss=,pcpu= -p "$pids" 2>/dev/null || true)"
+    LC_ALL=C awk -v threshold="${AIDEVOPS_FSEVENTSD_RSS_GB:-2}" -v unknown="$FSEVENTSD_UNKNOWN" '
+        BEGIN { valid = (threshold ~ /^[0-9]+([.][0-9]+)?$/ && threshold > 0) }
+        NF == 2 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+([.][0-9]+)?$/ {
+            seen = 1; if ($1 > rss) rss = $1
+        }
+        END {
+            if (!valid || !seen) print unknown
+            else if (rss / 1048576 > threshold) printf "runaway:%.2f\n", rss / 1048576
+            else print "ok"
+        }' <<<"$sample"
+    return 0
+}
+
+_fseventsd_action_line() {
+    local health="$1"
+    local swap
+    case "$health" in
+        runaway:*)
+            swap="$(LC_ALL=C sysctl -n vm.swapusage 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i == "used" && $(i+1) == "=") {print $(i+2); exit}}' || true)"
+            [[ "$swap" =~ ^[0-9]+([.][0-9]+)?[MGTP]$ ]] || swap="$FSEVENTSD_UNKNOWN"
+            printf 'fseventsd is using %s GiB RSS (swap used: %s); please run sudo killall fseventsd in a terminal or reboot.\n' "${health#runaway:}" "$swap"
+            ;;
+    esac
+    return 0
+}
+
+# Reminder consumers (including runner monitoring) record capacity loss without
+# changing dispatch limits. Bound reports to once per day; retry failed writes.
+_fseventsd_report() {
+    local health="$1"
+    local marker="${STATE_DIR}/fseventsd-runaway-reported" now last=0
+    [[ "$health" == runaway:* ]] || return 0
+    [[ -x "${SCRIPT_DIR}/throttle-report-helper.sh" ]] || return 0
+    now="$(_now_epoch)"
+    [[ -r "$marker" ]] && last="$(<"$marker")"
+    [[ "$last" =~ ^[0-9]+$ ]] || last=0
+    [[ "$last" -eq 0 || $((now - last)) -ge 86400 ]] || return 0
+    if "${SCRIPT_DIR}/throttle-report-helper.sh" report \
+        --request "Restore macOS runner capacity after fseventsd memory runaway" \
+        --root-cause "fseventsd memory runaway under filesystem churn" \
+        --systemic-fix "Ask the operator to restart fseventsd or reboot; never run sudo automatically" \
+        --throttle "None applied by this check" \
+        --evidence "fseventsd_health=${health}; load-sensitive workers may be affected" >/dev/null 2>&1; then
+        _ensure_dirs
+        printf '%s\n' "$now" >"$marker"
+    fi
+    return 0
+}
+
+_fseventsd_surface() {
+    local format="$1"
+    local no_notify="$2"
+    local health action
+    health="$(_fseventsd_health)"
+    action="$(_fseventsd_action_line "$health")"
+    if [[ "$format" == "json" ]]; then
+        printf '{"fseventsd_health":%s,"action":%s}\n' "$(_json_escape "$health")" "$(_json_escape "$action")"
+    elif [[ -n "$action" ]]; then
+        [[ "$format" == "toast" ]] && printf '[WARN] '
+        printf '%s\n' "$action"
+    fi
+    [[ -n "$action" ]] || return 0
+    _fseventsd_report "$health"
+    [[ "$no_notify" == "true" ]] && return 0
+    command -v osascript >/dev/null 2>&1 && [[ -z "${AIDEVOPS_HEADLESS:-}" ]] || return 0
+    local marker="${STATE_DIR}/fseventsd-health-notified" now last=0
+    now="$(_now_epoch)"
+    [[ -r "$marker" ]] && last="$(<"$marker")"
+    [[ "$last" =~ ^[0-9]+$ ]] || last=0
+    if [[ "$last" -eq 0 || $((now - last)) -ge "$NOTIFY_INTERVAL_SECONDS" ]]; then
+        if osascript -e "display notification \"${action}\" with title \"macOS runner needs attention\"" >/dev/null 2>&1; then
+            _ensure_dirs
+            printf '%s\n' "$now" >"$marker"
+        fi
+    fi
+    return 0
+}
+
 _cmd_health() {
-    local health
+    local platform="$1"
+    local format="${2:-}"
+    local health fseventsd="$FSEVENTSD_UNKNOWN"
     health="$(_backblaze_health)"
-    printf 'backblaze_health=%s\n' "$health"
+    [[ "$platform" == "macos" ]] && fseventsd="$(_fseventsd_health)"
+    if [[ "$format" == "--json" ]]; then
+        printf '{"backblaze_health":%s,"fseventsd_health":%s}\n' "$(_json_escape "$health")" "$(_json_escape "$fseventsd")"
+    else
+        printf 'backblaze_health=%s\n' "$health"
+        [[ "$platform" == "macos" ]] && printf 'fseventsd_health=%s\n' "$fseventsd"
+    fi
     return 0
 }
 
@@ -832,6 +927,7 @@ _cmd_reminder() {
     done
     if [[ "$platform" == "macos" ]]; then
         _backblaze_surface "$format" "$no_notify"
+        _fseventsd_surface "$format" "$no_notify"
     fi
     if ! _is_stale "$platform"; then
         [[ "$format" == "json" ]] && printf '{"stale":false,"platform":%s}\n' "$(_json_escape "$platform")"
@@ -879,7 +975,7 @@ main() {
         apply) _cmd_scan "$platform" --apply "$@" ;;
         status) _cmd_status "$platform" "$@" ;;
         reminder) _cmd_reminder "$platform" "$@" ;;
-        health) _cmd_health ;;
+        health) _cmd_health "$platform" "$@" ;;
         help|--help) usage ;;
         *) print_error "unknown command: $command_name"; return 2 ;;
     esac
