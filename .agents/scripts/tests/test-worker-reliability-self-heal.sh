@@ -392,8 +392,10 @@ test_escalate_skips_tier_cascade_on_no_work() {
 
 	# Assertion 3: the early-return block calls _log_no_work_skip_escalation
 	# (the diagnostic helper) before returning, so operators see the skip.
+	# GH#40658: the call goes through _escalate_record_no_work, which counts the
+	# consecutive no_work streak and then calls _log_no_work_skip_escalation.
 	local helper_call_pos
-	helper_call_pos=$(printf '%s\n' "$fn_src" | grep -n '_log_no_work_skip_escalation' | head -1 | cut -d: -f1)
+	helper_call_pos=$(grep -m1 -nE '_log_no_work_skip_escalation|_escalate_record_no_work' <<<"$fn_src" | cut -d: -f1)
 	if [[ -z "$helper_call_pos" ]]; then
 		print_result "escalate: no_work tier-cascade skip (t2387)" 1 \
 			"early-return block does not call _log_no_work_skip_escalation"

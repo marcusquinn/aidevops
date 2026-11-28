@@ -67,6 +67,26 @@ NO_WORK_NMR_THRESHOLD="${NO_WORK_NMR_THRESHOLD:-3}"
 NO_WORK_RECLASS_ELAPSED_MAX="${NO_WORK_RECLASS_ELAPSED_MAX:-180}"
 
 #######################################
+# Record one no_work failure for the t2769 breaker (GH#40658). The breaker
+# counts consecutive no_work failures, not the cumulative fast-fail total
+# across every failure class.
+# Args: $1=issue_number, $2=repo_slug, $3=cumulative failure_count, $4=reason
+#######################################
+_escalate_record_no_work() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_count="$3"
+	local reason="$4"
+	local no_work_count=""
+
+	no_work_count=$(_no_work_effective_failure_count "$issue_number" \
+		"$repo_slug" "$failure_count" "$reason")
+	_log_no_work_skip_escalation "$issue_number" "$repo_slug" \
+		"$no_work_count" "$reason"
+	return 0
+}
+
+#######################################
 # _maybe_reclassify_worker_failed_as_no_work — Phase 5 reclassification (t2820)
 #
 # When `escalate_issue_tier` is called with `crash_type == ""` and a
@@ -183,13 +203,8 @@ _maybe_reclassify_worker_failed_as_no_work() {
 		"$issue_number" "$repo_slug" "$subtype" \
 		"${_WORKER_LOG_TAIL_AGE_SECS:-?}" "${_WORKER_LOG_TAIL_CLASS}" >&2 || true
 
-	# GH#40658: the breaker counts consecutive no_work failures, not the
-	# cumulative fast-fail total across every failure class.
-	local streak_count
-	streak_count=$(_no_work_effective_failure_count "$issue_number" \
-		"$repo_slug" "$failure_count" "$reclass_reason")
-	_log_no_work_skip_escalation "$issue_number" "$repo_slug" \
-		"$streak_count" "$reclass_reason"
+	_escalate_record_no_work "$issue_number" "$repo_slug" \
+		"$failure_count" "$reclass_reason"
 	return 0
 }
 
@@ -353,29 +368,16 @@ escalate_issue_tier() {
 	threshold=$(_resolve_escalation_threshold "$crash_type")
 
 	# t2387: no_work crashes are infrastructure failures (FD exhaustion,
-	# plugin init crash, branch naming race, auth refresh race — see t2116
-	# session memory). Tier escalation is the wrong response: a more
-	# expensive model cannot fix an FD leak or an auth race. Skip the
-	# cascade entirely and keep the issue at its current tier so the
-	# next retry can succeed cheaply once the infra issue resolves. If
-	# retries keep failing, the existing circuit-breaker helpers
-	# (cost-circuit-breaker, dispatch-dedup-stale, stale-recovery) apply
-	# NMR on their own thresholds using markers that t2386
-	# _nmr_application_is_circuit_breaker_trip recognises, so auto-approval
-	# preserves the NMR correctly. This early return also subsumes the
-	# t2119 body-quality-gate skip — the later gate call becomes
-	# unreachable on no_work crashes, so the original inline != guard is
-	# no longer needed there.
+	# plugin init crash, branch naming race, auth refresh race). A more
+	# expensive model cannot fix those, so skip the tier cascade and keep the
+	# current tier; the circuit-breaker helpers apply structural blocks if
+	# retries keep failing. This early return also subsumes the t2119
+	# body-quality-gate skip for no_work crashes.
 	if [[ "$crash_type" == "no_work" ]]; then
-		local no_work_count
-		no_work_count=$(_no_work_effective_failure_count "$issue_number" \
-			"$repo_slug" "$failure_count" "$reason")
-		_log_no_work_skip_escalation "$issue_number" "$repo_slug" \
-			"$no_work_count" "$reason"
+		_escalate_record_no_work "$issue_number" "$repo_slug" "$failure_count" "$reason"
 		return 0
 	fi
-	# GH#40658: any other failure class proves a worker reached the brief, so
-	# the consecutive no_work streak starts over.
+	# GH#40658: another failure class proves a worker reached the brief.
 	_no_work_streak_reset "$issue_number" "$repo_slug"
 
 	# t19356: the fast-fail count is cumulative per issue, so an issue that
