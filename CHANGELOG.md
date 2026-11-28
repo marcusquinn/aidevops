@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.293] - 2026-11-28
+
+### Changed
+
+- Maintenance: mark t19435 complete (pr:#40646 completed:2026-11-28) (#40648)
+
+### Fixed
+
+- repair gc.log stale-reflog warnings in maintenance-gc (#40653)
+- cap prompt-guard file scans and skip base64 on oversize files (#40650)
+- detect macOS fseventsd memory runaway (GH#40645) (#40647)
+- keep release status read-only in canonical checkout (#40646)
+
 ## [3.39.292] - 2026-11-27
 
 ### Changed
