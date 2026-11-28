@@ -209,8 +209,11 @@ _tbr_holds_repo() {
 		[[ "$rc" -ne 3 ]] || return 3
 		[[ "$rc" -eq 0 ]] || incomplete=1
 	done <<<"$listing"
-	[[ "$incomplete" -eq 0 ]] || return 2
+	# A full traversal may refresh its snapshot even after a quick read error;
+	# otherwise one permanently failing issue hides newly held issues forever.
+	# Killed/capped traversals never reach this cleanup and retain their place.
 	rm -f "$list" "${TBR_ROOT}/holds/${rkey}.cursor"
+	[[ "$incomplete" -eq 0 ]] || return 2
 	return 0
 }
 
