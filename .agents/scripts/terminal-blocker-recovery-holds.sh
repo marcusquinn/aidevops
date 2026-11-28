@@ -184,15 +184,35 @@ _tbr_hold_intake() {
 # One repo of the holds stage. 0 complete, 2 incomplete, 3 cap reached.
 _tbr_holds_repo() {
 	local slug="$1" self="$2" now="$3" listing="" number="" listed_at="" incomplete=0 rc=0
-	printf 'blocker-recovery: checking stage=hold_list repo=%s\n' "$slug" >&2
-	listing=$(_tbr_hold_listing "$slug") || return 2
+	local rkey="${slug//\//--}" cursor="" row="" list=""
+	list="${TBR_ROOT}/holds/${rkey}.list"
+	# GH#40656: keep the snapshot and attempted-item cursor across stage kills.
+	# Rotate rather than discard attempted items: an interrupted/failed read is
+	# retried after its peers, never treated as a completed observation.
+	if [[ ! -f "$list" ]]; then
+		printf 'blocker-recovery: checking stage=hold_list repo=%s\n' "$slug" >&2
+		listing=$(_tbr_hold_listing "$slug") || return 2
+		_tbr_save_cursor "holds/${rkey}.list" "$listing" || return 2
+		_tbr_restore_cursor "holds/${rkey}.cursor" "" || return 2
+	fi
+	[[ ! -f "${TBR_ROOT}/holds/${rkey}.cursor" ]] || read -r cursor <"${TBR_ROOT}/holds/${rkey}.cursor" || true
+	listing=$(_tbr_rotate "$(<"$list")" "$cursor") || return 2
+	printf 'blocker-recovery: resuming stage=holds repo=%s cursor=%s\n' "$slug" "${cursor%%$'\t'*}" >&2
 	while IFS=$'\t' read -r number listed_at; do
 		[[ "$number" =~ ^[1-9][0-9]*$ ]] || continue
+		# Do not move past an item the per-pass cap prevented us from reading.
+		[[ "$_TBR_HOLD_EVALUATED" -lt "$TBR_HOLD_MAX" ]] || return 3
+		printf -v row '%s\t%s' "$number" "$listed_at"
+		_tbr_save_cursor "holds/${rkey}.cursor" "$row" || return 2
 		rc=0
 		_tbr_hold_intake "$slug" "$number" "$listed_at" "$self" "$now" || rc=$?
 		[[ "$rc" -ne 3 ]] || return 3
 		[[ "$rc" -eq 0 ]] || incomplete=1
 	done <<<"$listing"
+	# A full traversal may refresh its snapshot even after a quick read error;
+	# otherwise one permanently failing issue hides newly held issues forever.
+	# Killed/capped traversals never reach this cleanup and retain their place.
+	rm -f "$list" "${TBR_ROOT}/holds/${rkey}.cursor"
 	[[ "$incomplete" -eq 0 ]] || return 2
 	return 0
 }
@@ -204,12 +224,14 @@ _tbr_holds_repo() {
 #######################################
 tbr_discover_holds() {
 	_tbr_init_dirs || return 1
-	local dir="${TBR_ROOT}/holds" repos="" slug="" rkey="" last=0 now="" self="" incomplete=0 rc=0
+	local dir="${TBR_ROOT}/holds" repos="" slug="" rkey="" last=0 now="" self="" incomplete=0 rc=0 repo_cursor=""
 	mkdir -p "$dir" "${TBR_ROOT}/holds-evaluated" || return 1
 	[[ "$TBR_HOLD_INTERVAL" =~ ^[0-9]+$ && "$TBR_HOLD_EXPLAIN_AGE" =~ ^[0-9]+$ ]] || return 2
 	[[ "$TBR_HOLD_MAX" =~ ^[1-9][0-9]*$ ]] || return 2
 	now=$(date +%s)
 	repos=$(_tbr_pulse_repos) || return 2
+	[[ ! -f "${TBR_ROOT}/holds_repo_cursor" ]] || read -r repo_cursor <"${TBR_ROOT}/holds_repo_cursor" || true
+	repos=$(_tbr_rotate "$repos" "$repo_cursor") || return 2
 	_TBR_HOLD_EVALUATED=0
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -227,6 +249,7 @@ tbr_discover_holds() {
 			self="${TERMINAL_BLOCKER_SELF_LOGIN:-}"
 			[[ -n "$self" ]] || self=$(_tbr_self_login) || return 2
 		fi
+		_tbr_save_cursor holds_repo_cursor "$slug" || return 2
 		rc=0
 		_tbr_holds_repo "$slug" "$self" "$now" || rc=$?
 		[[ "$rc" -ne 3 ]] || return 0
@@ -237,6 +260,7 @@ tbr_discover_holds() {
 		fi
 	done <<<"$repos"
 	[[ "$incomplete" -eq 0 ]] || return 2
+	rm -f "${TBR_ROOT}/holds_repo_cursor"
 	find "${TBR_ROOT}/holds-evaluated" -type f -mtime +"$TBR_DISCOVERY_RETENTION_DAYS" -delete 2>/dev/null || true
 	return 0
 }

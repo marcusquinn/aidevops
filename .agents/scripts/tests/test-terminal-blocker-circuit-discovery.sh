@@ -66,6 +66,34 @@ _intake_budget_checks() {
 	return 0
 }
 
+_supervisor_budget_progress_checks() {
+	local issue=0 pass=0 out="" rc=0 stage=""
+	# Match the command delivered to the supervisor, not just helper defaults.
+	local profile='env BLOCKER_RECOVERY_BUDGET_SECONDS=300 BLOCKER_RECOVERY_STAGE_SECONDS=40 BLOCKER_RECOVERY_DISCOVERY_SECONDS=60 bash'
+	rg -Fq "$profile" "${SCRIPT_DIR}/pulse-wrapper-cycle.sh" || return 1
+	TBR_ROOT="${TEST_ROOT}/supervisor-budget"
+	export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT"
+	_tbr_init_dirs || return 1
+	date +%s >"${TBR_ROOT}/last_seed_epoch"
+	for issue in {100..154}; do
+		tbr_enqueue owner/repo "$issue" files_scope_excluded || return 1
+	done
+	# Reuse the production CLI/API fixtures above, including a nine-second read.
+	# Each pass must emit actionable evidence (not just any JSON line), and the
+	# reserved intakes must finish even with more than fifty queued entries.
+	for pass in 1 2; do
+		rc=0
+		out=$(env BLOCKER_RECOVERY_BUDGET_SECONDS=300 BLOCKER_RECOVERY_STAGE_SECONDS=40 BLOCKER_RECOVERY_DISCOVERY_SECONDS=60 \
+			bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending 2>"${TBR_ROOT}/err") || rc=$?
+		[[ "$rc" -eq 0 ]] || return 1
+		jq -es 'any(.[]; .issue > 109 and .repo == "owner/repo")' <<<"$out" >/dev/null || return 1
+		for stage in seed holds unclassified; do
+			[[ "$(<"${TBR_ROOT}/err")" == *"completed stage=${stage}"* ]] || return 1
+		done
+	done
+	return 0
+}
+
 _default_budget_progress_checks() {
 	local issue=0 rc=0 stage=""
 	_intake_budget_checks || return 1
@@ -125,6 +153,10 @@ _default_budget_progress_checks() {
 	rc=0
 	_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--111.json" >/dev/null || rc=$?
 	[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--111.json" ]] || return 1
+	# The supervisor profile must not change the helper's non-supervisor defaults.
+	[[ "$TBR_BUDGET_SECONDS" -eq 45 && "$TBR_STAGE_SECONDS" -eq 8 ]] || return 1
+	TBR_REPOS_JSON="$REPOS_JSON"
+	_supervisor_budget_progress_checks || return 1
 	return 0
 }
 
@@ -790,6 +822,7 @@ test_hold_for_review_intake() {
 		out=$(_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--73.json" 2>/dev/null) || exit 1
 		jq -e '.intake == "unexplained_hold" and (has("reply_comment_id") | not)' <<<"$out" >/dev/null || exit 1
 		_holds_lifecycle_checks || exit 1
+		_holds_resume_checks || exit 1
 		! rg -q -e '--method' -e '-X (POST|PATCH|DELETE)' -e 'issue (edit|comment)' "${TB_HOLDS_FIXTURE}/requests" || exit 1
 		exit 0
 	); then status=1; fi
@@ -834,5 +867,45 @@ _holds_lifecycle_checks() {
 	rc=0
 	tbr_discover_holds 2>/dev/null || rc=$?
 	[[ "$rc" -eq 2 && ! -f "${TBR_ROOT}/holds/owner--repo.epoch" ]] || return 1
+	return 0
+}
+
+# Run the actual stage in a child and interrupt its first issue read. The next
+# child must reuse the saved listing, advance past that issue, then retry it.
+_holds_resume_checks() {
+	local TBR_ROOT="${TEST_ROOT}/holds-resume" rc=0
+	local hold=hold-for-review at="2026-02-01T00:00:00Z"
+	_tbr_init_dirs || return 1
+	rm -f "${TB_HOLDS_FIXTURE}/listing.fail"
+	_holds_listing "70|${at}|${hold}" "71|${at}|${hold}"
+	_holds_issue 70 bot "$hold" "701|maint|OWNER|2026-01-11T00:00:00Z|Go with B."
+	_holds_issue 71 bot "$hold" "711|maint|OWNER|2026-01-11T00:00:00Z|Go with C."
+	: >"${TB_HOLDS_FIXTURE}/slow"
+	gh() {
+		local endpoint="${2:-}"
+		if [[ "$endpoint" == 'repos/owner/repo/issues/70/events?per_page=100' && -f "${TB_HOLDS_FIXTURE}/slow" ]]; then
+			sleep 10
+		fi
+		_holds_gh "$@"
+		return $?
+	}
+	export -f gh _holds_gh
+	AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON" \
+		timeout_sec 3 bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" _stage tbr_discover_holds \
+		2>"${TBR_ROOT}/first.err" || rc=$?
+	[[ "$rc" -eq 124 && -s "${TBR_ROOT}/holds/owner--repo.list" &&
+		"$(<"${TBR_ROOT}/holds/owner--repo.cursor")" == "70"$'\t'"$at" &&
+		! -f "${TBR_ROOT}/holds/owner--repo.epoch" ]] || return 1
+	# A new listing would now fail: successful resumption proves reuse.
+	: >"${TB_HOLDS_FIXTURE}/listing.fail"
+	rm -f "${TB_HOLDS_FIXTURE}/slow"
+	: >"${TB_HOLDS_FIXTURE}/requests"
+	AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON" \
+		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" holds 2>"${TBR_ROOT}/second.err" || return 1
+	[[ -f "${TBR_ROOT}/queue/owner--repo--70.json" && -f "${TBR_ROOT}/queue/owner--repo--71.json" &&
+		-s "${TBR_ROOT}/holds/owner--repo.epoch" && ! -f "${TBR_ROOT}/holds/owner--repo.list" &&
+		! -f "${TBR_ROOT}/holds/owner--repo.cursor" ]] || return 1
+	[[ "$(rg '^api repos/owner/repo/issues/[0-9]+/events' "${TB_HOLDS_FIXTURE}/requests")" == \
+		$'api repos/owner/repo/issues/71/events?per_page=100 --paginate --slurp\napi repos/owner/repo/issues/70/events?per_page=100 --paginate --slurp' ]] || return 1
 	return 0
 }
