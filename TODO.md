@@ -2581,7 +2581,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19434 fix(worker): try local Linux/container/WordPress substitutes before runner_capability_unmet #bug ref:GH#40636 pr:#40637 completed:2026-11-27
 
-- [ ] t19435 fix(release): release status runs git fetch in the canonical checkout and trips the canonical Git guard #auto-dispatch #bug ref:GH#40643 -> [todo/tasks/t19435-brief.md]
+- [x] t19435 fix(release): release status runs git fetch in the canonical checkout and trips the canonical Git guard #auto-dispatch #bug ref:GH#40643 -> [todo/tasks/t19435-brief.md] pr:#40646 completed:2026-11-28
 
 ## In Progress
 
