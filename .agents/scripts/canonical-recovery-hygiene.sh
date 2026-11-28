@@ -25,6 +25,15 @@
 # and records each removal's intent and outcome (relative path, size, mtime;
 # never a repository path or name). The summary also reports TMP_PACK_BYTES and
 # TMP_PACK_YOUNG_BYTES (kept by the age gate) so accumulation stays visible.
+#
+# maintenance-gc also reports pack counts and handles a `gc.log` (GH#40596). A
+# daemonized gc writes its stderr there, and Git then skips every automatic gc
+# until the file expires (gc.logExpiry, default 1 day). When every line is the
+# known `reflog of '<ref>' references pruned commits` warning, the helper probes
+# the current state with `rev-list --no-walk --reflog`. With --apply and no live
+# gc, it drops only entries that name missing objects
+# (`reflog expire --stale-fix --expire=never --expire-unreachable=never`),
+# re-probes, and removes gc.log after an audit entry. Any other content stays.
 
 CGH_REPAIR_CMD="repair-stale-locks"
 CGH_GC_CMD="maintenance-gc"
@@ -34,6 +43,12 @@ CGH_DEFAULT_TMP_MIN_AGE_DAYS=2
 CGH_LOCK_BUSY_EXIT=75
 CGH_KIND_LOCK="lock"
 CGH_KIND_TMP_PACK="tmp-pack"
+CGH_KIND_GC_LOG="gc-log"
+# The one gc.log line class the helper may clear (GH#40596).
+CGH_STALE_REFLOG_PATTERN="^warning: reflog of '(.+)' references pruned commits$"
+CGH_STALE_REFS=""
+CGH_GCLOG_LINES=0
+CGH_GCLOG_UNKNOWN=0
 CGH_GIT_PROCS=""
 # 1 only after a successful process listing; every gate fails closed otherwise.
 CGH_PROC_SCAN_OK=0
@@ -56,8 +71,10 @@ _cgh_usage() {
 		"  canonical-recovery-helper.sh ${CGH_GC_CMD} --repo PATH [--min-age-minutes N] [--tmp-min-age-days N] [--apply]" \
 		'' \
 		'Dry run by default. --apply removes only stale, unheld Git lock files and' \
-		"interrupted-fetch objects/pack temporaries, audited; ${CGH_GC_CMD} then runs" \
-		'git gc --auto in the canonical repository under the recovery lock.'
+		"interrupted-fetch objects/pack temporaries, audited; ${CGH_GC_CMD} then clears" \
+		'a gc.log that only reports reflogs referencing pruned commits (dropping those' \
+		'stale reflog entries first) and runs git gc --auto in the canonical repository' \
+		'under the recovery lock.'
 	return 0
 }
 
@@ -391,6 +408,16 @@ _cgh_scope_paths() {
 	return 0
 }
 
+# Prints the hashed 12-character repository ID used in audit entries.
+_cgh_repo_id() {
+	local common="$1"
+	local id=""
+
+	id=$(printf '%s' "$common" | "$REAL_GIT" hash-object --stdin) || id="unknown"
+	printf '%s\n' "${id:0:12}"
+	return 0
+}
+
 # Apply mode requires the tamper-evident audit helper and an intact chain
 # before any removal or gc, whether or not candidates exist.
 _cgh_audit_ready() {
@@ -524,8 +551,7 @@ _cgh_repair() {
 		printf 'REMOVED=0\n'
 		return 0
 	}
-	repo_id=$(printf '%s' "$common" | "$REAL_GIT" hash-object --stdin) || repo_id="unknown"
-	repo_id="${repo_id:0:12}"
+	repo_id=$(_cgh_repo_id "$common")
 	now=$(date +%s)
 CGH_PID_VERDICTS=" "
 CGH_REPACK_COUNT=-1
@@ -585,6 +611,190 @@ _cgh_run_gc() {
 	}
 	printf 'GC_RESULT=%s\n' "$result"
 	[[ "$result" == "ok" ]] || return 1
+	return 0
+}
+
+# Reports pack count and size so a multi-hour repack is visible, not a hang.
+_cgh_pack_report() {
+	local repo="$1"
+	local stats="" key="" value="" packs="" size_kib="" limit=""
+
+	stats=$("$REAL_GIT" -C "$repo" count-objects -v 2>/dev/null) || return 0
+	while IFS=': ' read -r key value; do
+		[[ "$key" == "packs" ]] && packs="$value"
+		[[ "$key" == "size-pack" ]] && size_kib="$value"
+	done <<<"$stats"
+	[[ "$packs" =~ ^[0-9]+$ && "$size_kib" =~ ^[0-9]+$ ]] || return 0
+	limit=$("$REAL_GIT" -C "$repo" config --get gc.autoPackLimit 2>/dev/null) || limit=""
+	[[ "$limit" =~ ^[0-9]+$ ]] || limit=50
+	printf 'PACK_COUNT=%s\nPACK_SIZE_KIB=%s\nPACK_AUTO_LIMIT=%s\n' "$packs" "$size_kib" "$limit"
+	if [[ "$limit" -gt 0 && "$packs" -gt "$limit" ]]; then
+		printf 'PACK_HINT=pack count exceeds gc.autoPackLimit; the next gc repacks everything and may run for hours\n'
+	fi
+	return 0
+}
+
+# Sets CGH_GCLOG_LINES (non-empty lines) and CGH_GCLOG_UNKNOWN (lines other
+# than the known stale-reflog warning).
+_cgh_classify_gc_log() {
+	local path="$1"
+	local line=""
+
+	CGH_GCLOG_LINES=0
+	CGH_GCLOG_UNKNOWN=0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -n "$line" ]] || continue
+		CGH_GCLOG_LINES=$((CGH_GCLOG_LINES + 1))
+		[[ "$line" =~ $CGH_STALE_REFLOG_PATTERN ]] || CGH_GCLOG_UNKNOWN=$((CGH_GCLOG_UNKNOWN + 1))
+	done <"$path"
+	return 0
+}
+
+# Probes the current reflogs: `rev-list --reflog` parses every entry and warns
+# once per ref whose entries name a missing object, the same warning gc writes.
+# Sets CGH_STALE_REFS (newline-separated). Fails on any other diagnostic, so an
+# unexpected state never reads as clean.
+_cgh_probe_stale_reflogs() {
+	local repo="$1"
+	local output="" line="" rc=0
+
+	CGH_STALE_REFS=""
+	output=$("$REAL_GIT" -C "$repo" rev-list --no-walk --reflog 2>&1 >/dev/null) || rc=$?
+	[[ "$rc" -eq 0 ]] || return 1
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		[[ "$line" =~ $CGH_STALE_REFLOG_PATTERN ]] || return 1
+		CGH_STALE_REFS="${CGH_STALE_REFS}${BASH_REMATCH[1]}"$'\n'
+	done <<<"$output"
+	return 0
+}
+
+# Accepts only names reflog expire can take as a ref, never as an option.
+_cgh_reflog_ref_is_supported() {
+	local ref="$1"
+
+	[[ "$ref" == "HEAD" ]] && return 0
+	[[ "$ref" =~ ^worktrees/[A-Za-z0-9._-]+/HEAD$ ]] && return 0
+	[[ "$ref" == refs/* ]] && "$REAL_GIT" check-ref-format "$ref" && return 0
+	return 1
+}
+
+# Returns 0 when gc.pid names a live (or unverifiable) gc for this repository.
+_cgh_gc_is_running() {
+	local common="$1"
+	local path="${common}/gc.pid"
+
+	[[ -e "$path" || -L "$path" ]] || return 1
+	_cgh_gc_pid_is_dead "$path" && return 1
+	return 0
+}
+
+# Drops stale reflog entries for CGH_STALE_REFS, audited, then re-probes.
+_cgh_fix_stale_reflogs() {
+	local repo="$1"
+	local repo_id="$2"
+	local ref="" output="" rc=0 pruned=0 repair_result="ok" line="" refs_text=""
+	local -a refs=() base_details=()
+
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] && refs+=("$ref")
+	done <<<"$CGH_STALE_REFS"
+	base_details=("operation=${CGH_GC_CMD}" "repo_id=${repo_id}" "ref_count=${#refs[@]}")
+	# The audit helper replaces an oversized detail object wholesale.
+	refs_text="${refs[*]}"
+	[[ ${#refs_text} -le 2000 ]] || refs_text="${refs_text:0:2000}...(truncated)"
+	_cgh_audit_log "Canonical stale reflog repair approved" "${base_details[@]}" "refs=${refs_text}" || {
+		_cgh_block "reflog repair audit record could not be written"
+		return 1
+	}
+	# --expire=never keeps every entry whose objects exist; only stale ones go.
+	output=$("$REAL_GIT" -C "$repo" reflog expire --stale-fix --expire=never \
+		--expire-unreachable=never --verbose "${refs[@]}" 2>&1) || rc=$?
+	while IFS= read -r line; do
+		[[ "$line" == "prune "* ]] && pruned=$((pruned + 1))
+	done <<<"$output"
+	[[ "$rc" -eq 0 ]] || repair_result="expire-failed"
+	if [[ "$repair_result" == "ok" ]] && ! _cgh_probe_stale_reflogs "$repo"; then
+		repair_result="probe-failed"
+	elif [[ "$repair_result" == "ok" && -n "$CGH_STALE_REFS" ]]; then
+		repair_result="stale-remaining"
+	fi
+	_cgh_audit_log "Canonical stale reflog repair finished" "${base_details[@]}" \
+		"pruned_entries=${pruned}" "result=${repair_result}" "exit=${rc}" || {
+		_cgh_block "reflog repair audit outcome could not be written"
+		return 1
+	}
+	printf 'STALE_REFLOG_REPAIR=%s pruned_entries=%s\n' "$repair_result" "$pruned"
+	if [[ "$repair_result" == "stale-remaining" ]]; then
+		while IFS= read -r ref; do
+			[[ -n "$ref" ]] && printf 'STALE_REFLOG_REMAINING ref=%s\n' "$ref"
+		done <<<"$CGH_STALE_REFS"
+	fi
+	[[ "$repair_result" == "ok" ]] || return 1
+	return 0
+}
+
+# Reports, and with apply=1 repairs, a gc.log that only records stale reflogs.
+_cgh_gc_log_step() {
+	local repo="$1"
+	local common="$2"
+	local apply="$3"
+	local path="${common}/gc.log" identity="" ref="" count=0 repo_id="" step_rc=0
+	local mtime=0
+
+	if [[ ! -e "$path" && ! -L "$path" ]]; then
+		printf 'GC_LOG=absent\n'
+		return 0
+	fi
+	identity=$(_cgh_file_identity "$path") || {
+		printf 'GC_LOG=present\nGC_LOG_PLAN=keep reason=not-regular\n'
+		return 0
+	}
+	IFS=' ' read -r _ _ mtime _ <<<"$identity"
+	_cgh_classify_gc_log "$path"
+	printf 'GC_LOG=present lines=%s unknown_lines=%s age_minutes=%s\n' \
+		"$CGH_GCLOG_LINES" "$CGH_GCLOG_UNKNOWN" "$((($(date +%s) - mtime) / 60))"
+	# Git ignores an empty gc.log; any unknown line may be a real gc failure.
+	if [[ "$CGH_GCLOG_LINES" -eq 0 ]]; then
+		printf 'GC_LOG_PLAN=keep reason=empty\n'
+		return 0
+	fi
+	if [[ "$CGH_GCLOG_UNKNOWN" -gt 0 ]]; then
+		printf 'GC_LOG_PLAN=keep reason=unknown-content\n'
+		return 0
+	fi
+	if _cgh_gc_is_running "$common"; then
+		printf 'GC_LOG_PLAN=keep reason=gc-running\n'
+		return 0
+	fi
+	_cgh_probe_stale_reflogs "$repo" || {
+		printf 'GC_LOG_PLAN=keep reason=probe-failed\n'
+		return 1
+	}
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] || continue
+		count=$((count + 1))
+		printf 'STALE_REFLOG ref=%s\n' "$ref"
+		_cgh_reflog_ref_is_supported "$ref" || {
+			printf 'GC_LOG_PLAN=keep reason=unsupported-ref\n'
+			return 1
+		}
+	done <<<"$CGH_STALE_REFS"
+	if [[ "$apply" -ne 1 ]]; then
+		printf 'GC_LOG_PLAN=repair stale_reflogs=%s (reflog expire --stale-fix, then remove gc.log; add --apply)\n' "$count"
+		return 0
+	fi
+	repo_id=$(_cgh_repo_id "$common")
+	if [[ "$count" -gt 0 ]]; then
+		_cgh_fix_stale_reflogs "$repo" "$repo_id" || return 1
+	fi
+	# A gc that started meanwhile may rewrite gc.log; the identity must hold.
+	if _cgh_gc_is_running "$common"; then
+		printf 'KEPT reason=gc-running path=gc.log\n'
+		return 0
+	fi
+	_cgh_remove_audited "$path" "$identity" "$CGH_GC_CMD" "$repo_id" "$CGH_KIND_GC_LOG" "gc.log" || step_rc=$?
+	[[ "$step_rc" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -661,6 +871,11 @@ cgh_main() {
 		}
 	fi
 	_cgh_repair "$repo" "$common" "$((lock_minutes * 60))" "$((tmp_days * 86400))" "$apply" "$cmd" || rc=$?
+	if [[ "$cmd" == "$CGH_GC_CMD" && "$rc" -eq 0 ]]; then
+		_cgh_pack_report "$repo"
+		# Stale reflogs go first, so the following gc does not re-record them.
+		_cgh_gc_log_step "$repo" "$common" "$apply" || rc=$?
+	fi
 	if [[ "$cmd" == "$CGH_GC_CMD" && "$rc" -eq 0 ]]; then
 		if [[ "$apply" -eq 1 ]]; then
 			# Re-scan: a repack may have started since repair; unverifiable fails closed.

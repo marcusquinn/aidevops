@@ -32,7 +32,22 @@ def _symbolic_ref_is_read_only(args: list[str]) -> bool:
     )
 
 
+def _reflog_is_read_only(args: list[str]) -> bool:
+    """Allow `git reflog [show|list|exists]`; expire, delete and unknown words write.
+
+    A bare `git reflog <ref>` or `git reflog <log-option>` is Git's implicit show.
+    """
+    # Leading options may precede a subcommand, so a mutating word anywhere fails closed.
+    if any(arg in {"expire", "delete", "drop", "write"} for arg in args):
+        return False
+    if not args or args[0] in {"show", "list", "exists"}:
+        return True
+    first = args[0]
+    return first.startswith("-") or first == "HEAD" or first.startswith("refs/") or "@{" in first
+
+
 REF_QUERY_CHECKS: dict[str, Callable[[list[str]], bool]] = {
+    "reflog": _reflog_is_read_only,
     "remote": _remote_is_read_only,
     "symbolic-ref": _symbolic_ref_is_read_only,
     "worktree": _worktree_is_allowed,
