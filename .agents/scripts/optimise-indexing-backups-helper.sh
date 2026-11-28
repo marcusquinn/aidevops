@@ -591,9 +591,10 @@ _fseventsd_surface() {
     [[ -r "$marker" ]] && last="$(<"$marker")"
     [[ "$last" =~ ^[0-9]+$ ]] || last=0
     if [[ "$last" -eq 0 || $((now - last)) -ge "$NOTIFY_INTERVAL_SECONDS" ]]; then
-        osascript -e "display notification \"${action}\" with title \"macOS runner needs attention\"" >/dev/null 2>&1 || true
-        _ensure_dirs
-        printf '%s\n' "$now" >"$marker"
+        if osascript -e "display notification \"${action}\" with title \"macOS runner needs attention\"" >/dev/null 2>&1; then
+            _ensure_dirs
+            printf '%s\n' "$now" >"$marker"
+        fi
     fi
     return 0
 }
