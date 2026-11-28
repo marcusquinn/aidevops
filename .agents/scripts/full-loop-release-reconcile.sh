@@ -1944,6 +1944,24 @@ _full_loop_release_local_adoption_required() {
 	return 0
 }
 
+# Tag discovery for status/reconcile. Only reconcile may fetch or write refs;
+# status stays read-only so it never mutates a canonical checkout.
+_full_loop_release_find_tag_for_mode() {
+	local mode="$1"
+	local repo="$2"
+	local requested_pr="$3"
+	local find_rc=0
+
+	if [[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]]; then
+		_FULL_LOOP_RELEASE_READ_ONLY=0
+	else
+		_FULL_LOOP_RELEASE_READ_ONLY=1
+	fi
+	_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || find_rc=$?
+	_FULL_LOOP_RELEASE_READ_ONLY=0
+	return "$find_rc"
+}
+
 _full_loop_release_existing_command() {
 	local mode="$1"
 	local requested_pr="$2"
@@ -1973,18 +1991,7 @@ _full_loop_release_existing_command() {
 		_full_loop_release_not_requested_status "$repo" "$requested_pr"
 		return $?
 	fi
-	# The mode gate above admits only status and reconcile.
-	if [[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]]; then
-		_FULL_LOOP_RELEASE_READ_ONLY=0
-	else
-		_FULL_LOOP_RELEASE_READ_ONLY=1
-	fi
-	_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || {
-		inspect_rc=$?
-		_FULL_LOOP_RELEASE_READ_ONLY=0
-		return "$inspect_rc"
-	}
-	_FULL_LOOP_RELEASE_READ_ONLY=0
+	_full_loop_release_find_tag_for_mode "$mode" "$repo" "$requested_pr" || return $?
 	tag_name="$_FULL_LOOP_RELEASE_FOUND_TAG"
 	if [[ "$receipt_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]]; then
 		source_json=$(_full_loop_release_source_json_from_tag "$tag_name") || return 1
