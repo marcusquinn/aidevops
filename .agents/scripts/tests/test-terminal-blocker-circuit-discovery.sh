@@ -14,6 +14,10 @@ _TBC_DISCOVERY_TESTS_LOADED=1
 # queue, seed and holds consume their entire shares, unclassified gets time.
 _intake_budget_checks() {
 	if ! (
+		# Unsetting SECONDS removes its ticking special property in this
+		# isolated subshell, so scheduler assertions cannot cross a clock tick.
+		unset SECONDS
+		SECONDS=0
 		local TBR_DEADLINE=$((SECONDS + 22)) TBR_QUEUE_DEADLINE="$SECONDS"
 		local TBR_INTAKE_DEADLINE=$((SECONDS + 7))
 		local TBR_BUDGET_SECONDS=45 TBR_STAGE_SECONDS=8 TBR_DISCOVERY_SECONDS=15
@@ -25,6 +29,7 @@ _intake_budget_checks() {
 			return 0
 		}
 		for stage in seed holds unclassified; do
+			TBR_INTAKE_DEADLINE=$((SECONDS + 7))
 			_tbr_run_stage "$stage" unused || exit 1
 			[[ "$(<"${TEST_ROOT}/intake-cap")" -eq 7 ]] || exit 1
 		done
@@ -37,13 +42,20 @@ _intake_budget_checks() {
 			[[ "$stage" == unclassified ]] || return 2
 			return 0
 		}
+		TBR_DEADLINE=$((SECONDS + 22))
 		_tbr_pending_discovery_stages || rc=$?
-		[[ "$rc" -eq 1 && "$calls" == 'seed:7;holds:7;unclassified:8;' ]] || exit 1
+		[[ "$rc" -eq 1 && "$calls" == 'seed:7;holds:7;unclassified:8;' ]] || {
+			printf 'FAIL intake shares rc=%s calls=%s\n' "$rc" "$calls" >&2
+			exit 1
+		}
 		# Early completion donates time rather than holding it idle.
 		donate=1 calls="" rc=0
 		TBR_DEADLINE=$((SECONDS + 22))
 		_tbr_pending_discovery_stages || rc=$?
-		[[ "$rc" -eq 1 && "$calls" == 'seed:7;holds:11;unclassified:22;' ]] || exit 1
+		[[ "$rc" -eq 1 && "$calls" == 'seed:7;holds:11;unclassified:22;' ]] || {
+			printf 'FAIL intake donation rc=%s calls=%s\n' "$rc" "$calls" >&2
+			exit 1
+		}
 	); then
 		return 1
 	fi
