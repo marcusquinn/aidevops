@@ -56,8 +56,9 @@
 #   BLOCKER_RECOVERY_SEED_INTERVAL  seconds between automatic seeds (default 21600)
 #   BLOCKER_RECOVERY_DECISION_TTL   seconds a recorded decision suppresses re-assessment (default 86400)
 #   BLOCKER_RECOVERY_BUDGET_SECONDS overall pending/seed budget (default 45)
-#   BLOCKER_RECOVERY_STAGE_SECONDS identity/seed budget (default 8); entries use
-#                                 the remaining queue budget, rotating on timeout
+#   BLOCKER_RECOVERY_STAGE_SECONDS identity/seed cap (default 8); pending reserves
+#                                 up to half its budget for seed/holds/unclassified;
+#                                 entries rotate within the remaining queue budget
 #   BLOCKER_RECOVERY_DISCOVERY_SECONDS discovery cap (default 15, at most half
 #                                 the budget so the queue pass keeps its share)
 #   BLOCKER_RECOVERY_DISCOVERY_OVERLAP seconds re-searched before the last
@@ -150,9 +151,11 @@ _tbr_run_stage() {
 	if [[ "$stage" != seed && "$stage" != unclassified && "$stage" != holds && -n "${TBR_QUEUE_DEADLINE:-}" ]]; then
 		remaining=$((TBR_QUEUE_DEADLINE - SECONDS))
 	fi
-	# GH#38232: the seed stops early enough to leave unclassified its share.
-	if [[ "$stage" == seed && -n "${TBR_SEED_DEADLINE:-}" ]]; then
-		remaining=$((TBR_SEED_DEADLINE - SECONDS))
+	# GH#40651: each intake stops before the next one's reserved share.
+	if [[ -n "${TBR_INTAKE_DEADLINE:-}" ]]; then
+		case "$stage" in
+		seed | holds | unclassified) remaining=$((TBR_INTAKE_DEADLINE - SECONDS)) ;;
+		esac
 	fi
 	[[ "$remaining" -gt 0 ]] || {
 		printf 'blocker-recovery: incomplete stage=%s reason=budget_exhausted\n' "$stage" >&2
@@ -189,7 +192,12 @@ _tbr_run_stage() {
 	) || rc=$?
 	TBR_LAST_STAGE_RC="$rc"
 	case "$rc" in
-	0) return 0 ;;
+	0)
+		case "$stage" in
+		seed | holds | unclassified) printf 'blocker-recovery: completed stage=%s\n' "$stage" >&2 ;;
+		esac
+		return 0
+		;;
 	1)
 		[[ "$stage" == entry ]] && return 1
 		printf 'blocker-recovery: incomplete stage=%s rc=1\n' "$stage" >&2
