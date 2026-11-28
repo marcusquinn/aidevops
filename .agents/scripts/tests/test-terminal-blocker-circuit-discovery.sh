@@ -76,6 +76,8 @@ _default_budget_progress_checks() {
 	gh() {
 		local args="$*" issue=""
 		case "$args" in
+		"api graphql --paginate --slurp"*)
+			printf '[{"data":{"repository":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}]\n' ;;
 		"api repos/owner/repo/issues/"*"/comments?per_page=100 --paginate --slurp")
 			jq -c . "${TB_INTAKE_FIXTURE}/comments.json" ;;
 		"api repos/owner/repo/issues/"*)
@@ -97,9 +99,15 @@ _default_budget_progress_checks() {
 	printf '{}\n' >"${TBR_ROOT}/decisions/zz-fixture--repo--42.json"
 	tbr_enqueue zz-fixture/repo 42 && return 1
 	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/first" 2>"${TBR_ROOT}/err" || rc=$?
-	[[ "$rc" -eq 2 && -s "${TBR_ROOT}/pending_cursor" ]] || return 1
+	[[ "$rc" -eq 2 && -s "${TBR_ROOT}/pending_cursor" ]] || {
+		printf 'FAIL default pending rc=%s diagnostics=%s\n' "$rc" "$(<"${TBR_ROOT}/err")" >&2
+		return 1
+	}
 	for stage in seed holds unclassified; do
-		[[ "$(<"${TBR_ROOT}/err")" == *"completed stage=${stage}"* ]] || return 1
+		[[ "$(<"${TBR_ROOT}/err")" == *"completed stage=${stage}"* ]] || {
+			printf 'FAIL default intake=%s diagnostics=%s\n' "$stage" "$(<"${TBR_ROOT}/err")" >&2
+			return 1
+		}
 	done
 	# A legitimate nine-second entry must finish rather than time out at eight.
 	[[ ! -f "${TBR_ROOT}/queue/owner--repo--100.json" ]] || return 1
