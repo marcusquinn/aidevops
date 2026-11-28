@@ -126,4 +126,39 @@ assert_contains "$bz_reminder" "private encryption key"
 assert_not_contains "$bz_reminder" "SECRET-ID"
 unset AIDEVOPS_BACKBLAZE_BZDATA
 
+# fseventsd runaway detection with controlled Darwin telemetry (read-only).
+fakebin="$tmpdir/fakebin"
+mkdir -p "$fakebin"
+printf '#!/bin/sh\necho Darwin\n' >"$fakebin/uname"
+printf '#!/bin/sh\necho 123\n' >"$fakebin/pgrep"
+printf "#!/bin/sh\necho \"\${FAKE_PS_SAMPLE}\"\n" >"$fakebin/ps"
+chmod +x "$fakebin/uname" "$fakebin/pgrep" "$fakebin/ps"
+OLD_PATH="$PATH"
+export PATH="$fakebin:$PATH"
+assert_contains "$(FAKE_PS_SAMPLE="  524288  1.5" $HELPER macos health)" "fseventsd_health=ok"
+assert_contains "$(FAKE_PS_SAMPLE="  8388608  95.0" $HELPER macos health)" "fseventsd_health=runaway:8.00"
+assert_contains "$(FAKE_PS_SAMPLE="  8388608  95.0" AIDEVOPS_FSEVENTSD_RSS_GB=16 $HELPER macos health)" "fseventsd_health=ok"
+assert_contains "$(FAKE_PS_SAMPLE="  8388608  95.0" AIDEVOPS_FSEVENTSD_RSS_GB=bad $HELPER macos health)" "fseventsd_health=unknown"
+assert_contains "$(FAKE_PS_SAMPLE="garbage" $HELPER macos health)" "fseventsd_health=unknown"
+
+# Failed desktop notifications remain retryable; only delivered ones throttle.
+printf "#!/bin/sh\nprintf 'attempt\\\\n' >>\"\$FAKE_NOTIFY_ATTEMPTS\"\nexit \"\$FAKE_NOTIFY_EXIT\"\n" >"$fakebin/osascript"
+chmod +x "$fakebin/osascript"
+export FAKE_NOTIFY_ATTEMPTS="$tmpdir/notify-attempts"
+export FAKE_PS_SAMPLE="  8388608  95.0"
+export AIDEVOPS_HEADLESS=""
+# Suppress the unrelated stale-optimisation notification.
+$HELPER macos scan --dry-run >/dev/null
+# Keep this notification check from emitting an actual capacity-loss report.
+printf '%s\n' "$AIDEVOPS_OPTIMISE_NOW" >"$AIDEVOPS_STATE_DIR/fseventsd-runaway-reported"
+FAKE_NOTIFY_EXIT=1 $HELPER macos reminder --format=toast >/dev/null
+[[ ! -f "$AIDEVOPS_STATE_DIR/fseventsd-health-notified" ]] || fail "failed notification must not write marker"
+FAKE_NOTIFY_EXIT=0 $HELPER macos reminder --format=toast >/dev/null
+[[ "$(<"$AIDEVOPS_STATE_DIR/fseventsd-health-notified")" == "$AIDEVOPS_OPTIMISE_NOW" ]] || fail "successful notification must write marker"
+attempts_before="$(<"$FAKE_NOTIFY_ATTEMPTS")"
+[[ "$attempts_before" == $'attempt\nattempt' ]] || fail "failed notification should be retried"
+FAKE_NOTIFY_EXIT=0 $HELPER macos reminder --format=toast >/dev/null
+[[ "$(<"$FAKE_NOTIFY_ATTEMPTS")" == "$attempts_before" ]] || fail "successful notification must throttle later attempts"
+export PATH="$OLD_PATH"
+
 printf 'OK: optimise-indexing-backups-helper tests passed\n'
