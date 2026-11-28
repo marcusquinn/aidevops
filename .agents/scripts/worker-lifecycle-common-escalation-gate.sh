@@ -346,6 +346,103 @@ _worker_failure_reason_is_completion_infrastructure() {
 	esac
 }
 
+#######################################
+# GH#40658: per-issue consecutive no_work streak.
+#
+# Root cause of false t2769 trips: the fast-fail counter handed to
+# escalate_issue_tier is cumulative across EVERY non-rate-limit failure class
+# (partial, overwhelmed, stale_timeout, watchdog kills, ...). The breaker
+# compared that total against NO_WORK_NMR_THRESHOLD, so one no_work failure on
+# an issue that already had two real failures blocked it and printed "3
+# consecutive no_work failures". The streak below counts only no_work failures
+# since the last failure of any other class, matching the breaker's contract.
+#
+# Storage: one small file per issue ("count epoch") beside the fast-fail state,
+# written with tmp+mv. A per-issue file avoids rewriting the shared fast-fail
+# JSON from a path that does not hold its lock.
+#######################################
+_no_work_streak_file() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local state_file="${FAST_FAIL_STATE_FILE:-${HOME}/.aidevops/.agent-workspace/supervisor/fast-fail-counter.json}"
+	local safe_slug="${repo_slug//\//_}"
+	printf '%s/no-work-streak/%s_%s' "${state_file%/*}" "$safe_slug" "$issue_number"
+	return 0
+}
+
+# Print the current streak (0 when absent or expired).
+_no_work_streak_get() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local streak_file="" count="" ts="" now="" expiry="${FAST_FAIL_EXPIRY_SECS:-604800}"
+	streak_file=$(_no_work_streak_file "$issue_number" "$repo_slug")
+	if [[ -f "$streak_file" ]]; then
+		read -r count ts <"$streak_file" 2>/dev/null || true
+	fi
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	[[ "$ts" =~ ^[0-9]+$ ]] || ts=0
+	[[ "$expiry" =~ ^[0-9]+$ ]] || expiry=604800
+	now=$(date +%s)
+	if [[ "$count" -gt 0 && $((now - ts)) -ge "$expiry" ]]; then
+		count=0
+	fi
+	printf '%s' "$count"
+	return 0
+}
+
+# Increment the streak and print the new value. Best-effort: on write failure
+# the incremented value is still printed so the caller never under-reports.
+_no_work_streak_bump() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local streak_file="" current="" next="" tmp_file=""
+	current=$(_no_work_streak_get "$issue_number" "$repo_slug")
+	next=$((current + 1))
+	streak_file=$(_no_work_streak_file "$issue_number" "$repo_slug")
+	if mkdir -p "${streak_file%/*}" 2>/dev/null; then
+		tmp_file="${streak_file}.tmp.$$"
+		if printf '%s %s\n' "$next" "$(date +%s)" >"$tmp_file" 2>/dev/null; then
+			mv -f "$tmp_file" "$streak_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null || true
+		else
+			rm -f "$tmp_file" 2>/dev/null || true
+		fi
+	fi
+	printf '%s' "$next"
+	return 0
+}
+
+# Clear the streak: a failure of another class proves a worker reached the
+# brief, and a resolved/reset issue starts a fresh count.
+_no_work_streak_reset() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local streak_file=""
+	streak_file=$(_no_work_streak_file "$issue_number" "$repo_slug")
+	rm -f "$streak_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Resolve the failure count the no_work breaker must compare to its threshold.
+# Pre-launch/completion-infrastructure reasons never count (the breaker skips
+# them), so they pass the caller's count through untouched.
+# Args: $1=issue_number, $2=repo_slug, $3=cumulative failure_count, $4=reason
+# Stdout: consecutive no_work count
+#######################################
+_no_work_effective_failure_count() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_count="$3"
+	local reason="${4:-}"
+
+	if _no_work_reason_is_prelaunch_skip "$reason"; then
+		printf '%s' "$failure_count"
+		return 0
+	fi
+	_no_work_streak_bump "$issue_number" "$repo_slug"
+	return 0
+}
+
 _no_work_reason_is_prelaunch_skip() {
 	local reason="${1:-}"
 	# Completion-path infrastructure failures (GitHub API / command-policy
