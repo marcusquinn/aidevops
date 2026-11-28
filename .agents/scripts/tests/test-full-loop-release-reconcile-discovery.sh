@@ -418,6 +418,40 @@ if [[ "$fallback_find_tag" != "v2.0.0" ]]; then
 fi
 printf 'PASS full tag fallback recovers a body-parseable signed tag\n'
 
+readonly_status_file="${TEST_ROOT}/find-tag-readonly-status.txt"
+(
+	_FULL_LOOP_RELEASE_READ_ONLY=1
+	git() {
+		local args="$*"
+		case "$args" in
+		*" fetch "*) return 1 ;; # canonical guard blocks any fetch
+		*"%(refname:short)%00%(contents)%00"*)
+			printf 'v2.0.0\0Aidevops-Source-PR: 89\0\n'
+			;;
+		*" for-each-ref "*) printf '%b\n' 'v2.0.0\x1f\x1f\x1f' ;;
+		*" log --all --fixed-strings "*) return 0 ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	_full_loop_release_tag_body() {
+		printf '%s\n' 'Aidevops-Source-PR: 89'
+		return 0
+	}
+	_full_loop_release_source_json_from_tag() {
+		printf '%s\n' '{"source_pr":89,"source_merge":"1111111111111111111111111111111111111111","aggregated_sources":[]}'
+		return 0
+	}
+	_full_loop_release_verify_candidate_tag_provenance() { return 0; }
+	_full_loop_release_find_tag_for_pr test/repo 89 2>/dev/null || exit 1
+	printf '%s\n' "$_FULL_LOOP_RELEASE_FOUND_TAG"
+) >"$readonly_status_file"
+if [[ "$(<"$readonly_status_file")" != "v2.0.0" ]]; then
+	printf 'FAIL read-only status did not discover the tag from local refs without fetching\n'
+	exit 1
+fi
+printf 'PASS read-only status discovers local tags without fetching\n'
+
 malformed_tag_log="${TEST_ROOT}/malformed-tag-timing.log"
 if (
 	git() {

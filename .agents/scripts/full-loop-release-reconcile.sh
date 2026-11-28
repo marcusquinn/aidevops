@@ -536,19 +536,24 @@ _full_loop_release_find_tag_for_pr() {
 	_FULL_LOOP_RELEASE_FOUND_TAG=""
 	discovery_started=$(_full_loop_release_timing_start release-tag-discovery)
 	phase_started=$(_full_loop_release_timing_start release-tag-fetch)
-	if ! git -C "$REPO_ROOT" fetch origin --tags --quiet; then
+	if [[ "${_FULL_LOOP_RELEASE_READ_ONLY:-0}" == "1" ]]; then
+		# Read-only status never mutates REPO_ROOT (canonical Git guard).
+		printf 'RELEASE_TAG_FETCH=skipped (read-only status; run aidevops release reconcile %s to refresh tags)\n' "$requested_pr" >&2
+		_full_loop_release_timing_finish release-tag-fetch "$phase_started" skipped
+	elif ! git -C "$REPO_ROOT" fetch origin --tags --quiet; then
 		_full_loop_release_timing_finish release-tag-fetch "$phase_started" failed
 		_full_loop_release_timing_finish release-tag-discovery "$discovery_started" failed
 		return 1
+	else
+		_full_loop_release_timing_finish release-tag-fetch "$phase_started" ok
 	fi
-	_full_loop_release_timing_finish release-tag-fetch "$phase_started" ok
 	phase_started=$(_full_loop_release_timing_start release-tag-candidate-index)
 	if ! candidate_tags=$(_full_loop_release_candidate_tags_for_pr "$requested_pr"); then
 		_full_loop_release_timing_finish release-tag-candidate-index "$phase_started" failed
 		_full_loop_release_timing_finish release-tag-discovery "$discovery_started" failed
 		return 1
 	fi
-	if [[ -z "$candidate_tags" ]]; then
+	if [[ -z "$candidate_tags" && "${_FULL_LOOP_RELEASE_READ_ONLY:-0}" != "1" ]]; then
 		candidate_tags=$(_full_loop_release_recover_lane_tag "$repo" "$requested_pr") || return 1
 	fi
 	while IFS= read -r candidate_tag; do
@@ -1968,7 +1973,18 @@ _full_loop_release_existing_command() {
 		_full_loop_release_not_requested_status "$repo" "$requested_pr"
 		return $?
 	fi
-	_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || return $?
+	# The mode gate above admits only status and reconcile.
+	if [[ "$mode" == "$_FULL_LOOP_RELEASE_MODE_RECONCILE" ]]; then
+		_FULL_LOOP_RELEASE_READ_ONLY=0
+	else
+		_FULL_LOOP_RELEASE_READ_ONLY=1
+	fi
+	_full_loop_release_find_tag_for_pr "$repo" "$requested_pr" || {
+		inspect_rc=$?
+		_FULL_LOOP_RELEASE_READ_ONLY=0
+		return "$inspect_rc"
+	}
+	_FULL_LOOP_RELEASE_READ_ONLY=0
 	tag_name="$_FULL_LOOP_RELEASE_FOUND_TAG"
 	if [[ "$receipt_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]]; then
 		source_json=$(_full_loop_release_source_json_from_tag "$tag_name") || return 1
