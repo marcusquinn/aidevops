@@ -33,6 +33,10 @@ _intake_budget_checks() {
 			_tbr_run_stage "$stage" unused || exit 1
 			[[ "$(<"${TEST_ROOT}/intake-cap")" -eq 7 ]] || exit 1
 		done
+		# An intake deadline must never extend the overall pass deadline.
+		TBR_DEADLINE=$((SECONDS + 3))
+		_tbr_run_stage holds unused || exit 1
+		[[ "$(<"${TEST_ROOT}/intake-cap")" -eq 3 ]] || exit 1
 		# Exercise the real scheduler with stages that spend their whole share.
 		_tbr_run_stage() {
 			local stage="$1" share=$((TBR_INTAKE_DEADLINE - SECONDS))

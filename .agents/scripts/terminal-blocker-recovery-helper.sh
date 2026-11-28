@@ -145,7 +145,7 @@ _tbr_start_budget() {
 _tbr_run_stage() {
 	local stage="$1" action="$2"
 	shift 2
-	local remaining=$((TBR_DEADLINE - SECONDS)) rc=0
+	local remaining=$((TBR_DEADLINE - SECONDS)) rc=0 intake_remaining=0
 	TBR_LAST_STAGE_RC=0
 	# Seed, holds and unclassified stages run after the queue pass, in its reserve.
 	if [[ "$stage" != seed && "$stage" != unclassified && "$stage" != holds && -n "${TBR_QUEUE_DEADLINE:-}" ]]; then
@@ -154,7 +154,10 @@ _tbr_run_stage() {
 	# GH#40651: each intake stops before the next one's reserved share.
 	if [[ -n "${TBR_INTAKE_DEADLINE:-}" ]]; then
 		case "$stage" in
-		seed | holds | unclassified) remaining=$((TBR_INTAKE_DEADLINE - SECONDS)) ;;
+		seed | holds | unclassified)
+			intake_remaining=$((TBR_INTAKE_DEADLINE - SECONDS))
+			[[ "$remaining" -le "$intake_remaining" ]] || remaining="$intake_remaining"
+			;;
 		esac
 	fi
 	[[ "$remaining" -gt 0 ]] || {

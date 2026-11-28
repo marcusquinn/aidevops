@@ -12,7 +12,7 @@ _TBR_PENDING_LIB_LOADED=1
 # Seed, holds and unclassified discovery stages of a supervisor pending pass.
 # Returns 1 when any stage was incomplete. Runs inside tbr_pending's scope.
 _tbr_pending_discovery_stages() {
-	local rc=0 incomplete=0 stage="" action="" remaining=0 stages_left=3 share=0
+	local rc=0 incomplete=0 stage="" action="" remaining=0 stages_left=3 share=0 now=0
 	local TBR_INTAKE_DEADLINE=""
 	# GH#40651: every intake gets a share, not just seed. Recalculate after
 	# each stage so early completion donates time to the remaining intakes.
@@ -23,12 +23,13 @@ _tbr_pending_discovery_stages() {
 		holds) action=tbr_discover_holds ;;
 		unclassified) action=tbr_discover_unclassified ;;
 		esac
-		remaining=$((TBR_DEADLINE - SECONDS))
+		now="$SECONDS"
+		remaining=$((TBR_DEADLINE - now))
 		share=$((remaining / stages_left))
 		# Sub-second slices cannot be represented by timeout_sec. With tiny
 		# configured budgets, still allow fast/no-op stages in the last second.
 		if [[ "$remaining" -gt 0 && "$share" -lt 1 ]]; then share=1; fi
-		TBR_INTAKE_DEADLINE=$((SECONDS + share))
+		TBR_INTAKE_DEADLINE=$((now + share))
 		rc=0
 		_tbr_run_stage "$stage" "$action" || rc=$?
 		[[ "$rc" -eq 0 ]] || incomplete=1
