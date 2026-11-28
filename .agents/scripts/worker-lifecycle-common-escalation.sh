@@ -183,8 +183,13 @@ _maybe_reclassify_worker_failed_as_no_work() {
 		"$issue_number" "$repo_slug" "$subtype" \
 		"${_WORKER_LOG_TAIL_AGE_SECS:-?}" "${_WORKER_LOG_TAIL_CLASS}" >&2 || true
 
+	# GH#40658: the breaker counts consecutive no_work failures, not the
+	# cumulative fast-fail total across every failure class.
+	local streak_count
+	streak_count=$(_no_work_effective_failure_count "$issue_number" \
+		"$repo_slug" "$failure_count" "$reclass_reason")
 	_log_no_work_skip_escalation "$issue_number" "$repo_slug" \
-		"$failure_count" "$reclass_reason"
+		"$streak_count" "$reclass_reason"
 	return 0
 }
 
@@ -362,10 +367,16 @@ escalate_issue_tier() {
 	# unreachable on no_work crashes, so the original inline != guard is
 	# no longer needed there.
 	if [[ "$crash_type" == "no_work" ]]; then
+		local no_work_count
+		no_work_count=$(_no_work_effective_failure_count "$issue_number" \
+			"$repo_slug" "$failure_count" "$reason")
 		_log_no_work_skip_escalation "$issue_number" "$repo_slug" \
-			"$failure_count" "$reason"
+			"$no_work_count" "$reason"
 		return 0
 	fi
+	# GH#40658: any other failure class proves a worker reached the brief, so
+	# the consecutive no_work streak starts over.
+	_no_work_streak_reset "$issue_number" "$repo_slug"
 
 	# t19356: the fast-fail count is cumulative per issue, so an issue that
 	# moved simple -> standard must still reach the (higher) thinking

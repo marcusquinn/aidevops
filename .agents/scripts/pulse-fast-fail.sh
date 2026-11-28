@@ -715,6 +715,11 @@ _fast_fail_reset_locked() {
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
 
+	# GH#40658: a resolved issue also starts a fresh consecutive no_work streak.
+	if declare -F _no_work_streak_reset >/dev/null 2>&1; then
+		_no_work_streak_reset "$issue_number" "$repo_slug"
+	fi
+
 	local key state updated_state
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	state=$(_ff_load)
@@ -847,6 +852,9 @@ _fast_fail_age_out_locked() {
 		'.[$k].count = 0 | .[$k].retry_after = 0 | .[$k].last_reset_ts = $ts | .[$k].reset_count = $rcount' \
 		2>/dev/null) || return 0
 	_ff_save "$updated_state"
+	if declare -F _no_work_streak_reset >/dev/null 2>&1; then
+		_no_work_streak_reset "$issue_number" "$repo_slug"
+	fi
 	echo "[pulse-wrapper] fast_fail_age_out: reset #${issue_number} (${repo_slug}) count from ${existing_count} to 0 (last failure ${hours}h ago, auto-reset #${new_reset_count}/${max_resets})" >>"$LOGFILE"
 
 	# Post an issue comment so operators see when auto-recovery fires.

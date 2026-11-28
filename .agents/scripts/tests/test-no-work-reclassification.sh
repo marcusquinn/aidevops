@@ -253,7 +253,11 @@ source "$WORKER_LIFECYCLE"
 
 # Stub _log_no_work_skip_escalation: capture all invocations to a tmpfile.
 RECLASS_CAPTURE="$(mktemp "${TMPDIR:-/tmp}/aidevops-t2820-capture.XXXXXX")"
-trap 'rm -f "$RECLASS_CAPTURE" 2>/dev/null || true' EXIT
+# GH#40658: the no_work streak writes beside the fast-fail state; keep it in a
+# disposable directory so the test never touches the real supervisor state.
+RECLASS_STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aidevops-t2820-state.XXXXXX")"
+export FAST_FAIL_STATE_FILE="${RECLASS_STATE_DIR}/fast-fail-counter.json"
+trap 'rm -f "$RECLASS_CAPTURE" 2>/dev/null || true; rm -rf "$RECLASS_STATE_DIR" 2>/dev/null || true' EXIT
 
 _log_no_work_skip_escalation() {
 	# Args: issue_number, repo_slug, failure_count, reason
