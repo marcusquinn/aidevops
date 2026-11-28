@@ -10,19 +10,78 @@ if [[ -n "${_TBC_DISCOVERY_TESTS_LOADED:-}" ]]; then
 fi
 _TBC_DISCOVERY_TESTS_LOADED=1
 
+# Deterministic clock checks complement the real CLI passes below: even when
+# queue, seed and holds consume their entire shares, unclassified gets time.
+_intake_budget_checks() {
+	if ! (
+		# Unsetting SECONDS removes its ticking special property in this
+		# isolated subshell, so scheduler assertions cannot cross a clock tick.
+		unset SECONDS
+		SECONDS=0
+		local TBR_DEADLINE=$((SECONDS + 22)) TBR_QUEUE_DEADLINE="$SECONDS"
+		local TBR_INTAKE_DEADLINE=$((SECONDS + 7))
+		local TBR_BUDGET_SECONDS=45 TBR_STAGE_SECONDS=8 TBR_DISCOVERY_SECONDS=15
+		local stage="" calls="" rc=0 donate=0
+		# Exercise the real stage wrapper with a fake timeout, without API calls.
+		timeout_sec() {
+			local cap="$1"
+			printf '%s\n' "$cap" >"${TEST_ROOT}/intake-cap"
+			return 0
+		}
+		for stage in seed holds unclassified; do
+			TBR_INTAKE_DEADLINE=$((SECONDS + 7))
+			_tbr_run_stage "$stage" unused || exit 1
+			[[ "$(<"${TEST_ROOT}/intake-cap")" -eq 7 ]] || exit 1
+		done
+		# An intake deadline must never extend the overall pass deadline.
+		TBR_DEADLINE=$((SECONDS + 3))
+		_tbr_run_stage holds unused || exit 1
+		[[ "$(<"${TEST_ROOT}/intake-cap")" -eq 3 ]] || exit 1
+		# Exercise the real scheduler with stages that spend their whole share.
+		_tbr_run_stage() {
+			local stage="$1" share=$((TBR_INTAKE_DEADLINE - SECONDS))
+			[[ "$share" -gt 0 && "$TBR_INTAKE_DEADLINE" -le "$TBR_DEADLINE" ]] || return 2
+			calls="${calls}${stage}:${share};"
+			if [[ "$donate" -eq 0 ]]; then SECONDS="$TBR_INTAKE_DEADLINE"; fi
+			[[ "$stage" == unclassified ]] || return 2
+			return 0
+		}
+		TBR_DEADLINE=$((SECONDS + 22))
+		_tbr_pending_discovery_stages || rc=$?
+		[[ "$rc" -eq 1 && "$calls" == 'seed:7;holds:7;unclassified:8;' ]] || {
+			printf 'FAIL intake shares rc=%s calls=%s\n' "$rc" "$calls" >&2
+			exit 1
+		}
+		# Early completion donates time rather than holding it idle.
+		donate=1 calls="" rc=0
+		TBR_DEADLINE=$((SECONDS + 22))
+		_tbr_pending_discovery_stages || rc=$?
+		[[ "$rc" -eq 1 && "$calls" == 'seed:7;holds:11;unclassified:22;' ]] || {
+			printf 'FAIL intake donation rc=%s calls=%s\n' "$rc" "$calls" >&2
+			exit 1
+		}
+	); then
+		return 1
+	fi
+	return 0
+}
+
 _default_budget_progress_checks() {
-	local issue=0 rc=0
+	local issue=0 rc=0 stage=""
+	_intake_budget_checks || return 1
 	TBR_ROOT="${TEST_ROOT}/default-budget"
 	export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT"
 	unset BLOCKER_RECOVERY_BUDGET_SECONDS BLOCKER_RECOVERY_STAGE_SECONDS
 	_tbr_init_dirs || return 1
 	date +%s >"${TBR_ROOT}/last_seed_epoch"
-	for issue in {100..124}; do
+	for issue in {100..154}; do
 		tbr_enqueue owner/repo "$issue" files_scope_excluded || return 1
 	done
 	gh() {
 		local args="$*" issue=""
 		case "$args" in
+		"api graphql --paginate --slurp"*)
+			printf '[{"data":{"repository":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}]\n' ;;
 		"api repos/owner/repo/issues/"*"/comments?per_page=100 --paginate --slurp")
 			jq -c . "${TB_INTAKE_FIXTURE}/comments.json" ;;
 		"api repos/owner/repo/issues/"*)
@@ -44,7 +103,16 @@ _default_budget_progress_checks() {
 	printf '{}\n' >"${TBR_ROOT}/decisions/zz-fixture--repo--42.json"
 	tbr_enqueue zz-fixture/repo 42 && return 1
 	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/first" 2>"${TBR_ROOT}/err" || rc=$?
-	[[ "$rc" -eq 2 && -s "${TBR_ROOT}/pending_cursor" ]] || return 1
+	[[ "$rc" -eq 2 && -s "${TBR_ROOT}/pending_cursor" ]] || {
+		printf 'FAIL default pending rc=%s diagnostics=%s\n' "$rc" "$(<"${TBR_ROOT}/err")" >&2
+		return 1
+	}
+	for stage in seed holds unclassified; do
+		[[ "$(<"${TBR_ROOT}/err")" == *"completed stage=${stage}"* ]] || {
+			printf 'FAIL default intake=%s diagnostics=%s\n' "$stage" "$(<"${TBR_ROOT}/err")" >&2
+			return 1
+		}
+	done
 	# A legitimate nine-second entry must finish rather than time out at eight.
 	[[ ! -f "${TBR_ROOT}/queue/owner--repo--100.json" ]] || return 1
 	[[ ! -f "${TBR_ROOT}/queue/zz-fixture--repo--42.json" && ! -f "${TBR_ROOT}/decisions/zz-fixture--repo--42.json" ]] || return 1

@@ -12,18 +12,29 @@ _TBR_PENDING_LIB_LOADED=1
 # Seed, holds and unclassified discovery stages of a supervisor pending pass.
 # Returns 1 when any stage was incomplete. Runs inside tbr_pending's scope.
 _tbr_pending_discovery_stages() {
-	local rc=0 incomplete=0
-	_tbr_run_stage seed tbr_seed || rc=$?
-	[[ "$rc" -eq 0 ]] || incomplete=1
-	# GH#38311: maintainer replies and unexplained hold-for-review holds,
-	# before the six-hourly unclassified stage: a reply wants a fast answer.
-	rc=0
-	_tbr_run_stage holds tbr_discover_holds || rc=$?
-	[[ "$rc" -eq 0 ]] || incomplete=1
-	# GH#37978: bare status:blocked holds with no recorded reason.
-	rc=0
-	_tbr_run_stage unclassified tbr_discover_unclassified || rc=$?
-	[[ "$rc" -eq 0 ]] || incomplete=1
+	local rc=0 incomplete=0 stage="" action="" remaining=0 stages_left=3 share=0 now=0
+	local TBR_INTAKE_DEADLINE=""
+	# GH#40651: every intake gets a share, not just seed. Recalculate after
+	# each stage so early completion donates time to the remaining intakes.
+	# Existing per-stage caps and cursors still bound and resume slow work.
+	for stage in seed holds unclassified; do
+		case "$stage" in
+		seed) action=tbr_seed ;;
+		holds) action=tbr_discover_holds ;;
+		unclassified) action=tbr_discover_unclassified ;;
+		esac
+		now="$SECONDS"
+		remaining=$((TBR_DEADLINE - now))
+		share=$((remaining / stages_left))
+		# Sub-second slices cannot be represented by timeout_sec. With tiny
+		# configured budgets, still allow fast/no-op stages in the last second.
+		if [[ "$remaining" -gt 0 && "$share" -lt 1 ]]; then share=1; fi
+		TBR_INTAKE_DEADLINE=$((now + share))
+		rc=0
+		_tbr_run_stage "$stage" "$action" || rc=$?
+		[[ "$rc" -eq 0 ]] || incomplete=1
+		stages_left=$((stages_left - 1))
+	done
 	[[ "$incomplete" -eq 0 ]] || return 1
 	return 0
 }
@@ -408,7 +419,7 @@ tbr_pending() {
 		entry_mode=rearm
 	fi
 	_tbr_init_dirs || return 1
-	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" TBR_SEED_DEADLINE="" file="" count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 unclassified_reserve=0 observed=";"
+	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" file="" count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 observed=";"
 	_tbr_start_budget || return 2
 	# Retire stale fixtures before any identity/API call, including entries past
 	# the remote scan budget. Never retire evidence on an unreadable registry.
@@ -418,13 +429,12 @@ tbr_pending() {
 		_tbr_entry_registered "$file" || rc=$?
 		[[ "$rc" -lt 2 ]] || return 2
 	done
-	# GH#38232: reserve one stage cap each for seed and unclassified (still at
-	# most half the budget), so a slow seed cannot starve unclassified intake.
+	# GH#40651: reserve all three intake caps, at most half the total budget.
+	# Queue entries cannot consume this reserve; each intake then gets its own
+	# boundary so a slow holds listing cannot starve unclassified discovery.
 	reserve=$((TBR_BUDGET_SECONDS / 2))
-	[[ "$reserve" -le $((TBR_STAGE_SECONDS * 2)) ]] || reserve=$((TBR_STAGE_SECONDS * 2))
-	unclassified_reserve=$((reserve / 2))
+	[[ "$reserve" -le $((TBR_STAGE_SECONDS + TBR_DISCOVERY_SECONDS * 2)) ]] || reserve=$((TBR_STAGE_SECONDS + TBR_DISCOVERY_SECONDS * 2))
 	TBR_QUEUE_DEADLINE=$((TBR_DEADLINE - reserve))
-	TBR_SEED_DEADLINE=$((TBR_DEADLINE - unclassified_reserve))
 	[[ "$mode" != --rearm-only ]] || TBR_QUEUE_DEADLINE="$TBR_DEADLINE"
 	# GH#36114: discover unqueued holds first, so a trusted retry on a hold this
 	# runner never queued is applied by the queue pass below in the same run.
