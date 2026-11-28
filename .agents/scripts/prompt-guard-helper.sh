@@ -752,13 +752,17 @@ _pg_record_session_signal() {
 	return 0
 }
 
+# Shared input cap for stdin and file scans; exit 3 = oversize file (not clean).
+_PG_MAX_INPUT_BYTES=$((10 * 1024 * 1024))
+_PG_EXIT_OVERSIZE=3
+
 _pg_read_stdin_capped() {
 	if [[ -t 0 ]]; then
 		_pg_log_error "This command requires piped input, not a TTY"
 		return 1
 	fi
 
-	local max_bytes=$((10 * 1024 * 1024))
+	local max_bytes="$_PG_MAX_INPUT_BYTES"
 	local tmp_file
 	tmp_file=$(mktemp) || {
 		_pg_log_error "Failed to create temp file for stdin buffering"
@@ -1320,7 +1324,10 @@ COMMANDS:
                                  Compute composite score from findings (t1428.3)
                                  Output: composite_score|threat_level|finding_count
     check-file <file>            Check message from file
-    scan-file <file>             Scan message from file
+    scan-file <file>             Scan message from file. Cap: 10 MiB (same as stdin).
+                                 Larger files: base64 runs >=1024 chars are skipped
+                                 (logged); still over cap => exit 3 "oversize"
+                                 (never reported clean). sanitize-file: oversize => 3.
     sanitize-file <file>         Sanitize message from file
     check-stdin                  Check message from stdin (piped content)
     scan-stdin                   Scan message from stdin (piped content)
@@ -1457,8 +1464,39 @@ _main_dispatch_file_cmd() {
 		_pg_log_error "File not found: ${file:-<none>}"
 		return 1
 	fi
+	local max_bytes="$_PG_MAX_INPUT_BYTES"
+	local size
+	size=$(wc -c <"$file" | tr -d ' ')
+	local src="$file"
+	local stripped=""
+	if [[ "$size" -gt "$max_bytes" ]]; then
+		# Oversize: drop long base64 runs (image bytes carry no readable prompt
+		# text) and log it. Never scan a truncated prefix as "clean".
+		if [[ "$subcmd" == "sanitize" ]] || ! command -v perl >/dev/null 2>&1; then
+			_pg_log_error "oversize: ${size} > ${max_bytes} bytes"
+			return "$_PG_EXIT_OVERSIZE"
+		fi
+		stripped=$(mktemp) || {
+			_pg_log_error "Failed to create temp file for oversize file handling"
+			return 1
+		}
+		# shellcheck disable=SC2064
+		trap "rm -f '$stripped'" RETURN
+		if ! perl -pe 's/[A-Za-z0-9+\/=]{1024,}/[base64-omitted]/g' "$file" >"$stripped"; then
+			_pg_log_error "Failed to strip base64 runs from oversize file"
+			return 1
+		fi
+		local new_size
+		new_size=$(wc -c <"$stripped" | tr -d ' ')
+		_pg_log_warn "Oversize file (${size} bytes): skipped base64 runs >=1024 chars; scanning ${new_size} bytes"
+		if [[ "$new_size" -gt "$max_bytes" ]]; then
+			_pg_log_error "oversize: ${new_size} > ${max_bytes} bytes after base64 skip"
+			return "$_PG_EXIT_OVERSIZE"
+		fi
+		src="$stripped"
+	fi
 	local content
-	content=$(cat "$file")
+	content=$(<"$src")
 	case "$subcmd" in
 	check) cmd_check "$content" ;;
 	scan) cmd_scan "$content" ;;
